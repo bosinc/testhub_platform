@@ -1,7 +1,7 @@
 from django.contrib import admin
 from .models import (
     ApiProject, ApiCollection, ApiRequest, Environment, RequestHistory,
-    TestSuite, TestExecution, ScheduledTask, TaskExecutionLog, AIServiceConfig
+    ScenarioCase, TestExecution, ScheduledTask, TaskExecutionLog, AIServiceConfig
 )
 
 
@@ -41,8 +41,8 @@ class RequestHistoryAdmin(admin.ModelAdmin):
     search_fields = ['request__name']
 
 
-@admin.register(TestSuite)
-class TestSuiteAdmin(admin.ModelAdmin):
+@admin.register(ScenarioCase)
+class ScenarioCaseAdmin(admin.ModelAdmin):
     list_display = ['name', 'project', 'environment', 'created_by', 'created_at']
     list_filter = ['project', 'created_at']
     search_fields = ['name', 'description']
@@ -50,9 +50,9 @@ class TestSuiteAdmin(admin.ModelAdmin):
 
 @admin.register(TestExecution)
 class TestExecutionAdmin(admin.ModelAdmin):
-    list_display = ['test_suite', 'status', 'total_requests', 'passed_requests', 'failed_requests', 'executed_by', 'created_at']
+    list_display = ['scenario_case', 'status', 'total_requests', 'passed_requests', 'failed_requests', 'executed_by', 'created_at']
     list_filter = ['status', 'created_at']
-    search_fields = ['test_suite__name']
+    search_fields = ['scenario_case__name']
 
 
 @admin.register(ScheduledTask)

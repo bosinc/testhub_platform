@@ -4,12 +4,12 @@ from django.conf.urls.static import static
 from rest_framework.routers import DefaultRouter
 from .views import (
     ApiProjectViewSet, ApiCollectionViewSet, ApiRequestViewSet,
-    EnvironmentViewSet, RequestHistoryViewSet, TestSuiteViewSet,
-    TestSuiteRequestViewSet, TestExecutionViewSet, UserViewSet,
+    EnvironmentViewSet, RequestHistoryViewSet, ScenarioCaseViewSet,
+    ScenarioCaseRequestViewSet, TestExecutionViewSet, UserViewSet,
     ScheduledTaskViewSet, TaskExecutionLogViewSet, NotificationLogViewSet,
     TaskNotificationSettingViewSet, OperationLogViewSet,
     ApiDashboardViewSet, AIServiceConfigViewSet,
-    TestSetViewSet, TestSuiteFolderViewSet
+    TestSuiteViewSet, ScenarioCaseFolderViewSet
 )
 
 router = DefaultRouter()
@@ -19,10 +19,10 @@ router.register(r'collections', ApiCollectionViewSet)
 router.register(r'requests', ApiRequestViewSet)
 router.register(r'environments', EnvironmentViewSet)
 router.register(r'histories', RequestHistoryViewSet)
-router.register(r'test-suites', TestSuiteViewSet)
-router.register(r'test-suite-folders', TestSuiteFolderViewSet, basename='test-suite-folder')
-router.register(r'test-sets', TestSetViewSet, basename='testset')
-router.register(r'test-suite-requests', TestSuiteRequestViewSet)
+router.register(r'scenario-cases', ScenarioCaseViewSet, basename='scenario-case')
+router.register(r'scenario-case-folders', ScenarioCaseFolderViewSet, basename='scenario-case-folder')
+router.register(r'test-suites', TestSuiteViewSet, basename='test-suite')
+router.register(r'scenario-case-requests', ScenarioCaseRequestViewSet, basename='scenario-case-request')
 router.register(r'test-executions', TestExecutionViewSet)
 router.register(r'users', UserViewSet)
 router.register(r'scheduled-tasks', ScheduledTaskViewSet, basename='scheduledtask')

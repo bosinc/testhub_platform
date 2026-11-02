@@ -324,7 +324,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { useI18n } from 'vue-i18n'
 import { Search, Refresh, Plus } from '@element-plus/icons-vue'
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const activeTab = ref('list')
 const loading = ref(false)
 const showDetailDialog = ref(false)
@@ -379,23 +379,23 @@ const loadNotifications = async () => {
     notifications.value = [
       {
         id: 1,
-        task_name: '每日API测试',
+        task_name: t('apiTesting.notification.samples.dailyApiTest'),
         notify_time: new Date().toISOString(),
         notify_type: 'EMAIL',
         recipients: ['user1@example.com', 'user2@example.com'],
         status: 'SUCCESS',
-        content: '测试任务执行完成，共执行10个接口，成功8个，失败2个',
+        content: t('apiTesting.notification.samples.dailySummary'),
         error_message: ''
       },
       {
         id: 2,
-        task_name: '每周数据同步',
+        task_name: t('apiTesting.notification.samples.weeklySync'),
         notify_time: new Date(Date.now() - 86400000).toISOString(),
         notify_type: 'WEBHOOK',
         recipients: [],
         status: 'FAILED',
-        content: '数据同步任务执行失败',
-        error_message: '网络连接超时'
+        content: t('apiTesting.notification.samples.syncFailed'),
+        error_message: t('apiTesting.notification.samples.networkTimeout')
       }
     ]
     pagination.total = 2
@@ -422,7 +422,7 @@ const showNotificationDetail = (notification) => {
 // 格式化日期时间
 const formatDateTime = (dateString) => {
   const date = new Date(dateString)
-  return date.toLocaleString('zh-CN')
+  return date.toLocaleString(locale.value.startsWith('zh') ? 'zh-CN' : 'en-US')
 }
 
 // 保存邮箱配置
@@ -567,19 +567,19 @@ onMounted(() => {
   
   // 加载模拟数据
   recipients.value = [
-    { name: '张三', email: 'zhangsan@example.com' },
-    { name: '李四', email: 'lisi@example.com' }
+    { name: t('apiTesting.notification.samples.recipientOne'), email: 'alex@example.com' },
+    { name: t('apiTesting.notification.samples.recipientTwo'), email: 'sam@example.com' }
   ]
   
   webhooks.value = [
     {
-      name: '飞书通知',
+      name: t('apiTesting.notification.samples.feishu'),
       platform: 'FEISHU',
       webhook_url: 'https://open.feishu.cn/open-apis/bot/v2/hook/xxx',
       enabled: true
     },
     {
-      name: '企业微信通知',
+      name: t('apiTesting.notification.samples.wecom'),
       platform: 'WECHAT_WORK',
       webhook_url: 'https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=xxx',
       enabled: true

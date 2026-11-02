@@ -60,7 +60,16 @@ export function getExecutionLogs(taskId, params = {}) {
   })
 }
 
-// 获取测试套件列表
+// 获取场景用例列表
+export function getScenarioCases(params) {
+  return request({
+    url: '/api-testing/scenario-cases/',
+    method: 'get',
+    params
+  })
+}
+
+// 获取测试套件列表。定时任务和测试套件管理使用此接口。
 export function getTestSuites(params) {
   return request({
     url: '/api-testing/test-suites/',
@@ -102,6 +111,15 @@ export function getApiCollections(params) {
     url: '/api-testing/collections/',
     method: 'get',
     params
+  })
+}
+
+// 执行场景用例
+export function executeScenarioCase(id, data) {
+  return request({
+    url: `/api-testing/scenario-cases/${id}/execute/`,
+    method: 'post',
+    data
   })
 }
 

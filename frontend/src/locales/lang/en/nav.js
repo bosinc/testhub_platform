@@ -38,6 +38,7 @@ export default {
     dashboard: 'Dashboard',
     interfaceManagement: 'Interface Management',
     automationTesting: 'Automation Testing',
+    apiTestSuites: 'Test Suites',
     requestHistory: 'Request History',
     environmentManagement: 'Environment Management',
     scheduledTasks: 'Scheduled Tasks',

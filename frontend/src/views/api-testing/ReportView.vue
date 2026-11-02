@@ -11,7 +11,7 @@
     <div class="content">
       <el-table :data="reports" v-loading="loading" style="width: 100%">
         <el-table-column prop="id" label="ID" width="80" />
-        <el-table-column prop="test_suite_name" :label="$t('apiTesting.report.testSuite')" min-width="200" />
+        <el-table-column prop="scenario_case_name" :label="$t('apiTesting.report.scenarioCase')" min-width="200" />
         <el-table-column prop="status" :label="$t('apiTesting.common.status')" width="120">
           <template #default="scope">
             <el-tag :type="getStatusType(scope.row.status)">

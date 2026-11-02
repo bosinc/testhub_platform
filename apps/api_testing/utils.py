@@ -28,7 +28,7 @@ def send_api_request(*, method, url, headers=None, params=None, body_type='none'
                      timeout=(5, 30)):
     """统一发送 API 请求，连接阶段短暂失败时仅对幂等方法有限重试。
 
-    套件执行与单接口执行必须使用同一套 HTTP 策略；写请求不自动重试，避免重复提交。
+    场景用例执行与单接口执行使用同一套 HTTP 策略；写请求不自动重试，避免重复提交。
     """
     request_kwargs = {
         'method': method,
@@ -63,8 +63,8 @@ def prepare_request_body(request_body, method, variables, resolver):
     return body_type, body_content
 
 
-def normalize_suite_assertions(assertions, response_time=None):
-    """兼容套件旧版 value 字段，并将套件断言转换为统一断言格式。"""
+def normalize_scenario_case_assertions(assertions, response_time=None):
+    """兼容场景用例中的 value 字段，并将断言转换为统一格式。"""
     normalized = []
     for assertion in assertions or []:
         item = dict(assertion)
@@ -217,8 +217,8 @@ def execute_assertions(response, assertions):
     return results
 
 
-def execute_test_suite(test_suite, environment, executed_by):
-    """执行测试套件并返回结果"""
+def execute_scenario_case(scenario_case, environment, executed_by):
+    """执行单个场景用例并返回结果。"""
     from .models import TestExecution, RequestHistory
     
     try:
@@ -227,16 +227,16 @@ def execute_test_suite(test_suite, environment, executed_by):
         
         # 创建执行记录
         execution = TestExecution.objects.create(
-            test_suite=test_suite,
+            scenario_case=scenario_case,
             status='RUNNING',
             start_time=timezone.now(),
             executed_by=executed_by
         )
         
-        # 获取套件中的请求
-        suite_requests = test_suite.testsuiterequest_set.filter(enabled=True).order_by('order')
+        # 获取场景用例中的请求
+        scenario_case_requests = scenario_case.scenariocaserequest_set.filter(enabled=True).order_by('order')
         
-        execution.total_requests = suite_requests.count()
+        execution.total_requests = scenario_case_requests.count()
         execution.save()
         
         results = []
@@ -244,13 +244,13 @@ def execute_test_suite(test_suite, environment, executed_by):
         failed_count = 0
         
         # 执行每个请求
-        suite_variables = dict(environment.variables or {}) if environment else {}
-        for suite_request in suite_requests:
-            api_request = suite_request.request
+        scenario_case_variables = dict(environment.variables or {}) if environment else {}
+        for scenario_case_request in scenario_case_requests:
+            api_request = scenario_case_request.request
             
             try:
                 # 解析环境变量
-                variables = dict(suite_variables)
+                variables = dict(scenario_case_variables)
                 
                 # 替换URL中的变量（先解析动态函数，再替换环境变量）
                 url = _replace_variables(api_request.url, variables)
@@ -298,13 +298,13 @@ def execute_test_suite(test_suite, environment, executed_by):
 
                 _, extracted_variables = extract_response_variables(
                     response,
-                    suite_request.extractors,
+                    scenario_case_request.extractors,
                 )
                 variables.update(extracted_variables)
-                suite_variables.update(extracted_variables)
+                scenario_case_variables.update(extracted_variables)
                 
-                # 套件请求配置是执行时的唯一断言来源，允许在套件内独立编辑。
-                assertions = normalize_suite_assertions(suite_request.assertions, response_time)
+                # 场景用例请求配置是执行时的唯一断言来源，允许在场景用例内独立编辑。
+                assertions = normalize_scenario_case_assertions(scenario_case_request.assertions, response_time)
                 for assertion in assertions:
                     if assertion.get('type') == 'response_time':
                         assertion['actual_time'] = response_time
@@ -394,6 +394,40 @@ def execute_test_suite(test_suite, environment, executed_by):
             'success': False,
             'error': str(e)
         }
+
+
+def execute_test_suite(test_suite, environment, executed_by):
+    """依次运行测试套件中的场景用例。"""
+    from .models import TestSuiteItem
+
+    results = []
+    execution_environment = environment or test_suite.environment
+    for item in TestSuiteItem.objects.filter(test_suite=test_suite, enabled=True).select_related(
+        'scenario_case', 'scenario_case__environment'
+    ).order_by('order'):
+        scenario_case = item.scenario_case
+        result = execute_scenario_case(
+            scenario_case,
+            execution_environment or scenario_case.environment,
+            executed_by,
+        )
+        failed = result.get('failed_count', 0)
+        succeeded = result.get('success', False) and failed == 0
+        results.append({
+            'scenario_case_id': scenario_case.id,
+            'scenario_case_name': scenario_case.name,
+            'status': 'COMPLETED' if succeeded else 'FAILED',
+            'passed': result.get('passed_count', 0),
+            'failed': failed,
+            'total': result.get('total_count', 0),
+            'error': result.get('error'),
+        })
+
+    return {
+        'success': all(result['status'] == 'COMPLETED' for result in results),
+        'test_suite': test_suite.name,
+        'results': results,
+    }
 
 
 def execute_api_request(api_request, environment, executed_by):

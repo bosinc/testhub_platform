@@ -11,7 +11,7 @@ def log_operation(operation_type, resource_type, resource_id, resource_name, use
 
     Args:
         operation_type: 操作类型 (create, edit, delete, execute, run, save)
-        resource_type: 资源类型 (project, collection, request, suite, environment, task, execution)
+        resource_type: 资源类型 (project, collection, request, scenario_case, environment, task, execution)
         resource_id: 资源ID
         resource_name: 资源名称
         user: 操作用户

@@ -37,6 +37,7 @@ export default {
     dashboard: '数据看板',
     interfaceManagement: '接口管理',
     automationTesting: '自动化测试',
+    apiTestSuites: '测试套件',
     requestHistory: '请求历史',
     environmentManagement: '环境管理',
     scheduledTasks: '定时任务',

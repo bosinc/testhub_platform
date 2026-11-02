@@ -102,7 +102,7 @@ import { useI18n } from 'vue-i18n'
 import { Plus } from '@element-plus/icons-vue'
 import api from '@/utils/api'
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const loading = ref(false)
 const configs = ref([])
 const showCreateDialog = ref(false)
@@ -135,7 +135,7 @@ const rules = computed(() => ({
 const formatDate = (dateString) => {
   if (!dateString) return ''
   const date = new Date(dateString)
-  return date.toLocaleString('zh-CN', {
+  return date.toLocaleString(locale.value.startsWith('zh') ? 'zh-CN' : 'en-US', {
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',

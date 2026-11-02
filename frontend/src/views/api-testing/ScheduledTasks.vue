@@ -64,13 +64,13 @@
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="notification_type_display" :label="$t('apiTesting.scheduledTask.notificationType')" width="120">
+        <el-table-column prop="notification_type" :label="$t('apiTesting.scheduledTask.notificationType')" width="120">
           <template #default="scope">
             <el-tag
-              :type="getNotificationTypeTag(scope.row.notification_type_display)"
+              :type="getNotificationTypeTag(scope.row.notification_type)"
               size="small"
             >
-              {{ scope.row.notification_type_display || '-' }}
+              {{ getNotificationTypeText(scope.row.notification_type) }}
             </el-tag>
           </template>
         </el-table-column>
@@ -195,7 +195,7 @@
         </el-form-item>
 
         <!-- 根据任务类型显示不同配置 -->
-        <el-form-item v-if="taskForm.task_type === 'TEST_SUITE'" :label="$t('apiTesting.automation.testSuite')" required>
+        <el-form-item v-if="taskForm.task_type === 'TEST_SUITE'" :label="$t('apiTesting.scheduledTask.testSuite')" required>
           <el-select v-model="taskForm.test_suite" :placeholder="$t('apiTesting.scheduledTask.selectTestSuite')">
             <el-option
               v-for="suite in testSuites"
@@ -311,7 +311,7 @@ import {
   getUsers
 } from '@/api/api-testing.js'
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 
 // 获取状态文本
 const getStatusText = (status) => {
@@ -411,7 +411,7 @@ const loadTasks = async () => {
 const loadTestSuites = async () => {
   try {
     const response = await getTestSuites()
-    testSuites.value = response.data.results
+    testSuites.value = response.data.results || response.data
   } catch (error) {
     console.error('加载测试套件失败:', error)
   }
@@ -563,7 +563,7 @@ const runTaskNow = async (task) => {
 const formatDateTime = (dateString) => {
   if (!dateString) return '-'
   const date = new Date(dateString)
-  return date.toLocaleString('zh-CN', {
+  return date.toLocaleString(locale.value.startsWith('zh') ? 'zh-CN' : 'en-US', {
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
@@ -574,13 +574,22 @@ const formatDateTime = (dateString) => {
 }
 
 // 获取通知类型标签样式
-const getNotificationTypeTag = (typeDisplay) => {
+const getNotificationTypeText = (type) => {
+  const typeKey = {
+    email: 'email',
+    webhook: 'webhook',
+    both: 'both'
+  }[type]
+  return typeKey ? t(`apiTesting.scheduledTask.notificationTypes.${typeKey}`) : '-'
+}
+
+const getNotificationTypeTag = (type) => {
   const typeMap = {
-    '邮箱通知': '',
-    'Webhook机器人': 'primary',
-    '两种都发送': 'warning'
+    email: '',
+    webhook: 'primary',
+    both: 'warning'
   }
-  return typeMap[typeDisplay] || 'info'
+  return typeMap[type] || 'info'
 }
 
 // 查看执行日志

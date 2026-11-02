@@ -27,22 +27,22 @@ from datetime import datetime, timedelta
 
 from .models import (
     ApiProject, ApiCollection, ApiRequest, Environment,
-    RequestHistory, TestSuite, TestSuiteFolder, TestExecution, TestSuiteRequest,
+    RequestHistory, ScenarioCase, ScenarioCaseFolder, TestExecution, ScenarioCaseRequest,
     ScheduledTask, TaskExecutionLog, NotificationLog,
     TaskNotificationSetting, OperationLog, AIServiceConfig,
-    TestSet, TestSetItem,
+    TestSuite, TestSuiteItem,
 )
 
 from .serializers import (
     ApiProjectSerializer, ApiCollectionSerializer, ApiRequestSerializer,
     ApiCollectionTreeSerializer, ApiRequestTreeSerializer,
-    EnvironmentSerializer, RequestHistorySerializer, TestSuiteSerializer,
-    TestSuiteRequestSerializer, TestSuiteFolderSerializer, TestExecutionSerializer, UserSerializer,
+    EnvironmentSerializer, RequestHistorySerializer, ScenarioCaseSerializer,
+    ScenarioCaseRequestSerializer, ScenarioCaseFolderSerializer, TestExecutionSerializer, UserSerializer,
     ScheduledTaskSerializer, TaskExecutionLogSerializer,
     NotificationLogSerializer, TaskNotificationSettingSerializer,
     NotificationLogDetailSerializer,
     TaskNotificationSettingDetailSerializer, OperationLogSerializer,
-    TestSetSerializer,
+    TestSuiteSerializer,
 )
 
 logger = logging.getLogger(__name__)
@@ -50,7 +50,7 @@ logger = logging.getLogger(__name__)
 from .utils import (
     execute_assertions,
     extract_response_variables,
-    normalize_suite_assertions,
+    normalize_scenario_case_assertions,
     prepare_request_body,
     send_api_request,
 )
@@ -61,8 +61,8 @@ from .importers import parse_collection
 from .path_params import resolve_path_parameters
 from .serializers import (
     ApiProjectSerializer, ApiCollectionSerializer, ApiRequestSerializer,
-    EnvironmentSerializer, RequestHistorySerializer, TestSuiteSerializer,
-    TestSuiteRequestSerializer, TestExecutionSerializer, UserSerializer,
+    EnvironmentSerializer, RequestHistorySerializer, ScenarioCaseSerializer,
+    ScenarioCaseRequestSerializer, TestExecutionSerializer, UserSerializer,
     ScheduledTaskSerializer, ScheduledTaskSerializer,
     AIServiceConfigSerializer
 )
@@ -686,7 +686,7 @@ class ApiRequestViewSet(viewsets.ModelViewSet):
                 params[key] = resolver.resolve(params[key])
             url, params = resolve_path_parameters(url, params)
 
-            # 单接口与套件执行共用请求体解析，避免编辑后即时执行与已保存执行行为不一致。
+            # 单接口与场景用例执行共用请求体解析，确保即时执行与已保存执行行为一致。
             body_type, body_data = prepare_request_body(
                 request_body, request_method, variables, resolver
             )
@@ -921,29 +921,29 @@ class RequestHistoryViewSet(viewsets.ModelViewSet):
         return Response({'message': f'成功删除 {deleted_count} 条记录'})
 
 
-def _ensure_test_suite_folder_paths(project, path, include_leaf=True):
+def _ensure_scenario_case_folder_paths(project, path, include_leaf=True):
     parts = path.split('/')
     stop = len(parts) if include_leaf else len(parts) - 1
     for index in range(1, stop + 1):
         folder_path = '/'.join(parts[:index])
-        TestSuiteFolder.objects.get_or_create(project=project, path=folder_path)
+        ScenarioCaseFolder.objects.get_or_create(project=project, path=folder_path)
 
 
-class TestSuiteFolderViewSet(viewsets.ModelViewSet):
-    serializer_class = TestSuiteFolderSerializer
+class ScenarioCaseFolderViewSet(viewsets.ModelViewSet):
+    serializer_class = ScenarioCaseFolderSerializer
     permission_classes = [IsAuthenticated]
     http_method_names = ['get', 'post', 'put', 'patch', 'delete', 'head', 'options']
 
     def get_queryset(self):
         user = self.request.user
-        queryset = TestSuiteFolder.objects.filter(
+        queryset = ScenarioCaseFolder.objects.filter(
             project__in=ApiProject.objects.filter(models.Q(owner=user) | models.Q(members=user))
         ).distinct()
         project_id = self.request.query_params.get('project')
         return queryset.filter(project_id=project_id) if project_id else queryset
 
     def _ensure_parent_folders(self, project, path):
-        _ensure_test_suite_folder_paths(project, path, include_leaf=False)
+        _ensure_scenario_case_folder_paths(project, path, include_leaf=False)
 
     def perform_create(self, serializer):
         path = serializer.validated_data['path'].strip('/')
@@ -989,34 +989,34 @@ class TestSuiteFolderViewSet(viewsets.ModelViewSet):
             item.path = replacements[item.pk]
             item.save(update_fields=['path', 'updated_at'])
 
-        suites = TestSuite.objects.filter(project=folder.project).filter(
+        scenario_cases = ScenarioCase.objects.filter(project=folder.project).filter(
             models.Q(folder=old_path) | models.Q(folder__startswith=old_path + '/')
         )
-        for suite in suites:
-            suite.folder = new_path + suite.folder[len(old_path):]
-            suite.save(update_fields=['folder', 'updated_at'])
+        for scenario_case in scenario_cases:
+            scenario_case.folder = new_path + scenario_case.folder[len(old_path):]
+            scenario_case.save(update_fields=['folder', 'updated_at'])
 
     @transaction.atomic
     def perform_destroy(self, instance):
         folder_paths = list(self.get_queryset().filter(project=instance.project).filter(
             models.Q(path=instance.path) | models.Q(path__startswith=instance.path + '/')
         ).values_list('path', flat=True))
-        TestSuite.objects.filter(project=instance.project, folder__in=folder_paths).update(
+        ScenarioCase.objects.filter(project=instance.project, folder__in=folder_paths).update(
             folder='', updated_at=timezone.now()
         )
-        TestSuiteFolder.objects.filter(project=instance.project, path__in=folder_paths).delete()
+        ScenarioCaseFolder.objects.filter(project=instance.project, path__in=folder_paths).delete()
 
 
-class TestSuiteViewSet(viewsets.ModelViewSet):
-    queryset = TestSuite.objects.all()
-    serializer_class = TestSuiteSerializer
+class ScenarioCaseViewSet(viewsets.ModelViewSet):
+    queryset = ScenarioCase.objects.all()
+    serializer_class = ScenarioCaseSerializer
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ['project']
     
     def get_queryset(self):
         user = self.request.user
-        return TestSuite.objects.filter(
+        return ScenarioCase.objects.filter(
             project__in=ApiProject.objects.filter(
                 models.Q(owner=user) | models.Q(members=user)
             )
@@ -1024,25 +1024,25 @@ class TestSuiteViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'])
     def execute(self, request, pk=None):
-        """执行测试套件"""
-        test_suite = self.get_object()
+        """执行场景用例"""
+        scenario_case = self.get_object()
         
         try:
             # 创建执行记录
             execution = TestExecution.objects.create(
-                test_suite=test_suite,
+                scenario_case=scenario_case,
                 status='RUNNING',
                 start_time=timezone.now(),
                 executed_by=request.user
             )
             
-            # 获取套件中的请求
-            suite_requests = TestSuiteRequest.objects.filter(
-                test_suite=test_suite,
+            # 获取场景用例中的请求
+            scenario_case_requests = ScenarioCaseRequest.objects.filter(
+                scenario_case=scenario_case,
                 enabled=True
             ).order_by('order')
             
-            execution.total_requests = suite_requests.count()
+            execution.total_requests = scenario_case_requests.count()
             execution.save()
             
             results = []
@@ -1051,15 +1051,15 @@ class TestSuiteViewSet(viewsets.ModelViewSet):
             
             # 创建变量解析器
             resolver = VariableResolver()
-            suite_variables = dict(test_suite.environment.variables or {}) if test_suite.environment else {}
+            scenario_case_variables = dict(scenario_case.environment.variables or {}) if scenario_case.environment else {}
 
             # 执行每个请求
-            for suite_request in suite_requests:
-                api_request = suite_request.request
+            for scenario_case_request in scenario_case_requests:
+                api_request = scenario_case_request.request
                 
                 try:
                     # 解析环境变量
-                    variables = dict(suite_variables)
+                    variables = dict(scenario_case_variables)
                     
                     # 替换URL中的变量（先解析动态函数，再替换环境变量）
                     url = self._replace_variables(api_request.url, variables)
@@ -1106,17 +1106,17 @@ class TestSuiteViewSet(viewsets.ModelViewSet):
                     end_time = time.time()
                     response_time = (end_time - start_time) * 1000
 
-                    # 套件后续请求使用当前请求新提取的变量。
+                    # 场景用例后续请求使用当前请求新提取的变量。
                     _, extracted_variables = extract_response_variables(
                         response,
-                        suite_request.extractors,
+                        scenario_case_request.extractors,
                     )
-                    # suite_variables 仅存在于本次套件执行上下文，执行结束后自动释放。
+                    # scenario_case_variables 仅存在于本次场景用例执行上下文，执行结束后自动释放。
                     variables.update(extracted_variables)
-                    suite_variables.update(extracted_variables)
+                    scenario_case_variables.update(extracted_variables)
                     
-                    # 套件请求配置是执行时的唯一断言来源，允许在套件内独立编辑。
-                    assertions = normalize_suite_assertions(suite_request.assertions, response_time)
+                    # 场景用例请求配置是执行时的唯一断言来源，允许在场景用例内独立编辑。
+                    assertions = normalize_scenario_case_assertions(scenario_case_request.assertions, response_time)
                     # 添加响应时间到断言中
                     for assertion in assertions:
                         if assertion.get('type') == 'response_time':
@@ -1157,7 +1157,7 @@ class TestSuiteViewSet(viewsets.ModelViewSet):
                     # 保存请求历史
                     RequestHistory.objects.create(
                         request=api_request,
-                        environment=test_suite.environment,
+                        environment=scenario_case.environment,
                         request_data={
                             'url': url,
                             'method': api_request.method,
@@ -1197,9 +1197,9 @@ class TestSuiteViewSet(viewsets.ModelViewSet):
             # 记录执行操作
             log_operation(
                 operation_type='execute',
-                resource_type='suite',
-                resource_id=test_suite.id,
-                resource_name=test_suite.name,
+                resource_type='scenario_case',
+                resource_id=scenario_case.id,
+                resource_name=scenario_case.name,
                 user=request.user
             )
             
@@ -1212,37 +1212,37 @@ class TestSuiteViewSet(viewsets.ModelViewSet):
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
     def perform_create(self, serializer):
-        """创建测试套件时记录日志"""
+        """创建场景用例时记录日志"""
         instance = serializer.save()
         if instance.folder:
-            _ensure_test_suite_folder_paths(instance.project, instance.folder)
+            _ensure_scenario_case_folder_paths(instance.project, instance.folder)
         log_operation(
             operation_type='create',
-            resource_type='suite',
+            resource_type='scenario_case',
             resource_id=instance.id,
             resource_name=instance.name,
             user=self.request.user
         )
 
     def perform_update(self, serializer):
-        """更新测试套件时记录日志"""
+        """更新场景用例时记录日志"""
         folder_path = serializer.validated_data.get('folder', serializer.instance.folder)
         instance = serializer.save()
         if folder_path:
-            _ensure_test_suite_folder_paths(instance.project, folder_path)
+            _ensure_scenario_case_folder_paths(instance.project, folder_path)
         log_operation(
             operation_type='edit',
-            resource_type='suite',
+            resource_type='scenario_case',
             resource_id=instance.id,
             resource_name=instance.name,
             user=self.request.user
         )
 
     def perform_destroy(self, instance):
-        """删除测试套件时记录日志"""
+        """删除场景用例时记录日志"""
         log_operation(
             operation_type='delete',
-            resource_type='suite',
+            resource_type='scenario_case',
             resource_id=instance.id,
             resource_name=instance.name,
             user=self.request.user
@@ -1251,20 +1251,20 @@ class TestSuiteViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'], url_path='add-requests')
     def add_requests(self, request, pk=None):
-        """添加请求到测试套件"""
-        test_suite = self.get_object()
+        """添加请求到场景用例"""
+        scenario_case = self.get_object()
         request_ids = request.data.get('request_ids', [])
         
         try:
             for request_id in request_ids:
                 api_request = ApiRequest.objects.get(id=request_id)
-                TestSuiteRequest.objects.get_or_create(
-                    test_suite=test_suite,
+                ScenarioCaseRequest.objects.get_or_create(
+                    scenario_case=scenario_case,
                     request=api_request,
                     defaults={
-                        'order': TestSuiteRequest.objects.filter(test_suite=test_suite).count(),
+                        'order': ScenarioCaseRequest.objects.filter(scenario_case=scenario_case).count(),
                         'enabled': True,
-                        # 新增到套件时复制接口配置，之后可在套件中独立调整。
+                        # 新增到场景用例时复制接口配置，之后可在场景用例中独立调整。
                         'assertions': list(api_request.assertions or []),
                         'extractors': list(api_request.extractors or [])
                     }
@@ -1312,16 +1312,16 @@ class TestSuiteViewSet(viewsets.ModelViewSet):
             return data
 
 
-class TestSetViewSet(viewsets.ModelViewSet):
-    """测试套：固定场景用例集合，可定时执行"""
-    serializer_class = TestSetSerializer
+class TestSuiteViewSet(viewsets.ModelViewSet):
+    """测试套件：固定场景用例集合。"""
+    serializer_class = TestSuiteSerializer
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ['project']
 
     def get_queryset(self):
         user = self.request.user
-        return TestSet.objects.filter(
+        return TestSuite.objects.filter(
             project__in=ApiProject.objects.filter(
                 models.Q(owner=user) | models.Q(members=user)
             )
@@ -1329,21 +1329,21 @@ class TestSetViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'])
     def execute(self, request, pk=None):
-        """依次执行测试套内的每个场景用例"""
-        ts = self.get_object()
-        items = TestSetItem.objects.filter(test_set=ts, enabled=True).order_by('order')
+        """依次执行测试套件中的场景用例。"""
+        test_suite = self.get_object()
+        items = TestSuiteItem.objects.filter(test_suite=test_suite, enabled=True).order_by('order')
         results = []
         for item in items:
-            suite = item.test_suite
+            scenario_case = item.scenario_case
             try:
-                suite_view = TestSuiteViewSet()
-                suite_view.request = request
-                suite_view.kwargs = {'pk': suite.id}
-                resp = suite_view.execute(request, pk=suite.id)
+                scenario_case_view = ScenarioCaseViewSet()
+                scenario_case_view.request = request
+                scenario_case_view.kwargs = {'pk': scenario_case.id}
+                resp = scenario_case_view.execute(request, pk=scenario_case.id)
                 data = resp.data
                 results.append({
-                    'suite_id': suite.id,
-                    'suite_name': suite.name,
+                    'scenario_case_id': scenario_case.id,
+                    'scenario_case_name': scenario_case.name,
                     'status': data.get('status'),
                     'passed': data.get('passed_requests'),
                     'failed': data.get('failed_requests'),
@@ -1352,45 +1352,45 @@ class TestSetViewSet(viewsets.ModelViewSet):
                 })
             except Exception as e:
                 results.append({
-                    'suite_id': suite.id,
-                    'suite_name': suite.name,
+                    'scenario_case_id': scenario_case.id,
+                    'scenario_case_name': scenario_case.name,
                     'status': 'FAILED',
                     'error': str(e),
                 })
-        return Response({'test_set': ts.name, 'results': results})
+        return Response({'test_suite': test_suite.name, 'results': results})
 
 
-class TestSuiteRequestViewSet(viewsets.ModelViewSet):
-    queryset = TestSuiteRequest.objects.all()
-    serializer_class = TestSuiteRequestSerializer
+class ScenarioCaseRequestViewSet(viewsets.ModelViewSet):
+    queryset = ScenarioCaseRequest.objects.all()
+    serializer_class = ScenarioCaseRequestSerializer
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend]
-    filterset_fields = ['test_suite', 'enabled']
+    filterset_fields = ['scenario_case', 'enabled']
     
     def get_queryset(self):
         user = self.request.user
-        return TestSuiteRequest.objects.filter(
-            test_suite__project__in=ApiProject.objects.filter(
+        return ScenarioCaseRequest.objects.filter(
+            scenario_case__project__in=ApiProject.objects.filter(
                 models.Q(owner=user) | models.Q(members=user)
             )
         ).distinct()
 
     @action(detail=True, methods=['post'])
     def move(self, request, pk=None):
-        """在同一套件内移动请求，并保持执行顺序连续。"""
-        suite_request = self.get_object()
+        """在同一场景用例内移动请求，并保持执行顺序连续。"""
+        scenario_case_request = self.get_object()
         direction = request.data.get('direction')
         if direction not in {'up', 'down'}:
             return Response({'error': 'direction must be up or down'}, status=status.HTTP_400_BAD_REQUEST)
 
         with transaction.atomic():
             ordered_requests = list(
-                TestSuiteRequest.objects.select_for_update()
-                .filter(test_suite=suite_request.test_suite)
+                ScenarioCaseRequest.objects.select_for_update()
+                .filter(scenario_case=scenario_case_request.scenario_case)
                 .order_by('order', 'id')
             )
             current_index = next(
-                (index for index, item in enumerate(ordered_requests) if item.id == suite_request.id),
+                (index for index, item in enumerate(ordered_requests) if item.id == scenario_case_request.id),
                 None,
             )
             if current_index is None:
@@ -1398,7 +1398,7 @@ class TestSuiteRequestViewSet(viewsets.ModelViewSet):
 
             target_index = current_index - 1 if direction == 'up' else current_index + 1
             if target_index < 0 or target_index >= len(ordered_requests):
-                return Response(TestSuiteRequestSerializer(suite_request).data)
+                return Response(ScenarioCaseRequestSerializer(scenario_case_request).data)
 
             ordered_requests[current_index], ordered_requests[target_index] = (
                 ordered_requests[target_index], ordered_requests[current_index]
@@ -1408,7 +1408,7 @@ class TestSuiteRequestViewSet(viewsets.ModelViewSet):
                     item.order = order
                     item.save(update_fields=['order'])
 
-        return Response(TestSuiteRequestSerializer(suite_request).data)
+        return Response(ScenarioCaseRequestSerializer(scenario_case_request).data)
 
 
 class TestExecutionViewSet(viewsets.ReadOnlyModelViewSet):
@@ -1416,17 +1416,21 @@ class TestExecutionViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = TestExecutionSerializer
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
-    filterset_fields = ['status', 'test_suite']
+    filterset_fields = ['status']
     ordering = ['-created_at']
     pagination_class = StandardPagination
     
     def get_queryset(self):
         user = self.request.user
-        return TestExecution.objects.filter(
-            test_suite__project__in=ApiProject.objects.filter(
+        queryset = TestExecution.objects.filter(
+            scenario_case__project__in=ApiProject.objects.filter(
                 models.Q(owner=user) | models.Q(members=user)
             )
         ).distinct()
+        scenario_case_id = self.request.query_params.get('scenario_case')
+        if scenario_case_id:
+            queryset = queryset.filter(scenario_case_id=scenario_case_id)
+        return queryset
     
     @action(detail=True, methods=['post'], url_path='generate-allure-report')
     def generate_allure_report(self, request, pk=None):
@@ -1568,11 +1572,11 @@ class TestExecutionViewSet(viewsets.ReadOnlyModelViewSet):
 <!DOCTYPE html>
 <html>
 <head>
-    <title>测试报告 - {execution.test_suite.name}</title>
+    <title>测试报告 - {execution.scenario_case.name}</title>
 </head>
 <body>
     <h1>测试报告</h1>
-    <p>测试套件: {execution.test_suite.name}</p>
+    <p>场景用例: {execution.scenario_case.name}</p>
     <p>状态: {execution.get_status_display()}</p>
     <p>总请求数: {execution.total_requests}</p>
     <p>通过: {execution.passed_requests}</p>
@@ -1590,7 +1594,7 @@ class TestExecutionViewSet(viewsets.ReadOnlyModelViewSet):
 <html>
 <head>
     <meta charset="UTF-8">
-    <title>测试报告概览 - {execution.test_suite.name}</title>
+    <title>测试报告概览 - {execution.scenario_case.name}</title>
     <style>
         body {{
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
@@ -1782,8 +1786,8 @@ class TestExecutionViewSet(viewsets.ReadOnlyModelViewSet):
         <div class="header-content">
             <div class="header-info">
                 <h1>接口测试报告</h1>
-                <p>测试套件: {execution.test_suite.name}</p>
-                <p>项目: {execution.test_suite.project.name}</p>
+                <p>场景用例: {execution.scenario_case.name}</p>
+                <p>项目: {execution.scenario_case.project.name}</p>
             </div>
             <div class="header-actions">
                 <a href="index.html" target="_blank" class="allure-report-btn">查看完整Allure报告</a>
@@ -1907,7 +1911,7 @@ class TestExecutionViewSet(viewsets.ReadOnlyModelViewSet):
             # 生成容器文件，定义测试套件
             container_data = {
                 "uuid": str(execution.id),
-                "name": execution.test_suite.name,
+                "name": execution.scenario_case.name,
                 "children": []
             }
 
@@ -1930,14 +1934,14 @@ class TestExecutionViewSet(viewsets.ReadOnlyModelViewSet):
                     "start": int(time.time() * 1000) - 1000,  # 模拟开始时间
                     "stop": int(time.time() * 1000),  # 模拟结束时间
                     "description": f"Method: {result.get('method', 'GET')}\nURL: {result.get('url', '')}",
-                    "historyId": f"{execution.test_suite.id}-{i}",
-                    "fullName": f"{execution.test_suite.name} / {result.get('name', f'请求 {i+1}')}",
+                    "historyId": f"{execution.scenario_case.id}-{i}",
+                    "fullName": f"{execution.scenario_case.name} / {result.get('name', f'请求 {i+1}')}",
                     "links": [],
                     "labels": [
-                        {"name": "suite", "value": execution.test_suite.name},
-                        {"name": "testClass", "value": execution.test_suite.name},
+                        {"name": "suite", "value": execution.scenario_case.name},
+                        {"name": "testClass", "value": execution.scenario_case.name},
                         {"name": "package", "value": "api_testing"},
-                        {"name": "project", "value": execution.test_suite.project.name}
+                        {"name": "project", "value": execution.scenario_case.project.name}
                     ],
                     "parameters": [
                         {"name": "method", "value": result.get('method', 'GET')},
@@ -2234,7 +2238,7 @@ class ScheduledTaskViewSet(viewsets.ModelViewSet):
         from .utils import execute_test_suite
         
         result = execute_test_suite(
-            task.test_suite, 
+            task.test_suite,
             task.environment, 
             task.created_by
         )
@@ -2809,8 +2813,8 @@ class ApiDashboardViewSet(viewsets.ViewSet):
             collection__project_id__in=project_ids
         ).count()
         
-        # 测试套件数量
-        suite_count = TestSuite.objects.filter(
+        # 场景用例数量
+        scenario_case_count = ScenarioCase.objects.filter(
             project_id__in=project_ids
         ).count()
         
@@ -2822,7 +2826,7 @@ class ApiDashboardViewSet(viewsets.ViewSet):
         return Response({
             'project_count': project_count,
             'interface_count': interface_count,
-            'suite_count': suite_count,
+            'scenario_case_count': scenario_case_count,
             'history_count': history_count
         })
 

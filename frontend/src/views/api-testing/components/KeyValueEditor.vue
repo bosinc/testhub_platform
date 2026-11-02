@@ -212,8 +212,18 @@ const loadVariableFunctions = async () => {
       if (typeof groupedFunctions === 'object' && !Array.isArray(groupedFunctions)) {
         // 对每个分类进行国际化处理
         const localizedCategories = []
+        const categoryMapping = {
+          '随机数': t('apiTesting.component.keyValueEditor.categories.randomNumber'),
+          '测试数据': t('apiTesting.component.keyValueEditor.categories.testData'),
+          '字符串': t('apiTesting.component.keyValueEditor.categories.string'),
+          '编码转换': t('apiTesting.component.keyValueEditor.categories.encodingConversion'),
+          '加密': t('apiTesting.component.keyValueEditor.categories.encryption'),
+          '时间日期': t('apiTesting.component.keyValueEditor.categories.datetime'),
+          Crontab: t('apiTesting.component.keyValueEditor.categories.crontab'),
+          '未分类': t('apiTesting.component.keyValueEditor.categories.uncategorized')
+        }
         Object.entries(groupedFunctions).forEach(([key, variables]) => {
-          let localizedLabel = key
+          let localizedLabel = categoryMapping[key] || key
           const categoryKey = key.toLowerCase().replace(/\s+/g, '')
           const i18nKey = `apiTesting.component.keyValueEditor.categories.${categoryKey}`
           try {
@@ -249,7 +259,7 @@ const loadVariableFunctions = async () => {
         groupedFunctions.forEach(func => {
           const rawCategory = func.category || '未分类'
           // 使用映射表获取正确的分类名称
-          const category = categoryMapping[rawCategory] || rawCategory
+          const category = categoryMapping[rawCategory] || t('apiTesting.component.keyValueEditor.categories.uncategorized')
           if (!grouped[category]) {
             grouped[category] = []
           }
@@ -300,7 +310,7 @@ const loadVariableFunctions = async () => {
     }
   } catch (error) {
     console.error('加载变量函数失败:', error)
-    ElMessage.error('加载变量函数失败，使用本地数据')
+    ElMessage.error(t('apiTesting.interface.loadFunctionsFailed'))
     // 加载失败时使用本地变量分类数据
     useLocalVariableCategories()
   } finally {

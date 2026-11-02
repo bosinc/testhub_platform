@@ -72,9 +72,9 @@
               <el-icon><VideoPlay /></el-icon>
               <span>{{ $t('menu.automationTesting') }}</span>
             </el-menu-item>
-            <el-menu-item index="/api-testing/test-sets">
+            <el-menu-item index="/api-testing/test-suites">
               <el-icon><Files /></el-icon>
-              <span>测试套件</span>
+              <span>{{ $t('menu.apiTestSuites') }}</span>
             </el-menu-item>
             <el-menu-item index="/api-testing/history">
               <el-icon><Timer /></el-icon>

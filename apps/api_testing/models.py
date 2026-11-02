@@ -175,38 +175,82 @@ class RequestHistory(models.Model):
         return f"{self.request.name} - {self.executed_at}"
 
 
-class TestSuiteFolder(models.Model):
+class ScenarioCaseFolder(models.Model):
     """场景用例文件夹，按项目保存完整路径以支持空文件夹和嵌套结构。"""
-    project = models.ForeignKey(ApiProject, on_delete=models.CASCADE, related_name='test_suite_folders',
+    project = models.ForeignKey(ApiProject, on_delete=models.CASCADE, related_name='scenario_case_folders',
                                 verbose_name='所属项目')
     path = models.CharField(max_length=200, verbose_name='文件夹路径')
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='创建时间')
     updated_at = models.DateTimeField(auto_now=True, verbose_name='更新时间')
 
     class Meta:
-        db_table = 'api_test_suite_folders'
+        db_table = 'api_scenario_case_folders'
         verbose_name = '场景用例文件夹'
         verbose_name_plural = '场景用例文件夹'
         ordering = ['path']
         constraints = [
-            models.UniqueConstraint(fields=['project', 'path'], name='unique_test_suite_folder_path'),
+            models.UniqueConstraint(fields=['project', 'path'], name='unique_scenario_case_folder_path'),
         ]
 
     def __str__(self):
         return self.path
 
 
-class TestSuite(models.Model):
-    """测试套件模型（自动化测试）"""
-    project = models.ForeignKey(ApiProject, on_delete=models.CASCADE, related_name='test_suites',
+class ScenarioCase(models.Model):
+    """接口测试中的场景用例，由多个 API 请求组成。"""
+    project = models.ForeignKey(ApiProject, on_delete=models.CASCADE, related_name='scenario_cases',
                                 verbose_name='所属项目')
-    name = models.CharField(max_length=200, verbose_name='套件名称')
-    description = models.TextField(blank=True, verbose_name='套件描述')
+    name = models.CharField(max_length=200, verbose_name='场景用例名称')
+    description = models.TextField(blank=True, verbose_name='场景用例描述')
     folder = models.CharField(max_length=200, blank=True, default='', verbose_name='场景用例分组')
-    requests = models.ManyToManyField(ApiRequest, through='TestSuiteRequest', verbose_name='包含请求')
+    requests = models.ManyToManyField(ApiRequest, through='ScenarioCaseRequest', verbose_name='包含请求')
     environment = models.ForeignKey(Environment, on_delete=models.SET_NULL, null=True, blank=True,
                                     verbose_name='执行环境')
-    created_by = models.ForeignKey(User, on_delete=models.CASCADE, related_name='api_test_suites',
+    created_by = models.ForeignKey(User, on_delete=models.CASCADE, related_name='scenario_cases',
+                                   verbose_name='创建者')
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='创建时间')
+    updated_at = models.DateTimeField(auto_now=True, verbose_name='更新时间')
+
+    class Meta:
+        db_table = 'api_scenario_cases'
+        verbose_name = '场景用例'
+        verbose_name_plural = '场景用例'
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return self.name
+
+
+class ScenarioCaseRequest(models.Model):
+    """场景用例中的请求关联模型"""
+    scenario_case = models.ForeignKey(ScenarioCase, on_delete=models.CASCADE, verbose_name='场景用例')
+    request = models.ForeignKey(ApiRequest, on_delete=models.CASCADE, verbose_name='API请求')
+    order = models.IntegerField(default=0, verbose_name='执行顺序')
+    assertions = models.JSONField(default=list, verbose_name='断言规则')
+    extractors = models.JSONField(default=list, verbose_name='变量提取规则')
+    enabled = models.BooleanField(default=True, verbose_name='是否启用')
+
+    class Meta:
+        db_table = 'api_scenario_case_requests'
+        verbose_name = '场景用例请求'
+        verbose_name_plural = '场景用例请求'
+        unique_together = ['scenario_case', 'request']
+        ordering = ['order']
+
+    def __str__(self):
+        return f"{self.scenario_case.name} - {self.request.name}"
+
+
+class TestSuite(models.Model):
+    """测试套件：将多个场景用例组合为固定回归集，可定时执行。"""
+    project = models.ForeignKey(ApiProject, on_delete=models.CASCADE, related_name='test_suites',
+                                verbose_name='所属项目')
+    name = models.CharField(max_length=200, verbose_name='测试套件名称')
+    description = models.TextField(blank=True, verbose_name='描述')
+    scenario_cases = models.ManyToManyField(ScenarioCase, through='TestSuiteItem', verbose_name='包含场景用例')
+    environment = models.ForeignKey(Environment, on_delete=models.SET_NULL, null=True, blank=True,
+                                    verbose_name='执行环境')
+    created_by = models.ForeignKey(User, on_delete=models.CASCADE, related_name='test_suites',
                                    verbose_name='创建者')
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='创建时间')
     updated_at = models.DateTimeField(auto_now=True, verbose_name='更新时间')
@@ -221,68 +265,22 @@ class TestSuite(models.Model):
         return self.name
 
 
-class TestSuiteRequest(models.Model):
-    """测试套件中的请求关联模型"""
+class TestSuiteItem(models.Model):
+    """测试套件与场景用例的顺序关联。"""
     test_suite = models.ForeignKey(TestSuite, on_delete=models.CASCADE, verbose_name='测试套件')
-    request = models.ForeignKey(ApiRequest, on_delete=models.CASCADE, verbose_name='API请求')
-    order = models.IntegerField(default=0, verbose_name='执行顺序')
-    assertions = models.JSONField(default=list, verbose_name='断言规则')
-    extractors = models.JSONField(default=list, verbose_name='变量提取规则')
-    enabled = models.BooleanField(default=True, verbose_name='是否启用')
-
-    class Meta:
-        db_table = 'api_test_suite_requests'
-        verbose_name = '套件请求'
-        verbose_name_plural = '套件请求'
-        unique_together = ['test_suite', 'request']
-        ordering = ['order']
-
-    def __str__(self):
-        return f"{self.test_suite.name} - {self.request.name}"
-
-
-class TestSet(models.Model):
-    """测试套：把多个场景用例(TestSuite)组成固定回归集，可定时执行"""
-    project = models.ForeignKey(ApiProject, on_delete=models.CASCADE, related_name='test_sets',
-                                verbose_name='所属项目')
-    name = models.CharField(max_length=200, verbose_name='测试套名称')
-    description = models.TextField(blank=True, verbose_name='描述')
-    suites = models.ManyToManyField(TestSuite, through='TestSetItem', verbose_name='包含场景用例')
-    environment = models.ForeignKey(Environment, on_delete=models.SET_NULL, null=True, blank=True,
-                                    verbose_name='执行环境')
-    cron = models.CharField(max_length=100, blank=True, default='', verbose_name='定时cron表达式')
-    enabled = models.BooleanField(default=True, verbose_name='是否启用定时')
-    created_by = models.ForeignKey(User, on_delete=models.CASCADE, related_name='test_sets',
-                                   verbose_name='创建者')
-    created_at = models.DateTimeField(auto_now_add=True, verbose_name='创建时间')
-    updated_at = models.DateTimeField(auto_now=True, verbose_name='更新时间')
-
-    class Meta:
-        db_table = 'api_test_sets'
-        verbose_name = '测试套'
-        verbose_name_plural = '测试套'
-        ordering = ['-created_at']
-
-    def __str__(self):
-        return self.name
-
-
-class TestSetItem(models.Model):
-    """测试套与场景用例的顺序关联"""
-    test_set = models.ForeignKey(TestSet, on_delete=models.CASCADE, verbose_name='测试套')
-    test_suite = models.ForeignKey(TestSuite, on_delete=models.CASCADE, verbose_name='场景用例')
+    scenario_case = models.ForeignKey(ScenarioCase, on_delete=models.CASCADE, verbose_name='场景用例')
     order = models.IntegerField(default=0, verbose_name='执行顺序')
     enabled = models.BooleanField(default=True, verbose_name='是否启用')
 
     class Meta:
-        db_table = 'api_test_set_items'
-        verbose_name = '测试套项'
-        verbose_name_plural = '测试套项'
-        unique_together = [('test_set', 'test_suite')]
+        db_table = 'api_test_suite_items'
+        verbose_name = '测试套件项'
+        verbose_name_plural = '测试套件项'
+        unique_together = [('test_suite', 'scenario_case')]
         ordering = ['order']
 
     def __str__(self):
-        return f"{self.test_set.name} - {self.test_suite.name}"
+        return f"{self.test_suite.name} - {self.scenario_case.name}"
 
 
 class TestExecution(models.Model):
@@ -295,8 +293,8 @@ class TestExecution(models.Model):
         ('CANCELLED', '已取消'),
     ]
 
-    test_suite = models.ForeignKey(TestSuite, on_delete=models.CASCADE, related_name='executions',
-                                   verbose_name='测试套件')
+    scenario_case = models.ForeignKey(ScenarioCase, on_delete=models.CASCADE, related_name='executions',
+                                      verbose_name='场景用例')
     status = models.CharField(max_length=20, choices=EXECUTION_STATUS_CHOICES, default='PENDING',
                               verbose_name='执行状态')
     start_time = models.DateTimeField(null=True, blank=True, verbose_name='开始时间')
@@ -315,7 +313,7 @@ class TestExecution(models.Model):
         ordering = ['-created_at']
 
     def __str__(self):
-        return f"{self.test_suite.name} - {self.created_at}"
+        return f"{self.scenario_case.name} - {self.created_at}"
 
 
 # 定时任务相关模型
@@ -354,7 +352,7 @@ class ScheduledTask(models.Model):
     execute_at = models.DateTimeField(null=True, blank=True, verbose_name='执行时间')
 
     # 任务配置
-    test_suite = models.ForeignKey('TestSuite', on_delete=models.CASCADE, null=True, blank=True,
+    test_suite = models.ForeignKey(TestSuite, on_delete=models.CASCADE, null=True, blank=True,
                                    verbose_name='测试套件')
     api_request = models.ForeignKey('ApiRequest', on_delete=models.CASCADE, null=True, blank=True,
                                     verbose_name='API请求')
@@ -646,7 +644,7 @@ class OperationLog(models.Model):
         ('project', '项目'),
         ('collection', '集合'),
         ('request', '请求'),
-        ('suite', '测试套件'),
+        ('scenario_case', '场景用例'),
         ('environment', '环境'),
         ('task', '定时任务'),
         ('execution', '执行记录'),

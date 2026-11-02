@@ -36,8 +36,8 @@
                 <el-icon><Collection /></el-icon>
               </div>
               <div class="stat-info">
-                <div class="stat-value">{{ suiteCount }}</div>
-                <div class="stat-label">{{ $t('apiTesting.dashboard.testSuites') }}</div>
+                <div class="stat-value">{{ scenarioCaseCount }}</div>
+                <div class="stat-label">{{ $t('apiTesting.dashboard.scenarioCases') }}</div>
               </div>
             </div>
           </el-card>
@@ -195,12 +195,12 @@ import {
   getOperationLogs
 } from '@/api/api-testing'
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 
 // 统计数据
 const projectCount = ref(0)
 const interfaceCount = ref(0)
-const suiteCount = ref(0)
+const scenarioCaseCount = ref(0)
 const historyCount = ref(0)
 
 const loading = ref(false)
@@ -220,7 +220,7 @@ const loadDashboardData = async () => {
     const stats = statsRes.data
     projectCount.value = stats.project_count || 0
     interfaceCount.value = stats.interface_count || 0
-    suiteCount.value = stats.suite_count || 0
+    scenarioCaseCount.value = stats.scenario_case_count || 0
     historyCount.value = stats.history_count || 0
     
     // 更新操作日志
@@ -285,7 +285,7 @@ const formatTime = (timeStr) => {
     return t('apiTesting.dashboard.timeFormat.daysAgo', { n: Math.floor(diff / 86400000) })
   }
   // 超过7天显示具体日期
-  return date.toLocaleString('zh-CN', {
+  return date.toLocaleString(locale.value.startsWith('zh') ? 'zh-CN' : 'en-US', {
     month: '2-digit',
     day: '2-digit',
     hour: '2-digit',

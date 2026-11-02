@@ -14,10 +14,10 @@ class NullableDateField(serializers.DateField):
         return super().to_internal_value(value)
 from .models import (
     ApiProject, ApiCollection, ApiRequest, Environment,
-    RequestHistory, TestSuite, TestSuiteFolder, TestExecution, TestSuiteRequest,
+    RequestHistory, ScenarioCase, ScenarioCaseFolder, TestExecution, ScenarioCaseRequest,
     ScheduledTask, TaskExecutionLog, NotificationLog,
     TaskNotificationSetting, OperationLog, AIServiceConfig,
-    TestSet, TestSetItem,
+    TestSuite, TestSuiteItem,
 )
 
 User = get_user_model()
@@ -183,30 +183,30 @@ class RequestHistorySerializer(serializers.ModelSerializer):
         ]
 
 
-class TestSuiteRequestSerializer(serializers.ModelSerializer):
+class ScenarioCaseRequestSerializer(serializers.ModelSerializer):
     request = ApiRequestSerializer(read_only=True)
 
     class Meta:
-        model = TestSuiteRequest
+        model = ScenarioCaseRequest
         fields = ['id', 'request', 'order', 'assertions', 'extractors', 'enabled']
 
 
-class TestSuiteFolderSerializer(serializers.ModelSerializer):
+class ScenarioCaseFolderSerializer(serializers.ModelSerializer):
     class Meta:
-        model = TestSuiteFolder
+        model = ScenarioCaseFolder
         fields = ['id', 'project', 'path', 'created_at', 'updated_at']
         read_only_fields = ['created_at', 'updated_at']
 
 
-class TestSuiteSerializer(serializers.ModelSerializer):
+class ScenarioCaseSerializer(serializers.ModelSerializer):
     created_by = UserSerializer(read_only=True)
-    suite_requests = TestSuiteRequestSerializer(source='testsuiterequest_set', many=True, read_only=True)
+    scenario_case_requests = ScenarioCaseRequestSerializer(source='scenariocaserequest_set', many=True, read_only=True)
 
     class Meta:
-        model = TestSuite
+        model = ScenarioCase
         fields = [
             'id', 'name', 'description', 'folder', 'project', 'environment',
-            'suite_requests', 'created_by', 'created_at', 'updated_at'
+            'scenario_case_requests', 'created_by', 'created_at', 'updated_at'
         ]
         read_only_fields = ['created_at', 'updated_at']
 
@@ -215,43 +215,43 @@ class TestSuiteSerializer(serializers.ModelSerializer):
         return super().create(validated_data)
 
 
-class TestSetSerializer(serializers.ModelSerializer):
+class TestSuiteSerializer(serializers.ModelSerializer):
     created_by = UserSerializer(read_only=True)
-    suites = TestSuiteSerializer(many=True, read_only=True)
-    suite_ids = serializers.ListField(child=serializers.IntegerField(), write_only=True, required=False)
+    scenario_cases = ScenarioCaseSerializer(many=True, read_only=True)
+    scenario_case_ids = serializers.ListField(child=serializers.IntegerField(), write_only=True, required=False)
 
     class Meta:
-        model = TestSet
-        fields = ['id', 'name', 'description', 'project', 'environment', 'suites',
-                  'suite_ids', 'cron', 'enabled', 'created_by', 'created_at', 'updated_at']
+        model = TestSuite
+        fields = ['id', 'name', 'description', 'project', 'environment', 'scenario_cases',
+                  'scenario_case_ids', 'created_by', 'created_at', 'updated_at']
         read_only_fields = ['created_at', 'updated_at']
 
     def create(self, validated_data):
-        suite_ids = validated_data.pop('suite_ids', [])
+        scenario_case_ids = validated_data.pop('scenario_case_ids', [])
         validated_data['created_by'] = self.context['request'].user
-        ts = super().create(validated_data)
-        for i, sid in enumerate(suite_ids):
-            TestSetItem.objects.create(test_set=ts, test_suite_id=sid, order=i)
-        return ts
+        test_suite = super().create(validated_data)
+        for i, scenario_case_id in enumerate(scenario_case_ids):
+            TestSuiteItem.objects.create(test_suite=test_suite, scenario_case_id=scenario_case_id, order=i)
+        return test_suite
 
     def update(self, instance, validated_data):
-        suite_ids = validated_data.pop('suite_ids', None)
-        ts = super().update(instance, validated_data)
-        if suite_ids is not None:
-            ts.testsetitem_set.all().delete()
-            for i, sid in enumerate(suite_ids):
-                TestSetItem.objects.create(test_set=ts, test_suite_id=sid, order=i)
-        return ts
+        scenario_case_ids = validated_data.pop('scenario_case_ids', None)
+        test_suite = super().update(instance, validated_data)
+        if scenario_case_ids is not None:
+            test_suite.testsuiteitem_set.all().delete()
+            for i, scenario_case_id in enumerate(scenario_case_ids):
+                TestSuiteItem.objects.create(test_suite=test_suite, scenario_case_id=scenario_case_id, order=i)
+        return test_suite
 
 
 class TestExecutionSerializer(serializers.ModelSerializer):
-    test_suite = TestSuiteSerializer(read_only=True)
+    scenario_case = ScenarioCaseSerializer(read_only=True)
     executed_by = UserSerializer(read_only=True)
 
     class Meta:
         model = TestExecution
         fields = [
-            'id', 'test_suite', 'status', 'start_time', 'end_time',
+            'id', 'scenario_case', 'status', 'start_time', 'end_time',
             'total_requests', 'passed_requests', 'failed_requests',
             'results', 'executed_by', 'created_at'
         ]
@@ -259,15 +259,16 @@ class TestExecutionSerializer(serializers.ModelSerializer):
     def to_representation(self, instance):
         data = super().to_representation(instance)
         # 添加项目名称信息
-        if instance.test_suite and instance.test_suite.project:
-            data['project_name'] = instance.test_suite.project.name
-            data['test_suite_name'] = instance.test_suite.name
+        if instance.scenario_case and instance.scenario_case.project:
+            data['project_name'] = instance.scenario_case.project.name
+            data['scenario_case_name'] = instance.scenario_case.name
         return data
 
 
 class ScheduledTaskSerializer(serializers.ModelSerializer):
     """定时任务序列化器"""
     created_by = UserSerializer(read_only=True)
+    test_suite = serializers.PrimaryKeyRelatedField(queryset=TestSuite.objects.all(), required=False)
     test_suite_name = serializers.CharField(source='test_suite.name', read_only=True)
     api_request_name = serializers.CharField(source='api_request.name', read_only=True)
     environment_name = serializers.CharField(source='environment.name', read_only=True)
