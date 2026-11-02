@@ -327,12 +327,18 @@ class TestCaseExcelImportService:
 
     @staticmethod
     def _get_or_create_module_path(project: Project, names: List[str]) -> Optional[TestCaseModule]:
-        """复用或逐级创建导入文件中的模块路径。"""
+        """复用或逐级创建导入文件中的模块路径，新建模块按文件出现顺序追加排序。"""
         parent = None
         for name in names:
             if not name:
                 break
-            parent, _ = TestCaseModule.objects.get_or_create(project=project, parent=parent, name=name)
+            module = TestCaseModule.objects.filter(project=project, parent=parent, name=name).first()
+            if module is None:
+                module = TestCaseModule.objects.create(
+                    project=project, parent=parent, name=name,
+                    sort_order=TestCaseModule.next_sort_order(project, parent),
+                )
+            parent = module
         return parent
 
     @staticmethod

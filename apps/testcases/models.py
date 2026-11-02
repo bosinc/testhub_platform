@@ -15,11 +15,19 @@ class TestCaseModule(models.Model):
 
     class Meta:
         db_table = 'testcase_modules'
-        ordering = ['sort_order', 'name', 'id']
+        # sort_order 相同时按 id（即创建顺序）兜底，避免按名称字母序打乱导入时的目录顺序
+        ordering = ['sort_order', 'id']
         constraints = [models.UniqueConstraint(fields=['project', 'parent', 'name'], name='unique_testcase_module_name_per_parent')]
 
     def __str__(self):
         return self.name
+
+    @classmethod
+    def next_sort_order(cls, project, parent=None):
+        """返回追加到同一父模块末尾时应使用的排序值。"""
+        current = cls.objects.filter(project=project, parent=parent).aggregate(
+            max_order=models.Max('sort_order'))['max_order']
+        return (current or 0) + 1
 
 
 class TestCase(models.Model):

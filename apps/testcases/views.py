@@ -37,7 +37,7 @@ def get_user_accessible_projects(user):
 
 
 def serialize_module_tree(project_id):
-    modules = list(TestCaseModule.objects.filter(project_id=project_id).order_by('sort_order', 'name', 'id'))
+    modules = list(TestCaseModule.objects.filter(project_id=project_id).order_by('sort_order', 'id'))
     counts = dict(TestCase.objects.filter(project_id=project_id, module__isnull=False)
                   .values_list('module_id').annotate(count=models.Count('id')))
     nodes = {module.id: {'id': module.id, 'name': module.name, 'project_id': module.project_id,
@@ -88,7 +88,10 @@ class TestCaseModuleListCreateView(APIView):
             return Response({'parent_id': '模块最多支持8层'}, status=status.HTTP_400_BAD_REQUEST)
         if TestCaseModule.objects.filter(project=project, parent=parent, name=name).exists():
             return Response({'name': '同一父模块下不能有重名模块'}, status=status.HTTP_400_BAD_REQUEST)
-        module = TestCaseModule.objects.create(project=project, parent=parent, name=name)
+        module = TestCaseModule.objects.create(
+            project=project, parent=parent, name=name,
+            sort_order=TestCaseModule.next_sort_order(project, parent),
+        )
         return Response({'id': module.id, 'name': module.name, 'project_id': project.id,
                          'parent_id': module.parent_id, 'count': 0, 'children': []}, status=status.HTTP_201_CREATED)
 
@@ -134,8 +137,11 @@ class TestCaseModuleDetailView(APIView):
             return Response({'parent_id': '移动后模块层级不能超过8层'}, status=status.HTTP_400_BAD_REQUEST)
         if TestCaseModule.objects.filter(project=module.project, parent=parent, name=module.name).exclude(pk=module.pk).exists():
             return Response({'name': '目标父模块下已有同名模块'}, status=status.HTTP_400_BAD_REQUEST)
+        if module.parent_id != (parent.pk if parent else None):
+            # 移动到新父模块时追加到末尾，避免沿用旧排序值插入到兄弟模块中间
+            module.sort_order = TestCaseModule.next_sort_order(module.project, parent)
         module.parent = parent
-        module.save(update_fields=['parent', 'updated_at'])
+        module.save(update_fields=['parent', 'sort_order', 'updated_at'])
         return Response({'id': module.id, 'parent_id': module.parent_id})
 
 
