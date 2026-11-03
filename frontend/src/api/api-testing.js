@@ -69,6 +69,58 @@ export function getScenarioCases(params) {
   })
 }
 
+// 获取项目下的全部场景用例，自动读取分页结果。
+export async function getAllScenarioCases(params = {}) {
+  return getAllPages('/api-testing/scenario-cases/', params)
+}
+
+// 获取项目下的全部场景用例文件夹，自动读取分页结果。
+export async function getScenarioCaseFolders(params = {}) {
+  return getAllPages('/api-testing/scenario-case-folders/', params)
+}
+
+// 创建场景用例文件夹。
+export function createScenarioCaseFolder(data) {
+  return request({
+    url: '/api-testing/scenario-case-folders/',
+    method: 'post',
+    data
+  })
+}
+
+// 更新场景用例文件夹。
+export function updateScenarioCaseFolder(id, data) {
+  return request({
+    url: `/api-testing/scenario-case-folders/${id}/`,
+    method: 'patch',
+    data
+  })
+}
+
+// 删除场景用例文件夹。
+export function deleteScenarioCaseFolder(id) {
+  return request({
+    url: `/api-testing/scenario-case-folders/${id}/`,
+    method: 'delete'
+  })
+}
+
+async function getAllPages(url, params = {}) {
+  const results = []
+  let page = 1
+  while (true) {
+    const { data } = await request({
+      url,
+      method: 'get',
+      params: { ...params, page, page_size: 1500 }
+    })
+    if (Array.isArray(data)) return data
+    results.push(...(data.results || []))
+    if (!data.next) return results
+    page += 1
+  }
+}
+
 // 获取测试套件列表。定时任务和测试套件管理使用此接口。
 export function getTestSuites(params) {
   return request({

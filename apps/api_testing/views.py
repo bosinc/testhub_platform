@@ -921,14 +921,6 @@ class RequestHistoryViewSet(viewsets.ModelViewSet):
         return Response({'message': f'成功删除 {deleted_count} 条记录'})
 
 
-def _ensure_scenario_case_folder_paths(project, path, include_leaf=True):
-    parts = path.split('/')
-    stop = len(parts) if include_leaf else len(parts) - 1
-    for index in range(1, stop + 1):
-        folder_path = '/'.join(parts[:index])
-        ScenarioCaseFolder.objects.get_or_create(project=project, path=folder_path)
-
-
 class ScenarioCaseFolderViewSet(viewsets.ModelViewSet):
     serializer_class = ScenarioCaseFolderSerializer
     permission_classes = [IsAuthenticated]
@@ -942,69 +934,37 @@ class ScenarioCaseFolderViewSet(viewsets.ModelViewSet):
         project_id = self.request.query_params.get('project')
         return queryset.filter(project_id=project_id) if project_id else queryset
 
-    def _ensure_parent_folders(self, project, path):
-        _ensure_scenario_case_folder_paths(project, path, include_leaf=False)
-
     def perform_create(self, serializer):
-        path = serializer.validated_data['path'].strip('/')
-        if not path or any(not part.strip() for part in path.split('/')):
-            raise serializers.ValidationError({'path': '文件夹名称和路径不能为空'})
         project = serializer.validated_data['project']
         if not ApiProject.objects.filter(
             pk=project.pk,
         ).filter(models.Q(owner=self.request.user) | models.Q(members=self.request.user)).exists():
             raise Http404
-        self._ensure_parent_folders(project, path)
-        serializer.save(path=path)
+        serializer.save()
 
-    @transaction.atomic
     def perform_update(self, serializer):
         folder = self.get_object()
         if serializer.validated_data.get('project', folder.project) != folder.project:
             raise serializers.ValidationError({'project': '文件夹不能移动到其他项目'})
-        old_path = folder.path
-        new_path = serializer.validated_data.get('path', old_path).strip('/')
-        if not new_path or any(not part.strip() for part in new_path.split('/')):
-            raise serializers.ValidationError({'path': '文件夹名称和路径不能为空'})
-        if new_path.startswith(old_path + '/'):
-            raise serializers.ValidationError({'path': '不能将文件夹移动到自身子目录中'})
-
-        affected = list(self.get_queryset().filter(project=folder.project).filter(
-            models.Q(path=old_path) | models.Q(path__startswith=old_path + '/')
-        ).order_by('path'))
-        replacements = {
-            item.pk: new_path + item.path[len(old_path):]
-            for item in affected
-        }
-        target_paths = set(replacements.values())
-        conflicts = self.get_queryset().filter(project=folder.project, path__in=target_paths).exclude(
-            pk__in=replacements
-        )
-        if conflicts.exists():
-            raise serializers.ValidationError({'path': '目标文件夹已存在'})
-
-        self._ensure_parent_folders(folder.project, new_path)
-        serializer.save(path=new_path)
-        for item in affected[1:]:
-            item.path = replacements[item.pk]
-            item.save(update_fields=['path', 'updated_at'])
-
-        scenario_cases = ScenarioCase.objects.filter(project=folder.project).filter(
-            models.Q(folder=old_path) | models.Q(folder__startswith=old_path + '/')
-        )
-        for scenario_case in scenario_cases:
-            scenario_case.folder = new_path + scenario_case.folder[len(old_path):]
-            scenario_case.save(update_fields=['folder', 'updated_at'])
+        serializer.save()
 
     @transaction.atomic
     def perform_destroy(self, instance):
-        folder_paths = list(self.get_queryset().filter(project=instance.project).filter(
-            models.Q(path=instance.path) | models.Q(path__startswith=instance.path + '/')
-        ).values_list('path', flat=True))
-        ScenarioCase.objects.filter(project=instance.project, folder__in=folder_paths).update(
-            folder='', updated_at=timezone.now()
+        # 删除目录树前先解除用例关联，场景用例本身保留并显示在未分组列表中。
+        folder_ids = [instance.pk]
+        pending_ids = [instance.pk]
+        while pending_ids:
+            pending_ids = list(ScenarioCaseFolder.objects.filter(
+                project_id=instance.project_id,
+                parent_id__in=pending_ids,
+            ).values_list('pk', flat=True))
+            folder_ids.extend(pending_ids)
+
+        ScenarioCase.objects.filter(folder_id__in=folder_ids).update(
+            folder=None,
+            updated_at=timezone.now(),
         )
-        ScenarioCaseFolder.objects.filter(project=instance.project, path__in=folder_paths).delete()
+        instance.delete()
 
 
 class ScenarioCaseViewSet(viewsets.ModelViewSet):
@@ -1214,8 +1174,6 @@ class ScenarioCaseViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         """创建场景用例时记录日志"""
         instance = serializer.save()
-        if instance.folder:
-            _ensure_scenario_case_folder_paths(instance.project, instance.folder)
         log_operation(
             operation_type='create',
             resource_type='scenario_case',
@@ -1226,10 +1184,7 @@ class ScenarioCaseViewSet(viewsets.ModelViewSet):
 
     def perform_update(self, serializer):
         """更新场景用例时记录日志"""
-        folder_path = serializer.validated_data.get('folder', serializer.instance.folder)
         instance = serializer.save()
-        if folder_path:
-            _ensure_scenario_case_folder_paths(instance.project, folder_path)
         log_operation(
             operation_type='edit',
             resource_type='scenario_case',

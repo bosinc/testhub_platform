@@ -409,7 +409,7 @@ export default {
       moveScenarioCase: '移动场景用例',
       targetGroup: '目标分组',
       selectTargetGroup: '选择目标分组',
-      selectOrInputPath: '选择或输入文件夹路径',
+      selectOrInputPath: '选择文件夹',
       inputName: '请输入文件夹名称',
       inputNewName: '请输入新的文件夹名称',
       invalidName: '文件夹名称不能包含斜杠',

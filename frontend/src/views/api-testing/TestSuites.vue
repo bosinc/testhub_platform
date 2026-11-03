@@ -114,10 +114,12 @@ import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Delete, Document, Edit, Folder, Plus, Search, VideoPlay } from '@element-plus/icons-vue'
 import api from '@/utils/api'
+import { getAllScenarioCases, getScenarioCaseFolders } from '@/api/api-testing'
 import { getPreferredProjectId, useRememberedProject } from '@/utils/projectSelection'
 
 const testSuites = ref([])
 const scenarios = ref([])
+const scenarioFolders = ref([])
 const projects = ref([])
 const selectedProject = ref(null)
 useRememberedProject(selectedProject, projects)
@@ -152,23 +154,18 @@ const pagedSuites = computed(() => {
 
 const scenarioTree = computed(() => {
   const root = []
-  const folders = new Map()
-
+  const folders = new Map(scenarioFolders.value.map((item) => [
+    item.id,
+    { id: `folder:${item.id}`, name: item.name, type: 'folder', children: [] }
+  ]))
+  scenarioFolders.value.forEach((item) => {
+    const folder = folders.get(item.id)
+    const parent = item.parent ? folders.get(item.parent) : null
+    ;(parent ? parent.children : root).push(folder)
+  })
   for (const scenario of scenarios.value) {
-    const parts = (scenario.folder || t('apiTesting.testSuiteManagement.ungrouped')).split('/').filter(Boolean)
-    let branch = root
-    let path = ''
-    for (const part of parts) {
-      path = path ? `${path}/${part}` : part
-      let folder = folders.get(path)
-      if (!folder) {
-        folder = { id: `folder:${path}`, name: part, type: 'folder', children: [] }
-        folders.set(path, folder)
-        branch.push(folder)
-      }
-      branch = folder.children
-    }
-    branch.push({ id: scenario.id, name: scenario.name, type: 'scenario', scenario })
+    const parent = scenario.folder ? folders.get(scenario.folder) : null
+    ;(parent ? parent.children : root).push({ id: scenario.id, name: scenario.name, type: 'scenario', scenario })
   }
   return root
 })
@@ -232,11 +229,15 @@ async function loadTestSuites() {
 async function loadScenarios(projectId = selectedProject.value) {
   if (!projectId) {
     scenarios.value = []
+    scenarioFolders.value = []
     return
   }
   scenariosLoading.value = true
   try {
-    scenarios.value = await fetchAllPages('/api-testing/scenario-cases/', { project: projectId })
+    ;[scenarios.value, scenarioFolders.value] = await Promise.all([
+      getAllScenarioCases({ project: projectId }),
+      getScenarioCaseFolders({ project: projectId })
+    ])
   } catch {
     ElMessage.error(t('apiTesting.testSuiteManagement.loadScenariosFailed'))
   } finally {

@@ -33,11 +33,8 @@
           <div class="list-header">
             <span>{{ $t('apiTesting.automation.scenarioCases') }}</span>
             <div class="list-actions">
-              <el-button size="small" text :disabled="!selectedProject" :title="$t('apiTesting.automation.folder.create')" @click="createFolder()">
+              <el-button class="create-folder-button" size="small" text :disabled="!selectedProject" :title="$t('apiTesting.automation.folder.create')" @click="createFolder()">
                 <el-icon><FolderAdd /></el-icon>
-              </el-button>
-              <el-button size="small" text @click="refreshScenarioCaseTree">
-              <el-icon><Refresh /></el-icon>
               </el-button>
             </div>
           </div>
@@ -86,7 +83,7 @@
             @click.stop
           >
             <template v-if="contextTreeNode?.type === 'folder'">
-              <li @click="createFolder(contextTreeNode.path)">{{ $t('apiTesting.automation.folder.createSubfolder') }}</li>
+              <li @click="createFolder(contextTreeNode.folderId)">{{ $t('apiTesting.automation.folder.createSubfolder') }}</li>
               <li @click="renameFolder(contextTreeNode)">{{ $t('apiTesting.common.rename') }}</li>
               <li class="danger" @click="deleteFolder(contextTreeNode)">{{ $t('apiTesting.common.delete') }}</li>
             </template>
@@ -280,8 +277,8 @@
         </el-form-item>
 
         <el-form-item :label="$t('apiTesting.automation.folder.label')" prop="folder">
-          <el-select v-model="scenarioCaseForm.folder" filterable allow-create clearable :placeholder="$t('apiTesting.automation.folder.selectOrInputPath')">
-            <el-option v-for="folder in folderOptions" :key="folder" :label="folder" :value="folder" />
+          <el-select v-model="scenarioCaseForm.folder" filterable clearable :placeholder="$t('apiTesting.automation.folder.selectOrInputPath')">
+            <el-option v-for="folder in folderOptions" :key="folder.id" :label="folder.label" :value="folder.id" />
           </el-select>
         </el-form-item>
 
@@ -309,13 +306,13 @@
       <el-form label-width="90px">
         <el-form-item :label="$t('apiTesting.automation.folder.targetGroup')">
           <el-select v-model="moveTargetFolder" :placeholder="$t('apiTesting.automation.folder.selectTargetGroup')" style="width: 100%">
-            <el-option v-for="folder in moveFolderOptions" :key="folder" :label="folder" :value="folder" />
+            <el-option v-for="folder in moveFolderOptions" :key="folder.id" :label="folder.label" :value="folder.id" />
           </el-select>
         </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="showMoveScenarioCaseDialog = false">{{ $t('apiTesting.common.cancel') }}</el-button>
-        <el-button type="primary" :disabled="!moveTargetFolder" :loading="movingScenarioCase" @click="moveScenarioCaseToFolder">{{ $t('apiTesting.automation.folder.move') }}</el-button>
+        <el-button type="primary" :loading="movingScenarioCase" @click="moveScenarioCaseToFolder">{{ $t('apiTesting.automation.folder.move') }}</el-button>
       </template>
     </el-dialog>
 
@@ -478,6 +475,13 @@ import {
 import AssertionEditor from '@/components/api-testing/AssertionEditor.vue'
 import VariableExtractorEditor from '@/components/api-testing/VariableExtractorEditor.vue'
 import api from '@/utils/api'
+import {
+  createScenarioCaseFolder,
+  deleteScenarioCaseFolder,
+  getAllScenarioCases,
+  getScenarioCaseFolders,
+  updateScenarioCaseFolder
+} from '@/api/api-testing'
 import dayjs from 'dayjs'
 import { getPreferredProjectId, useRememberedProject } from '@/utils/projectSelection'
 import { normalizeAssertions, stripLegacyAssertionValue } from '@/utils/assertions'
@@ -497,7 +501,7 @@ const folderContextMenuRef = ref(null)
 const contextTreeNode = ref(null)
 const showMoveScenarioCaseDialog = ref(false)
 const movingScenarioCase = ref(false)
-const moveTargetFolder = ref('')
+const moveTargetFolder = ref(null)
 const selectedScenarioCase = ref(null)
 const executions = ref([])
 const environments = ref([])
@@ -525,7 +529,7 @@ const requestTreeRef = ref()
 const scenarioCaseForm = reactive({
   name: '',
   description: '',
-  folder: '',
+  folder: null,
   project: null,
   environment: null
 })
@@ -690,17 +694,7 @@ const loadScenarioCases = async () => {
   if (!selectedProject.value) return
 
   try {
-    let all = []
-    let url = '/api-testing/scenario-cases/?project=' + selectedProject.value
-    while (url) {
-      const response = await api.get(url)
-      const data = response.data.results || response.data || []
-      all = all.concat(data)
-      let next = response.data.next
-      if (next) next = next.replace(/^https?:\/\/[^/]+/, '').replace(/^\/api/, '')
-      url = next
-    }
-    scenarioCases.value = all
+    scenarioCases.value = await getAllScenarioCases({ project: selectedProject.value })
   } catch (error) {
     ElMessage.error(t('apiTesting.messages.error.loadScenarioCases'))
   }
@@ -712,16 +706,7 @@ const loadScenarioCaseFolders = async () => {
     return
   }
   try {
-    const all = []
-    let url = '/api-testing/scenario-case-folders/?project=' + selectedProject.value
-    while (url) {
-      const response = await api.get(url)
-      all.push(...(response.data.results || response.data || []))
-      let next = response.data.next
-      if (next) next = next.replace(/^https?:\/\/[^/]+/, '').replace(/^\/api/, '')
-      url = next
-    }
-    scenarioCaseFolders.value = all
+    scenarioCaseFolders.value = await getScenarioCaseFolders({ project: selectedProject.value })
   } catch (error) {
     ElMessage.error(t('apiTesting.automation.folder.loadFailed'))
   }
@@ -750,20 +735,23 @@ const onFolderNodeContextMenu = async (event, data) => {
 const openMoveScenarioCaseDialog = (scenarioCase) => {
   contextTreeNode.value = null
   showFolderContextMenu.value = false
-  moveTargetFolder.value = scenarioCase.folder || ''
+  moveTargetFolder.value = scenarioCase.folder || null
   contextTreeNode.value = scenarioCase
   showMoveScenarioCaseDialog.value = true
 }
 
 const moveScenarioCaseToFolder = async () => {
   const scenarioCase = contextTreeNode.value
-  if (!scenarioCase || !moveTargetFolder.value) return
+  if (!scenarioCase) return
   movingScenarioCase.value = true
   try {
-    await api.patch(`/api-testing/scenario-cases/${scenarioCase.id}/`, { folder: moveTargetFolder.value })
+    const response = await api.patch(`/api-testing/scenario-cases/${scenarioCase.id}/`, { folder: moveTargetFolder.value })
+    const updatedScenarioCase = response.data || { ...scenarioCase, folder: moveTargetFolder.value }
+    scenarioCases.value = scenarioCases.value.map(item =>
+      item.id === scenarioCase.id ? { ...item, ...updatedScenarioCase } : item
+    )
     ElMessage.success(t('apiTesting.automation.folder.scenarioCaseMoved'))
     showMoveScenarioCaseDialog.value = false
-    await refreshScenarioCaseTree()
     if (selectedScenarioCase.value?.id === scenarioCase.id) {
       selectedScenarioCase.value = scenarioCases.value.find(item => item.id === scenarioCase.id) || null
     }
@@ -775,16 +763,29 @@ const moveScenarioCaseToFolder = async () => {
 }
 
 const folderOptions = computed(() => {
-  const paths = new Set(scenarioCaseFolders.value.map(folder => folder.path))
-  scenarioCases.value.forEach(scenarioCase => scenarioCase.folder && paths.add(scenarioCase.folder))
-  return [...paths].sort((a, b) => a.localeCompare(b, 'zh', { numeric: true }))
+  const byId = new Map(scenarioCaseFolders.value.map(folder => [folder.id, folder]))
+  const getLabel = (folder) => {
+    const names = []
+    let current = folder
+    const visited = new Set()
+    while (current && !visited.has(current.id)) {
+      visited.add(current.id)
+      names.unshift(current.name)
+      current = byId.get(current.parent)
+    }
+    return names.join(' / ')
+  }
+  return scenarioCaseFolders.value
+    .map(folder => ({ id: folder.id, label: getLabel(folder) }))
+    .sort((a, b) => a.label.localeCompare(b.label, 'zh', { numeric: true }))
 })
 
-const moveFolderOptions = computed(() => folderOptions.value.filter(
-  folder => folder !== contextTreeNode.value?.folder
-))
+const moveFolderOptions = computed(() => [
+  { id: null, label: t('apiTesting.testSuiteManagement.ungrouped') },
+  ...folderOptions.value.filter(folder => folder.id !== contextTreeNode.value?.folder)
+])
 
-const createFolder = async (parentPath = '') => {
+const createFolder = async (parentId = null) => {
   if (!selectedProject.value) return
   showFolderContextMenu.value = false
   try {
@@ -794,19 +795,21 @@ const createFolder = async (parentPath = '') => {
       confirmButtonText: t('apiTesting.common.create'),
       cancelButtonText: t('apiTesting.common.cancel')
     })
-    const path = [parentPath, name.trim()].filter(Boolean).join('/')
-    await api.post('/api-testing/scenario-case-folders/', { project: selectedProject.value, path })
+    const response = await createScenarioCaseFolder({
+      project: selectedProject.value,
+      parent: parentId || null,
+      name: name.trim()
+    })
+    if (response.data) scenarioCaseFolders.value = [...scenarioCaseFolders.value, response.data]
     ElMessage.success(t('apiTesting.automation.folder.created'))
-    await refreshScenarioCaseTree()
   } catch (error) {
-    if (error !== 'cancel') ElMessage.error(error.response?.data?.path?.[0] || t('apiTesting.automation.folder.createFailed'))
+    if (error !== 'cancel') ElMessage.error(error.response?.data?.name?.[0] || t('apiTesting.automation.folder.createFailed'))
   }
 }
 
 const renameFolder = async (folder) => {
   if (!folder) return
   showFolderContextMenu.value = false
-  const parentPath = folder.path.includes('/') ? folder.path.slice(0, folder.path.lastIndexOf('/')) : ''
   try {
     const { value: name } = await ElMessageBox.prompt(t('apiTesting.automation.folder.inputNewName'), t('apiTesting.automation.folder.rename'), {
       inputValue: folder.name,
@@ -815,15 +818,14 @@ const renameFolder = async (folder) => {
       confirmButtonText: t('apiTesting.common.save'),
       cancelButtonText: t('apiTesting.common.cancel')
     })
-    const path = [parentPath, name.trim()].filter(Boolean).join('/')
-    await api.patch(`/api-testing/scenario-case-folders/${folder.folderId}/`, { path })
+    const response = await updateScenarioCaseFolder(folder.folderId, { name: name.trim() })
+    const updatedFolder = response.data || { ...scenarioCaseFolders.value.find(item => item.id === folder.folderId), name: name.trim() }
+    scenarioCaseFolders.value = scenarioCaseFolders.value.map(item =>
+      item.id === folder.folderId ? { ...item, ...updatedFolder } : item
+    )
     ElMessage.success(t('apiTesting.automation.folder.renamed'))
-    await refreshScenarioCaseTree()
-    if (selectedScenarioCase.value) {
-      selectedScenarioCase.value = scenarioCases.value.find(scenarioCase => scenarioCase.id === selectedScenarioCase.value.id) || null
-    }
   } catch (error) {
-    if (error !== 'cancel') ElMessage.error(error.response?.data?.path?.[0] || t('apiTesting.automation.folder.renameFailed'))
+    if (error !== 'cancel') ElMessage.error(error.response?.data?.name?.[0] || t('apiTesting.automation.folder.renameFailed'))
   }
 }
 
@@ -832,7 +834,7 @@ const deleteFolder = async (folder) => {
   showFolderContextMenu.value = false
   try {
     await ElMessageBox.confirm(
-      t('apiTesting.automation.folder.confirmDelete', { path: folder.path }),
+      t('apiTesting.automation.folder.confirmDelete', { path: folder.name }),
       t('apiTesting.common.confirmDelete'),
       {
         confirmButtonText: t('apiTesting.common.delete'),
@@ -840,9 +842,23 @@ const deleteFolder = async (folder) => {
         type: 'warning'
       }
     )
-    await api.delete(`/api-testing/scenario-case-folders/${folder.folderId}/`)
+    await deleteScenarioCaseFolder(folder.folderId)
+    const folderIds = new Set([folder.folderId])
+    let changed = true
+    while (changed) {
+      changed = false
+      scenarioCaseFolders.value.forEach(item => {
+        if (folderIds.has(item.parent) && !folderIds.has(item.id)) {
+          folderIds.add(item.id)
+          changed = true
+        }
+      })
+    }
+    scenarioCaseFolders.value = scenarioCaseFolders.value.filter(item => !folderIds.has(item.id))
+    scenarioCases.value = scenarioCases.value.map(item =>
+      folderIds.has(item.folder) ? { ...item, folder: null } : item
+    )
     ElMessage.success(t('apiTesting.automation.folder.deleted'))
-    await refreshScenarioCaseTree()
     if (selectedScenarioCase.value) {
       selectedScenarioCase.value = scenarioCases.value.find(scenarioCase => scenarioCase.id === selectedScenarioCase.value.id) || null
     }
@@ -851,43 +867,21 @@ const deleteFolder = async (folder) => {
   }
 }
 
-// 按 folder 分组场景用例，左侧树展示（folder 名升序，嵌套路径建子文件夹）
+// 按父子文件夹关系组织场景用例树，避免在前端保存或解析完整路径。
 const scenarioCaseTree = computed(() => {
   const root = []
-  const map = {}
-  const ensureFolder = (parts) => {
-    let cur = root
-    let path = ''
-    for (const p of parts) {
-      path = path ? path + '/' + p : p
-      if (!map[path]) {
-        const node = { id: 'f-' + path, name: p, type: 'folder', path, children: [] }
-        map[path] = node
-        cur.push(node)
-      }
-      cur = map[path].children
-    }
-    return cur
-  }
-  for (const folder of scenarioCaseFolders.value) {
-    const nodeParts = folder.path.split('/')
-    let cur = root
-    let path = ''
-    for (const part of nodeParts) {
-      path = path ? path + '/' + part : part
-      if (!map[path]) {
-        const node = { id: 'f-' + path, name: part, type: 'folder', path, children: [] }
-        map[path] = node
-        cur.push(node)
-      }
-      cur = map[path].children
-    }
-    map[folder.path].folderId = folder.id
-  }
+  const map = new Map()
+  scenarioCaseFolders.value.forEach(folder => {
+    map.set(folder.id, { id: 'f-' + folder.id, name: folder.name, type: 'folder', folderId: folder.id, children: [] })
+  })
+  scenarioCaseFolders.value.forEach(folder => {
+    const node = map.get(folder.id)
+    const parent = folder.parent ? map.get(folder.parent) : null
+    ;(parent ? parent.children : root).push(node)
+  })
   for (const s of scenarioCases.value) {
-    const f = s.folder || t('apiTesting.testSuiteManagement.ungrouped')
-    const bucket = ensureFolder(f.split('/'))
-    bucket.push({ ...s, type: 'scenarioCase' })
+    const parent = s.folder ? map.get(s.folder) : null
+    ;(parent ? parent.children : root).push({ ...s, type: 'scenarioCase' })
   }
   const sortTree = (nodes) => {
     nodes.sort((a, b) => {
@@ -1114,7 +1108,7 @@ const openCreateScenarioCaseDialog = () => {
   Object.assign(scenarioCaseForm, {
     name: '',
     description: '',
-    folder: '',
+    folder: null,
     project: selectedProject.value,
     environment: null
   })
@@ -1125,7 +1119,7 @@ const editScenarioCase = (scenarioCase) => {
   editingScenarioCase.value = scenarioCase
   scenarioCaseForm.name = scenarioCase.name
   scenarioCaseForm.description = scenarioCase.description
-  scenarioCaseForm.folder = scenarioCase.folder || ''
+  scenarioCaseForm.folder = scenarioCase.folder || null
   scenarioCaseForm.project = scenarioCase.project
   // 修复：environment字段直接是ID，不需要?.id
   scenarioCaseForm.environment = scenarioCase.environment || null
@@ -1137,7 +1131,7 @@ const duplicateScenarioCase = async (scenarioCase) => {
     const newScenarioCase = {
       name: `${scenarioCase.name} - ${t('apiTesting.common.copyText')}`,
       description: scenarioCase.description,
-      folder: scenarioCase.folder || '',
+      folder: scenarioCase.folder || null,
       project: scenarioCase.project,
       environment: scenarioCase.environment || null  // 修复：直接使用environment ID
     }
@@ -1209,7 +1203,7 @@ const resetScenarioCaseForm = () => {
   Object.assign(scenarioCaseForm, {
     name: '',
     description: '',
-    folder: '',
+    folder: null,
     project: selectedProject.value,
     environment: null
   })
@@ -1433,6 +1427,10 @@ onMounted(() => {
 .list-actions {
   display: flex;
   align-items: center;
+}
+
+.create-folder-button {
+  font-size: 16px;
 }
 
 .scenario-case-item {

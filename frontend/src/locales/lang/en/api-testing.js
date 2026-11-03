@@ -397,7 +397,7 @@ export default {
       moveScenarioCase: 'Move Scenario Case',
       targetGroup: 'Target Group',
       selectTargetGroup: 'Select a target group',
-      selectOrInputPath: 'Select or enter a folder path',
+      selectOrInputPath: 'Select a folder',
       inputName: 'Enter folder name',
       inputNewName: 'Enter the new folder name',
       invalidName: 'Folder names cannot contain slashes',

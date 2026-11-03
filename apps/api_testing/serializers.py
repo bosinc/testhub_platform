@@ -192,10 +192,33 @@ class ScenarioCaseRequestSerializer(serializers.ModelSerializer):
 
 
 class ScenarioCaseFolderSerializer(serializers.ModelSerializer):
+    parent = serializers.PrimaryKeyRelatedField(
+        queryset=ScenarioCaseFolder.objects.all(), required=False, allow_null=True
+    )
+
     class Meta:
         model = ScenarioCaseFolder
-        fields = ['id', 'project', 'path', 'created_at', 'updated_at']
+        fields = ['id', 'project', 'parent', 'name', 'created_at', 'updated_at']
         read_only_fields = ['created_at', 'updated_at']
+
+    def validate(self, attrs):
+        project = attrs.get('project', getattr(self.instance, 'project', None))
+        parent = attrs.get('parent', getattr(self.instance, 'parent', None))
+        if parent and parent.project_id != project.id:
+            raise serializers.ValidationError({'parent': '父文件夹必须属于同一项目'})
+        if self.instance and parent:
+            ancestor = parent
+            while ancestor:
+                if ancestor.pk == self.instance.pk:
+                    raise serializers.ValidationError({'parent': '不能将文件夹移动到自身子目录中'})
+                ancestor = ancestor.parent
+        return attrs
+
+    def validate_name(self, value):
+        name = value.strip()
+        if not name or '/' in name or '\\' in name:
+            raise serializers.ValidationError('文件夹名称不能为空且不能包含路径分隔符')
+        return name
 
 
 class ScenarioCaseSerializer(serializers.ModelSerializer):
@@ -213,6 +236,13 @@ class ScenarioCaseSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         validated_data['created_by'] = self.context['request'].user
         return super().create(validated_data)
+
+    def validate(self, attrs):
+        project = attrs.get('project', getattr(self.instance, 'project', None))
+        folder = attrs.get('folder', getattr(self.instance, 'folder', None))
+        if folder and folder.project_id != project.id:
+            raise serializers.ValidationError({'folder': '文件夹必须属于场景用例所属项目'})
+        return attrs
 
 
 class TestSuiteSerializer(serializers.ModelSerializer):

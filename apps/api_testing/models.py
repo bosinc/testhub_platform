@@ -176,10 +176,12 @@ class RequestHistory(models.Model):
 
 
 class ScenarioCaseFolder(models.Model):
-    """场景用例文件夹，按项目保存完整路径以支持空文件夹和嵌套结构。"""
+    """场景用例文件夹，通过父级关联保存嵌套目录结构。"""
     project = models.ForeignKey(ApiProject, on_delete=models.CASCADE, related_name='scenario_case_folders',
                                 verbose_name='所属项目')
-    path = models.CharField(max_length=200, verbose_name='文件夹路径')
+    parent = models.ForeignKey('self', null=True, blank=True, on_delete=models.CASCADE,
+                               related_name='children', verbose_name='父文件夹')
+    name = models.CharField(max_length=200, verbose_name='文件夹名称')
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='创建时间')
     updated_at = models.DateTimeField(auto_now=True, verbose_name='更新时间')
 
@@ -187,13 +189,13 @@ class ScenarioCaseFolder(models.Model):
         db_table = 'api_scenario_case_folders'
         verbose_name = '场景用例文件夹'
         verbose_name_plural = '场景用例文件夹'
-        ordering = ['path']
+        ordering = ['name']
         constraints = [
-            models.UniqueConstraint(fields=['project', 'path'], name='unique_scenario_case_folder_path'),
+            models.UniqueConstraint(fields=['project', 'parent', 'name'], name='unique_scenario_case_folder_name'),
         ]
 
     def __str__(self):
-        return self.path
+        return self.name
 
 
 class ScenarioCase(models.Model):
@@ -202,7 +204,8 @@ class ScenarioCase(models.Model):
                                 verbose_name='所属项目')
     name = models.CharField(max_length=200, verbose_name='场景用例名称')
     description = models.TextField(blank=True, verbose_name='场景用例描述')
-    folder = models.CharField(max_length=200, blank=True, default='', verbose_name='场景用例分组')
+    folder = models.ForeignKey(ScenarioCaseFolder, null=True, blank=True, on_delete=models.SET_NULL,
+                               related_name='scenario_cases', verbose_name='所属文件夹')
     requests = models.ManyToManyField(ApiRequest, through='ScenarioCaseRequest', verbose_name='包含请求')
     environment = models.ForeignKey(Environment, on_delete=models.SET_NULL, null=True, blank=True,
                                     verbose_name='执行环境')
