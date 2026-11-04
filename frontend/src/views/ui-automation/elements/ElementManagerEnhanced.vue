@@ -121,6 +121,9 @@
                     <el-option :label="$t('uiAutomation.element.elementTypes.modal')" value="MODAL" />
                   </el-select>
                 </el-form-item>
+                <el-form-item :label="$t('uiAutomation.element.usageCount')">
+                  <span class="usage-count">{{ selectedElement.usage_count ?? 0 }}</span>
+                </el-form-item>
                 <el-form-item>
                   <el-button type="primary" @click="saveElement" :loading="saving" ref="saveButtonRef">
                     {{ $t('uiAutomation.common.save') }}
@@ -1588,6 +1591,12 @@ const updatePage = async () => {
   display: flex;
   align-items: center;
   gap: 10px;
+}
+
+.usage-count {
+  min-width: 24px;
+  color: #606266;
+  text-align: center;
 }
 
 .element-form {

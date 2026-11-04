@@ -687,6 +687,10 @@ class TestCase(models.Model):
 
     name = models.CharField(max_length=200, verbose_name='用例名称')
     description = models.TextField(blank=True, verbose_name='用例描述')
+    folder = models.ForeignKey(
+        'TestCaseFolder', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='test_cases', verbose_name='所属文件夹'
+    )
     project = models.ForeignKey(UiProject, on_delete=models.CASCADE, related_name='test_cases', verbose_name='所属项目')
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='draft', verbose_name='状态')
     priority = models.CharField(max_length=10, choices=PRIORITY_CHOICES, default='medium', verbose_name='优先级')
@@ -699,6 +703,27 @@ class TestCase(models.Model):
         verbose_name = 'UI测试用例'
         verbose_name_plural = 'UI测试用例'
         ordering = ['-created_at']
+
+    def __str__(self):
+        return self.name
+
+
+class TestCaseFolder(models.Model):
+    """UI 测试用例文件夹，使用父子关系构建嵌套目录。"""
+    project = models.ForeignKey(UiProject, on_delete=models.CASCADE, related_name='test_case_folders', verbose_name='所属项目')
+    name = models.CharField(max_length=200, verbose_name='文件夹名称')
+    parent = models.ForeignKey('self', on_delete=models.CASCADE, null=True, blank=True, related_name='children', verbose_name='父文件夹')
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='创建时间')
+    updated_at = models.DateTimeField(auto_now=True, verbose_name='更新时间')
+
+    class Meta:
+        db_table = 'ui_test_case_folders'
+        verbose_name = 'UI 测试用例文件夹'
+        verbose_name_plural = 'UI 测试用例文件夹'
+        ordering = ['name']
+        constraints = [
+            models.UniqueConstraint(fields=['project', 'parent', 'name'], name='unique_ui_test_case_folder_name'),
+        ]
 
     def __str__(self):
         return self.name

@@ -2,13 +2,15 @@
   <div class="page-container">
     <div class="page-header">
       <h1 class="page-title">{{ $t('uiAutomation.suite.title') }}</h1>
-      <el-select v-model="projectId" :placeholder="$t('uiAutomation.common.selectProject')" style="width: 200px; margin-right: 15px" @change="onProjectChange">
-        <el-option v-for="project in projects" :key="project.id" :label="project.name" :value="project.id" />
-      </el-select>
-      <el-button type="primary" @click="handleNewSuite">
-        <el-icon><Plus /></el-icon>
-        {{ $t('uiAutomation.suite.newSuite') }}
-      </el-button>
+      <div class="suite-header-actions">
+        <el-select v-model="projectId" :placeholder="$t('uiAutomation.common.selectProject')" class="project-select" @change="onProjectChange">
+          <el-option v-for="project in projects" :key="project.id" :label="project.name" :value="project.id" />
+        </el-select>
+        <el-button type="primary" @click="handleNewSuite">
+          <el-icon><Plus /></el-icon>
+          {{ $t('uiAutomation.suite.newSuite') }}
+        </el-button>
+      </div>
     </div>
 
     <div class="card-container">
@@ -38,7 +40,7 @@
             </el-link>
           </template>
         </el-table-column>
-        <el-table-column :label="$t('uiAutomation.suite.testCaseCount')" width="120">
+        <el-table-column :label="$t('uiAutomation.suite.testCaseCount')" width="100">
           <template #default="{ row }">
             {{ row.test_case_count || 0 }}
           </template>
@@ -50,12 +52,12 @@
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column :label="$t('uiAutomation.suite.passedCount')" width="90">
+        <el-table-column :label="$t('uiAutomation.suite.passedCount')" width="80">
           <template #default="{ row }">
             <span style="color: #67c23a; font-weight: bold;">{{ row.passed_count || 0 }}</span>
           </template>
         </el-table-column>
-        <el-table-column :label="$t('uiAutomation.suite.failedCount')" width="90">
+        <el-table-column :label="$t('uiAutomation.suite.failedCount')" width="80">
           <template #default="{ row }">
             <span style="color: #f56c6c; font-weight: bold;">{{ row.failed_count || 0 }}</span>
           </template>
@@ -124,62 +126,51 @@
                   </template>
                 </el-input>
               </div>
-              <div class="panel-actions">
-                <el-button size="small" text type="primary" :icon="Check" :disabled="!addableTestCases.length" @click="addAllTestCases">
-                  {{ $t('uiAutomation.suite.addAll') }}
-                </el-button>
-                <el-button size="small" text type="success" :icon="Plus" :disabled="!checkedTestCases.length" @click="addCheckedTestCases">
-                  {{ $t('uiAutomation.suite.addChecked') }}
-                </el-button>
-              </div>
               <div class="panel-content">
-                <el-table
-                  ref="availableTableRef"
-                  :data="filteredAvailableTestCases"
-                  row-key="id"
-                  height="300"
-                  @row-click="handleTestCaseRowClick"
-                  @selection-change="checkedTestCases = $event"
-                  :row-class-name="getTestCaseRowClassName"
-                >
-                  <el-table-column type="selection" width="44" :selectable="isTestCaseAddable" />
-                  <el-table-column prop="name" :label="$t('uiAutomation.suite.caseName')" min-width="150" show-overflow-tooltip />
-                  <el-table-column prop="priority" :label="$t('uiAutomation.suite.priority')" width="80">
-                    <template #default="{ row }">
-                      <el-tag size="small" :type="getPriorityTag(row.priority)">
-                        {{ getPriorityText(row.priority) }}
-                      </el-tag>
+                <el-scrollbar height="300px">
+                  <el-tree
+                    ref="testCaseTreeRef"
+                    v-loading="testCasesLoading"
+                    :data="testCaseTree"
+                    :props="{ label: 'name', children: 'children' }"
+                    :filter-node-method="filterTestCaseNode"
+                    node-key="id"
+                    show-checkbox
+                    default-expand-all
+                    check-on-click-node
+                    :empty-text="$t('uiAutomation.common.noData')"
+                    @check="syncSelectedTestCases"
+                  >
+                    <template #default="{ data }">
+                      <span class="tree-node-label">
+                        <el-icon><Folder v-if="data.type === 'folder'" /><Document v-else /></el-icon>
+                        <span class="tree-node-name">{{ data.name }}</span>
+                        <template v-if="data.type === 'testCase'">
+                          <el-tag size="small" :type="getPriorityTag(data.testCase.priority)">
+                            {{ getPriorityText(data.testCase.priority) }}
+                          </el-tag>
+                          <el-tag size="small" :type="getCaseStatusTag(data.testCase.status)">
+                            {{ getCaseStatusText(data.testCase.status) }}
+                          </el-tag>
+                        </template>
+                      </span>
                     </template>
-                  </el-table-column>
-                  <el-table-column prop="status" :label="$t('uiAutomation.common.status')" width="80">
-                    <template #default="{ row }">
-                      <el-tag size="small" :type="getCaseStatusTag(row.status)">
-                        {{ getCaseStatusText(row.status) }}
-                      </el-tag>
-                    </template>
-                  </el-table-column>
-                  <el-table-column :label="$t('uiAutomation.common.operation')" width="80">
-                    <template #default="{ row }">
-                      <el-button size="small" text :disabled="!isTestCaseAddable(row)" @click.stop="addTestCase(row)">
-                        <el-icon><ArrowRight /></el-icon>
-                      </el-button>
-                    </template>
-                  </el-table-column>
-                </el-table>
+                  </el-tree>
+                </el-scrollbar>
               </div>
             </div>
 
             <div class="selector-panel">
-              <div class="panel-header">
+              <div class="panel-header selected-panel-header">
                 <h4>{{ $t('uiAutomation.suite.selectedCases') }} ({{ selectedTestCases.length }})</h4>
-              </div>
-              <div class="panel-actions">
-                <el-button size="small" text type="danger" :icon="Delete" :disabled="!selectedTestCases.length" @click="clearSelectedTestCases">
-                  {{ $t('uiAutomation.suite.clearSelected') }}
-                </el-button>
-                <el-button size="small" text type="warning" :icon="Minus" :disabled="!checkedSelectedTestCases.length" @click="removeCheckedTestCases">
-                  {{ $t('uiAutomation.suite.removeChecked') }}
-                </el-button>
+                <div class="panel-actions">
+                  <el-button size="small" text type="danger" :icon="Delete" :disabled="!selectedTestCases.length" @click="clearSelectedTestCases">
+                    {{ $t('uiAutomation.suite.clearSelected') }}
+                  </el-button>
+                  <el-button size="small" text type="warning" :icon="Minus" :disabled="!checkedSelectedTestCases.length" @click="removeCheckedTestCases">
+                    {{ $t('uiAutomation.suite.removeChecked') }}
+                  </el-button>
+                </div>
               </div>
               <div class="panel-content">
                 <el-table
@@ -187,6 +178,7 @@
                   :data="selectedTestCases"
                   row-key="id"
                   height="300"
+                  size="small"
                   @selection-change="checkedSelectedTestCases = $event"
                   @row-click="handleSelectedTestCaseRowClick"
                 >
@@ -290,11 +282,11 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted, watch } from 'vue'
+import { ref, reactive, computed, nextTick, onMounted, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
-  Plus, Search, Edit, Delete, RefreshRight, Collection,
-  ArrowRight, Top, Bottom, Check, Minus
+  Plus, Search, Edit, Delete, RefreshRight, Folder, Document,
+  Top, Bottom, Minus
 } from '@element-plus/icons-vue'
 import {
   getUiProjects,
@@ -303,10 +295,10 @@ import {
   updateTestSuite,
   deleteTestSuite,
   getTestCases,
+  getTestCaseFolders,
   getTestSuiteTestCases,
   addTestCaseToTestSuite,
   removeTestCaseFromTestSuite,
-  updateTestCaseOrder,
   runTestSuite,
   getStorageStates
 } from '@/api/ui_automation'
@@ -349,14 +341,43 @@ const formRules = computed(() => ({
 
 // 测试用例相关
 const availableTestCases = ref([])
+const testCaseFolders = ref([])
+const testCasesLoading = ref(false)
 const selectedTestCases = ref([])
 const testCaseSearchText = ref('')
-const availableTableRef = ref(null)
-const checkedTestCases = ref([])
+const testCaseTreeRef = ref(null)
 const selectedTableRef = ref(null)
 const checkedSelectedTestCases = ref([])
-const selectedTestCaseIds = computed(() => new Set(selectedTestCases.value.map(tc => tc.id)))
-const isTestCaseAddable = (testCase) => !selectedTestCaseIds.value.has(testCase.id)
+
+const testCaseTree = computed(() => {
+  const root = []
+  const folders = new Map(testCaseFolders.value.map(folder => [
+    String(folder.id), {
+      id: `folder:${folder.id}`,
+      name: folder.name,
+      type: 'folder',
+      children: []
+    }
+  ]))
+
+  testCaseFolders.value.forEach(folder => {
+    const node = folders.get(String(folder.id))
+    const parent = folders.get(String(folder.parent))
+    ;(parent ? parent.children : root).push(node)
+  })
+
+  availableTestCases.value.forEach(testCase => {
+    const parent = folders.get(String(testCase.folder))
+    ;(parent ? parent.children : root).push({
+      id: `case:${testCase.id}`,
+      name: testCase.name,
+      type: 'testCase',
+      testCase
+    })
+  })
+
+  return root
+})
 
 // 运行配置
 const runConfig = reactive({
@@ -368,24 +389,12 @@ const runConfig = reactive({
 const storageStates = ref([])
 const currentRunningSuite = ref(null)
 
-// 计算属性 - 过滤后的可用测试用例
-const filteredAvailableTestCases = computed(() => {
-  if (!testCaseSearchText.value) {
-    return availableTestCases.value
-  }
-  return availableTestCases.value.filter(tc =>
-    tc.name.toLowerCase().includes(testCaseSearchText.value.toLowerCase()) ||
-    (tc.description && tc.description.toLowerCase().includes(testCaseSearchText.value.toLowerCase()))
-  )
-})
-const addableTestCases = computed(() => filteredAvailableTestCases.value.filter(isTestCaseAddable))
-
-const clearCheckedTestCases = () => {
-  availableTableRef.value?.clearSelection()
-  checkedTestCases.value = []
+const filterTestCaseNode = (query, data) => {
+  if (!query || data.type === 'folder') return true
+  return data.name.toLowerCase().includes(query.toLowerCase())
 }
 
-watch(testCaseSearchText, clearCheckedTestCases)
+watch(testCaseSearchText, value => testCaseTreeRef.value?.filter(value))
 
 // 加载项目列表
 const loadProjects = async () => {
@@ -433,22 +442,34 @@ const loadSuites = async () => {
 // 加载可用测试用例
 const loadAvailableTestCases = async () => {
   availableTestCases.value = []
+  testCaseFolders.value = []
   if (!projectId.value) return
 
+  testCasesLoading.value = true
   try {
-    const cases = []
-    let page = 1
-    let hasNext = true
-    while (hasNext) {
-      const response = await getTestCases({ project: projectId.value, page, page_size: 1000 })
-      cases.push(...(response.data.results || response.data))
-      hasNext = Boolean(response.data.next)
-      page++
+    const loadAllPages = async request => {
+      const results = []
+      let page = 1
+      let hasNext = true
+      while (hasNext) {
+        const response = await request({ project: projectId.value, page, page_size: 1000 })
+        const data = response.data
+        results.push(...(data.results || data))
+        hasNext = Boolean(data.next)
+        page += 1
+      }
+      return results
     }
-    availableTestCases.value = cases
+
+    ;[availableTestCases.value, testCaseFolders.value] = await Promise.all([
+      loadAllPages(getTestCases),
+      loadAllPages(getTestCaseFolders)
+    ])
   } catch (error) {
     console.error('获取测试用例列表失败:', error)
     ElMessage.error(t('uiAutomation.suite.messages.loadCasesFailed'))
+  } finally {
+    testCasesLoading.value = false
   }
 }
 
@@ -555,6 +576,8 @@ const editSuite = async (id) => {
     await loadAvailableTestCases()
 
     showCreateDialog.value = true
+    await nextTick()
+    testCaseTreeRef.value?.setCheckedKeys(selectedTestCases.value.map(testCase => `case:${testCase.id}`))
   } catch (error) {
     console.error('加载套件详情失败:', error)
     ElMessage.error(t('uiAutomation.suite.messages.loadDetailFailed'))
@@ -671,42 +694,22 @@ const pollSuiteStatus = (suiteId) => {
   }, 3000) // 每3秒轮询一次
 }
 
-// 测试用例管理方法
-const handleTestCaseRowClick = (row, column) => {
-  if (column.type === 'selection' || !isTestCaseAddable(row)) return
-  availableTableRef.value?.toggleRowSelection(row)
-}
+// 树形勾选直接更新已选用例，同时保留原有执行顺序。
+const syncSelectedTestCases = () => {
+  const checkedCases = (testCaseTreeRef.value?.getCheckedNodes(true, false) || [])
+    .filter(node => node.type === 'testCase')
+    .map(node => node.testCase)
+  const checkedIds = new Set(checkedCases.map(testCase => String(testCase.id)))
+  const updatedCases = selectedTestCases.value.filter(testCase => checkedIds.has(String(testCase.id)))
+  const updatedIds = new Set(updatedCases.map(testCase => String(testCase.id)))
 
-const getTestCaseRowClassName = ({ row }) => {
-  // 如果已选中，添加特殊样式
-  return selectedTestCases.value.some(tc => tc.id === row.id) ? 'selected-row' : ''
-}
-
-const addTestCase = (testCase) => {
-  // 检查是否已存在
-  if (selectedTestCases.value.some(tc => tc.id === testCase.id)) {
-    ElMessage.warning(t('uiAutomation.suite.messages.caseAdded'))
-    return
-  }
-  selectedTestCases.value.push({ ...testCase })
-  availableTableRef.value?.toggleRowSelection(testCase, false)
-}
-
-const addTestCases = (testCases) => {
-  const ids = new Set(selectedTestCaseIds.value)
-  for (const testCase of testCases) {
-    if (ids.has(testCase.id)) continue
-    selectedTestCases.value.push({ ...testCase })
-    ids.add(testCase.id)
-  }
-  clearCheckedTestCases()
-}
-
-// 搜索时仅添加当前筛选结果，已有用例及其顺序保持不变。
-const addAllTestCases = () => addTestCases(addableTestCases.value)
-const addCheckedTestCases = () => {
-  const checkedIds = new Set(checkedTestCases.value.map(tc => tc.id))
-  addTestCases(addableTestCases.value.filter(tc => checkedIds.has(tc.id)))
+  checkedCases.forEach(testCase => {
+    if (!updatedIds.has(String(testCase.id))) {
+      updatedCases.push(testCase)
+      updatedIds.add(String(testCase.id))
+    }
+  })
+  selectedTestCases.value = updatedCases
 }
 
 const removeTestCase = (index) => {
@@ -714,6 +717,7 @@ const removeTestCase = (index) => {
   selectedTableRef.value?.toggleRowSelection(testCase, false)
   checkedSelectedTestCases.value = checkedSelectedTestCases.value.filter(tc => tc.id !== testCase.id)
   selectedTestCases.value.splice(index, 1)
+  testCaseTreeRef.value?.setChecked(`case:${testCase.id}`, false, false)
 }
 
 const clearSelectedChecks = () => {
@@ -724,12 +728,14 @@ const clearSelectedChecks = () => {
 const clearSelectedTestCases = () => {
   selectedTestCases.value = []
   clearSelectedChecks()
+  testCaseTreeRef.value?.setCheckedKeys([])
 }
 
 const removeCheckedTestCases = () => {
   const checkedIds = new Set(checkedSelectedTestCases.value.map(tc => tc.id))
   selectedTestCases.value = selectedTestCases.value.filter(tc => !checkedIds.has(tc.id))
   clearSelectedChecks()
+  testCaseTreeRef.value?.setCheckedKeys(selectedTestCases.value.map(testCase => `case:${testCase.id}`))
 }
 
 const handleSelectedTestCaseRowClick = (row, column) => {
@@ -755,12 +761,12 @@ const moveDown = (index) => {
 
 // 重置表单
 const resetForm = () => {
-  clearCheckedTestCases()
   clearSelectedChecks()
   createForm.name = ''
   createForm.description = ''
   selectedTestCases.value = []
   testCaseSearchText.value = ''
+  testCaseTreeRef.value?.setCheckedKeys([])
   isEditing.value = false
   currentSuiteId.value = null
 }
@@ -776,6 +782,8 @@ const handleCreateButtonClick = async () => {
   resetForm()
   await loadAvailableTestCases()
   showCreateDialog.value = true
+  await nextTick()
+  testCaseTreeRef.value?.setCheckedKeys([])
 }
 
 // 辅助方法
@@ -866,6 +874,8 @@ const handleNewSuite = async () => {
   resetForm()
   await loadAvailableTestCases()
   showCreateDialog.value = true
+  await nextTick()
+  testCaseTreeRef.value?.setCheckedKeys([])
 }
 </script>
 
@@ -889,6 +899,17 @@ const handleNewSuite = async () => {
 .page-title {
   margin: 0;
   font-size: 24px;
+}
+
+.suite-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  margin-left: auto;
+}
+
+.project-select {
+  width: 200px;
 }
 
 .card-container {
@@ -939,6 +960,15 @@ const handleNewSuite = async () => {
   }
 }
 
+.selected-panel-header {
+  flex-wrap: nowrap;
+
+  h4 {
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+}
+
 .panel-actions {
   display: flex;
   flex-wrap: wrap;
@@ -947,8 +977,43 @@ const handleNewSuite = async () => {
   border-bottom: 1px solid #dcdfe6;
 }
 
+.selected-panel-header .panel-actions {
+  flex: 1;
+  justify-content: flex-end;
+  flex-wrap: nowrap;
+  gap: 4px;
+  min-width: 0;
+  padding: 0;
+  background: transparent;
+  border: 0;
+}
+
+.selected-panel-header .panel-actions :deep(.el-button + .el-button) {
+  margin-left: 0;
+}
+
 .panel-content {
   padding: 10px;
+}
+
+.tree-node-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+}
+
+.tree-node-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tree-node-label :deep(.el-tag) {
+  flex: 0 0 auto;
 }
 
 .selected-case-actions {
@@ -965,10 +1030,6 @@ const handleNewSuite = async () => {
   }
 }
 
-
-:deep(.selected-row) {
-  background-color: #f0f9ff !important;
-}
 
 :deep(.el-table__row) {
   cursor: pointer;

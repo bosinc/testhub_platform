@@ -1,5 +1,5 @@
 <template>
-  <div class="test-case-manager">
+  <div class="test-case-manager" @click="showFolderContextMenu = false">
     <div class="page-header">
       <h1 class="page-title">{{ t('uiAutomation.testCase.title') }}</h1>
       <div class="header-actions">
@@ -29,54 +29,89 @@
       <!-- 左侧：测试用例列表 -->
           <div class="left-panel">
         <div class="panel-header">
-          <h3>{{ t('uiAutomation.testCase.testCaseList') }}</h3>
-          <el-input
-            v-model="searchKeyword"
-            :placeholder="t('uiAutomation.testCase.searchPlaceholder')"
-            clearable
-            size="small"
-            style="width: 200px"
-          >
-            <template #prefix>
-              <el-icon><Search /></el-icon>
-            </template>
-          </el-input>
+          <!-- 搜索框随侧栏伸缩，新建目录按钮固定在右侧。 -->
+            <el-input
+              class="case-search"
+              v-model="searchKeyword"
+              :placeholder="t('uiAutomation.testCase.searchPlaceholder')"
+              clearable
+              size="small"
+              @click.stop
+            >
+              <template #prefix>
+                <el-icon><Search /></el-icon>
+              </template>
+            </el-input>
+            <el-button
+              text
+              size="small"
+              class="tree-toggle-button"
+              :disabled="!testCaseFolders.length"
+              :aria-label="t(allFoldersExpanded ? 'uiAutomation.testCase.foldAll' : 'uiAutomation.testCase.expandAll')"
+              @click.stop="toggleAllFolders"
+            >
+              <el-icon><Fold v-if="allFoldersExpanded" /><Expand v-else /></el-icon>
+            </el-button>
+            <el-button
+              text
+              size="small"
+              class="folder-create-button"
+              :disabled="!projectId"
+              :title="t('uiAutomation.testCase.folder.create')"
+              @click.stop="createFolder()"
+            >
+              <el-icon><FolderAdd /></el-icon>
+            </el-button>
         </div>
 
         <div class="test-case-list">
-          <div
-            v-for="testCase in filteredTestCases"
-            :key="testCase.id"
-            class="test-case-item"
-            :class="{ active: selectedTestCase?.id === testCase.id }"
-            @click="selectTestCase(testCase)"
+          <el-tree
+            ref="testCaseTreeRef"
+            :data="testCaseTree"
+            :props="{ label: 'name', children: 'children' }"
+            :default-expanded-keys="treeDefaultExpandedKeys"
+            node-key="id"
+            @node-expand="onFolderNodeExpand"
+            @node-collapse="onFolderNodeCollapse"
+            @node-contextmenu="onFolderNodeContextMenu"
           >
-            <div class="case-header">
-              <div class="case-info">
-                <h4 class="case-name">{{ testCase.name }}</h4>
+            <template #default="{ data }">
+              <div
+                class="test-case-tree-node"
+                :class="{ active: data.type === 'testCase' && selectedTestCase?.id === data.id }"
+                @click.stop="data.type === 'testCase' && selectTestCase(data)"
+              >
+                <el-icon v-if="data.type === 'folder'"><Folder /></el-icon>
+                <el-icon v-else><Document /></el-icon>
+                <div class="test-case-tree-content">
+                  <div class="test-case-tree-title">
+                    <span class="test-case-tree-name">{{ data.name }}</span>
+                    <div v-if="data.type === 'testCase'" class="case-actions">
+                      <el-button size="small" text :title="t('uiAutomation.testCase.copy.title')" @click.stop="copyTestCase(data)"><el-icon><CopyDocument /></el-icon></el-button>
+                      <el-button size="small" text type="danger" :title="t('uiAutomation.testCase.delete.title')" @click.stop="deleteTestCase(data)"><el-icon><Delete /></el-icon></el-button>
+                    </div>
+                    <span v-if="data.type === 'testCase'" class="case-step-count">{{ data.steps?.length || 0 }}</span>
+                  </div>
+                </div>
               </div>
-              <div class="case-actions">
-                <el-button size="small" text @click.stop="runTestCase(testCase)">
-                  <el-icon><CaretRight /></el-icon>
-                </el-button>
-                <el-button size="small" text @click.stop="editTestCase(testCase)">
-                  <el-icon><Edit /></el-icon>
-                </el-button>
-                <el-button size="small" text @click.stop="copyTestCase(testCase)">
-                  <el-icon><CopyDocument /></el-icon>
-                </el-button>
-                <el-button size="small" text type="danger" @click.stop="deleteTestCase(testCase)">
-                  <el-icon><Delete /></el-icon>
-                </el-button>
-              </div>
-            </div>
-            <div class="case-meta">
-              <!-- 移除状态显示 -->
-              <span class="step-count">{{ testCase.steps?.length || 0 }} {{ t('uiAutomation.testCase.stepsCount') }}</span>
-              <span class="update-time">{{ formatTime(testCase.updated_at) }}</span>
-            </div>
-          </div>
+            </template>
+          </el-tree>
+          <el-empty v-if="!testCaseTree.length" :description="t('uiAutomation.common.noData')" />
         </div>
+        <ul
+          ref="folderContextMenuRef"
+          v-show="showFolderContextMenu"
+          class="folder-context-menu"
+          :style="{ left: folderContextMenuX + 'px', top: folderContextMenuY + 'px' }"
+          @click.stop
+        >
+          <template v-if="contextTreeNode?.type === 'folder'">
+            <li @click="createFolder(contextTreeNode)">{{ t('uiAutomation.testCase.folder.createSubfolder') }}</li>
+            <li v-if="contextTreeNode.folderId" @click="renameFolder(contextTreeNode)">{{ t('uiAutomation.testCase.folder.rename') }}</li>
+            <li v-if="contextTreeNode.folderId" class="danger" @click="deleteFolder(contextTreeNode)">{{ t('uiAutomation.common.delete') }}</li>
+          </template>
+          <li v-else-if="contextTreeNode?.type === 'testCase'" @click="openMoveTestCaseDialog(contextTreeNode)">{{ t('uiAutomation.testCase.folder.move') }}</li>
+        </ul>
           </div>
         </template>
 
@@ -85,8 +120,33 @@
           <div class="right-panel">
         <div v-if="selectedTestCase" class="test-case-detail">
           <div class="detail-header">
-            <h3 class="detail-title">{{ selectedTestCase.name }}</h3>
-            <p class="detail-description">{{ selectedTestCase.description || t('uiAutomation.testCase.noDescription') }}</p>
+            <div class="detail-title-row">
+              <el-input
+                v-model="selectedTestCase.name"
+                class="detail-title-input"
+                :placeholder="t('uiAutomation.testCase.caseNamePlaceholder')"
+                :aria-label="t('uiAutomation.testCase.caseName')"
+              />
+              <el-select
+                v-model="selectedTestCase.priority"
+                class="detail-priority-select"
+                :placeholder="t('uiAutomation.testCase.priority')"
+                :aria-label="t('uiAutomation.testCase.priority')"
+              >
+                <el-option :label="t('uiAutomation.testCase.priorityHigh')" value="high" />
+                <el-option :label="t('uiAutomation.testCase.priorityMedium')" value="medium" />
+                <el-option :label="t('uiAutomation.testCase.priorityLow')" value="low" />
+              </el-select>
+            </div>
+            <el-input
+              v-model="selectedTestCase.description"
+              class="detail-description-input"
+              type="textarea"
+              :rows="2"
+              resize="vertical"
+              :placeholder="t('uiAutomation.testCase.caseDescPlaceholder')"
+              :aria-label="t('uiAutomation.testCase.caseDescription')"
+            />
             <div class="detail-actions">
               <el-button size="small" @click="addStep">
                 <el-icon><Plus /></el-icon>
@@ -373,12 +433,31 @@
             <el-option :label="t('uiAutomation.testCase.priorityLow')" value="low" />
           </el-select>
         </el-form-item>
+        <el-form-item :label="t('uiAutomation.testCase.folder.label')">
+          <el-select v-model="testCaseForm.folder" filterable allow-create clearable style="width: 100%" :placeholder="t('uiAutomation.testCase.folder.selectOrInputPath')">
+          <el-option v-for="folder in folderOptions" :key="folder.id" :label="folder.label" :value="folder.id" />
+          </el-select>
+        </el-form-item>
       </el-form>
       <template #footer>
         <span class="dialog-footer">
           <el-button @click="showCreateDialog = false">{{ t('uiAutomation.common.cancel') }}</el-button>
           <el-button type="primary" @click="saveTestCaseForm">{{ t('uiAutomation.common.confirm') }}</el-button>
         </span>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="showMoveTestCaseDialog" :title="t('uiAutomation.testCase.folder.moveTitle')" width="420px">
+      <el-form label-width="90px">
+        <el-form-item :label="t('uiAutomation.testCase.folder.target')">
+          <el-select v-model="moveTargetFolder" clearable style="width: 100%" :placeholder="t('uiAutomation.testCase.folder.selectTarget')">
+            <el-option v-for="folder in moveFolderOptions" :key="folder.id" :label="folder.label" :value="folder.id" />
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showMoveTestCaseDialog = false">{{ t('uiAutomation.common.cancel') }}</el-button>
+        <el-button type="primary" :loading="movingTestCase" @click="moveTestCaseToFolder">{{ t('uiAutomation.testCase.folder.move') }}</el-button>
       </template>
     </el-dialog>
 
@@ -453,10 +532,10 @@ import ResizableSplitPane from '@/components/ResizableSplitPane.vue'
 import StructuredStepEditor from '@/components/ui-automation/StructuredStepEditor.vue'
 import VariableEditor from '@/components/ui-automation/VariableEditor.vue'
 import { loadUiVariables, formatUiVariables } from '@/utils/uiVariables'
-import { ref, reactive, computed, onMounted, watch } from 'vue'
+import { ref, reactive, computed, onMounted, watch, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
-  Search, Plus, Edit, Delete, Check, CaretRight, Picture, Warning, View, ZoomIn, Refresh, WarningFilled, MagicStick, Setting, Upload
+  Search, Plus, Edit, Delete, Check, CaretRight, Picture, Warning, View, ZoomIn, Refresh, WarningFilled, MagicStick, Setting, Upload, Folder, FolderAdd, Document, CopyDocument, Expand, Fold
 } from '@element-plus/icons-vue'
 import DataFactorySelector from '@/components/DataFactorySelector.vue'
 import { useI18n } from 'vue-i18n'
@@ -472,6 +551,10 @@ import {
   updateTestCase,
   deleteTestCase as deleteTestCaseApi,
   getTestCases,
+  getTestCaseFolders,
+  createTestCaseFolder,
+  updateTestCaseFolder,
+  deleteTestCaseFolder,
   getTestCaseDetail,
   runTestCase as runTestCaseApi,
   copyTestCase as copyTestCaseApi,
@@ -487,6 +570,9 @@ const projects = ref([])
 const projectId = ref('')
 useRememberedProject(projectId, projects)
 const testCases = ref([])
+const testCaseFolders = ref([])
+const testCaseTreeRef = ref(null)
+const expandedFolderKeys = ref(new Set())
 const selectedTestCase = ref(null)
 const currentSteps = ref([])
 const currentVariables = ref([])
@@ -509,6 +595,14 @@ const elementSearchInFlight = new Set()
 const elementSearchTimers = new Map()
 const pages = ref([])
 const searchKeyword = ref('')
+const showFolderContextMenu = ref(false)
+const folderContextMenuX = ref(0)
+const folderContextMenuY = ref(0)
+const folderContextMenuRef = ref(null)
+const contextTreeNode = ref(null)
+const showMoveTestCaseDialog = ref(false)
+const moveTargetFolder = ref('')
+const movingTestCase = ref(false)
 const showCreateDialog = ref(false)
 const editingTestCase = ref(null)
 const executionResult = ref(null)
@@ -522,7 +616,7 @@ const currentScreenshot = ref(null)
 const isRunning = ref(false)
 const selectedEngine = ref('playwright')  // 默认使用Playwright
 const selectedBrowser = ref('chrome')  // 默认使用Chrome
-const headlessMode = ref(false)  // 默认使用有头模式
+const headlessMode = ref(true)  // 默认使用无头模式
 const showVariableHelper = ref(false)
 const currentEditingStep = ref(null)
 const currentEditingField = ref('')
@@ -538,7 +632,8 @@ const loading = ref(false)
 const testCaseForm = reactive({
   name: '',
   description: '',
-  priority: 'medium'
+  priority: 'medium',
+  folder: null
 })
 
 // 计算属性
@@ -549,6 +644,106 @@ const filteredTestCases = computed(() => {
     tc.description?.includes(searchKeyword.value)
   )
 })
+
+const folderOptions = computed(() => {
+  const byId = new Map(testCaseFolders.value.map(folder => [String(folder.id), folder]))
+  const getLabel = (folder, seen = new Set()) => {
+    if (!folder || seen.has(String(folder.id))) return folder?.name || ''
+    const nextSeen = new Set(seen).add(String(folder.id))
+    const parent = byId.get(String(folder.parent))
+    return parent ? `${getLabel(parent, nextSeen)} / ${folder.name}` : folder.name
+  }
+  return testCaseFolders.value
+    .map(folder => ({ id: folder.id, label: getLabel(folder) }))
+    .sort((a, b) => a.label.localeCompare(b.label, 'zh', { numeric: true }))
+})
+
+const moveFolderOptions = computed(() => folderOptions.value.filter(
+  folder => String(folder.id) !== String(contextTreeNode.value?.folder)
+))
+
+// 使用文件夹的父子关系构建树，目录名称变化时不需要同步修改用例数据。
+const testCaseTree = computed(() => {
+  const root = []
+  const map = new Map()
+  testCaseFolders.value.forEach(folder => {
+    map.set(String(folder.id), { id: `f-${folder.id}`, folderId: folder.id, name: folder.name, type: 'folder', children: [] })
+  })
+  testCaseFolders.value.forEach(folder => {
+    const node = map.get(String(folder.id))
+    const parent = map.get(String(folder.parent))
+    ;(parent ? parent.children : root).push(node)
+  })
+
+  filteredTestCases.value.forEach(testCase => {
+    const parent = map.get(String(testCase.folder))
+    ;(parent ? parent.children : root).push({ ...testCase, type: 'testCase' })
+  })
+
+  const sortTree = nodes => {
+    nodes.sort((a, b) => {
+      if (a.type !== b.type) return a.type === 'folder' ? -1 : 1
+      return a.name.localeCompare(b.name, 'zh', { numeric: true })
+    })
+    nodes.forEach(node => node.children && sortTree(node.children))
+  }
+  sortTree(root)
+  return root
+})
+
+const treeDefaultExpandedKeys = computed(() => testCaseTree.value.filter(node => node.type === 'folder').map(node => node.id))
+
+watch(testCaseFolders, (folders, previousFolders = []) => {
+  const folderKeys = new Set(folders.map(folder => `f-${folder.id}`))
+  const previousKeys = new Set(previousFolders.map(folder => `f-${folder.id}`))
+  const nextExpandedKeys = new Set([...expandedFolderKeys.value].filter(key => folderKeys.has(key)))
+
+  folders.forEach(folder => {
+    const key = `f-${folder.id}`
+    if (!folder.parent && !previousKeys.has(key)) nextExpandedKeys.add(key)
+  })
+  expandedFolderKeys.value = nextExpandedKeys
+})
+
+const allFoldersExpanded = computed(() => (
+  testCaseFolders.value.length > 0 &&
+  testCaseFolders.value.every(folder => expandedFolderKeys.value.has(`f-${folder.id}`))
+))
+
+const expandAllFolders = () => {
+  const expandedKeys = new Set()
+  testCaseFolders.value.forEach(folder => {
+    const node = testCaseTreeRef.value?.getNode(`f-${folder.id}`)
+    if (!node) return
+    node.expand()
+    expandedKeys.add(node.data.id)
+  })
+  expandedFolderKeys.value = expandedKeys
+}
+
+const collapseAllFolders = () => {
+  testCaseFolders.value.forEach(folder => {
+    testCaseTreeRef.value?.getNode(`f-${folder.id}`)?.collapse()
+  })
+  expandedFolderKeys.value = new Set()
+}
+
+const onFolderNodeExpand = data => {
+  if (data.type !== 'folder') return
+  expandedFolderKeys.value = new Set([...expandedFolderKeys.value, data.id])
+}
+
+const onFolderNodeCollapse = data => {
+  if (data.type !== 'folder') return
+  const keys = new Set(expandedFolderKeys.value)
+  keys.delete(data.id)
+  expandedFolderKeys.value = keys
+}
+
+const toggleAllFolders = () => {
+  if (allFoldersExpanded.value) collapseAllFolders()
+  else expandAllFolders()
+}
 
 // 解析执行日志
 const parsedExecutionLogs = computed(() => {
@@ -595,6 +790,158 @@ const loadTestCases = async () => {
     testCases.value = cases
   } catch (error) {
     console.error('获取测试用例失败:', error)
+  }
+}
+
+const loadTestCaseFolders = async () => {
+  if (!projectId.value) {
+    testCaseFolders.value = []
+    return
+  }
+  try {
+    const folders = []
+    let page = 1
+    let hasNext = true
+    while (hasNext) {
+      const response = await getTestCaseFolders({ project: projectId.value, page, page_size: 1000 })
+      folders.push(...(response.data.results || response.data))
+      hasNext = Boolean(response.data.next)
+      page += 1
+    }
+    testCaseFolders.value = folders
+  } catch (error) {
+    console.error('获取测试用例文件夹失败:', error)
+    testCaseFolders.value = []
+  }
+}
+
+const onFolderNodeContextMenu = async (event, data) => {
+  event.preventDefault()
+  contextTreeNode.value = data
+  showFolderContextMenu.value = true
+  folderContextMenuX.value = event.clientX
+  folderContextMenuY.value = event.clientY
+  await nextTick()
+  const menu = folderContextMenuRef.value
+  if (!menu) return
+  const { width, height } = menu.getBoundingClientRect()
+  const margin = 8
+  folderContextMenuX.value = Math.max(margin, Math.min(event.clientX, window.innerWidth - width - margin))
+  folderContextMenuY.value = Math.max(margin, Math.min(event.clientY, window.innerHeight - height - margin))
+}
+
+const createFolder = async (parentFolder = null) => {
+  if (!projectId.value) return
+  showFolderContextMenu.value = false
+  try {
+    const { value: name } = await ElMessageBox.prompt(
+      t('uiAutomation.testCase.folder.inputName'),
+      t('uiAutomation.testCase.folder.create'),
+      {
+        inputPattern: /^[^/\\]+$/,
+        inputErrorMessage: t('uiAutomation.testCase.folder.invalidName'),
+        confirmButtonText: t('uiAutomation.common.confirm'),
+        cancelButtonText: t('uiAutomation.common.cancel')
+      }
+    )
+    const response = await createTestCaseFolder({ project: projectId.value, name: name.trim(), parent: parentFolder?.folderId || null })
+    testCaseFolders.value = [...testCaseFolders.value, response.data]
+    ElMessage.success(t('uiAutomation.testCase.folder.created'))
+  } catch (error) {
+    if (error !== 'cancel') ElMessage.error(error.response?.data?.name?.[0] || t('uiAutomation.testCase.folder.createFailed'))
+  }
+}
+
+const renameFolder = async folder => {
+  if (!folder?.folderId) return
+  showFolderContextMenu.value = false
+  try {
+    const { value: name } = await ElMessageBox.prompt(
+      t('uiAutomation.testCase.folder.inputNewName'),
+      t('uiAutomation.testCase.folder.rename'),
+      {
+        inputValue: folder.name,
+        inputPattern: /^[^/\\]+$/,
+        inputErrorMessage: t('uiAutomation.testCase.folder.invalidName'),
+        confirmButtonText: t('uiAutomation.common.save'),
+        cancelButtonText: t('uiAutomation.common.cancel')
+      }
+    )
+    const response = await updateTestCaseFolder(folder.folderId, { name: name.trim() })
+    const updatedFolder = response.data
+    testCaseFolders.value = testCaseFolders.value.map(item => (
+      String(item.id) === String(updatedFolder.id) ? updatedFolder : item
+    ))
+    ElMessage.success(t('uiAutomation.testCase.folder.renamed'))
+  } catch (error) {
+    if (error !== 'cancel') ElMessage.error(error.response?.data?.name?.[0] || t('uiAutomation.testCase.folder.renameFailed'))
+  }
+}
+
+const deleteFolder = async folder => {
+  if (!folder?.folderId) return
+  showFolderContextMenu.value = false
+  try {
+    await ElMessageBox.confirm(
+      t('uiAutomation.testCase.folder.confirmDelete', { name: folder.name }),
+      t('uiAutomation.common.confirmDelete'),
+      {
+        confirmButtonText: t('uiAutomation.common.delete'),
+        cancelButtonText: t('uiAutomation.common.cancel'),
+        type: 'warning'
+      }
+    )
+    await deleteTestCaseFolder(folder.folderId)
+    const folderIds = new Set([String(folder.folderId)])
+    let foundDescendant = true
+    while (foundDescendant) {
+      foundDescendant = false
+      testCaseFolders.value.forEach(item => {
+        if (folderIds.has(String(item.parent)) && !folderIds.has(String(item.id))) {
+          folderIds.add(String(item.id))
+          foundDescendant = true
+        }
+      })
+    }
+    testCaseFolders.value = testCaseFolders.value.filter(item => !folderIds.has(String(item.id)))
+    testCases.value = testCases.value.map(item => (
+      folderIds.has(String(item.folder)) ? { ...item, folder: null } : item
+    ))
+    if (selectedTestCase.value && folderIds.has(String(selectedTestCase.value.folder))) {
+      selectedTestCase.value = { ...selectedTestCase.value, folder: null }
+    }
+    ElMessage.success(t('uiAutomation.testCase.folder.deleted'))
+  } catch (error) {
+    if (error !== 'cancel') ElMessage.error(t('uiAutomation.testCase.folder.deleteFailed'))
+  }
+}
+
+const openMoveTestCaseDialog = testCase => {
+  showFolderContextMenu.value = false
+  contextTreeNode.value = testCase
+  moveTargetFolder.value = testCase.folder || null
+  showMoveTestCaseDialog.value = true
+}
+
+const moveTestCaseToFolder = async () => {
+  const testCase = contextTreeNode.value
+  if (!testCase) return
+  movingTestCase.value = true
+  try {
+    const response = await updateTestCase(testCase.id, { folder: moveTargetFolder.value || null, project: projectId.value })
+    const updatedTestCase = response.data
+    testCases.value = testCases.value.map(item => (
+      String(item.id) === String(updatedTestCase.id) ? { ...item, ...updatedTestCase } : item
+    ))
+    ElMessage.success(t('uiAutomation.testCase.folder.moved'))
+    showMoveTestCaseDialog.value = false
+    if (selectedTestCase.value?.id === testCase.id) {
+      selectedTestCase.value = testCases.value.find(item => String(item.id) === String(testCase.id)) || null
+    }
+  } catch (error) {
+    ElMessage.error(error.response?.data?.folder?.[0] || t('uiAutomation.testCase.folder.moveFailed'))
+  } finally {
+    movingTestCase.value = false
   }
 }
 
@@ -718,6 +1065,7 @@ const onProjectChange = async () => {
   loadElements()
   await Promise.all([
     loadTestCases(),
+    loadTestCaseFolders(),
     loadPages(),
     loadStorageStates()
   ])
@@ -1019,6 +1367,7 @@ const editTestCase = (testCase) => {
   testCaseForm.name = testCase.name
   testCaseForm.description = testCase.description || ''
   testCaseForm.priority = testCase.priority || 'medium'
+  testCaseForm.folder = testCase.folder || null
   showCreateDialog.value = true
 }
 
@@ -1280,6 +1629,7 @@ const saveTestCaseForm = async () => {
       name: testCaseForm.name,
       description: testCaseForm.description,
       priority: testCaseForm.priority,
+      folder: testCaseForm.folder || null,
       project: projectId.value
     }
 
@@ -1316,6 +1666,7 @@ const resetForm = () => {
   testCaseForm.name = ''
   testCaseForm.description = ''
   testCaseForm.priority = 'medium'
+  testCaseForm.folder = null
 }
 
 // 辅助方法
@@ -1481,15 +1832,120 @@ onMounted(async () => {
   align-items: center;
 }
 
-.panel-header h3 {
-  margin: 0;
+.panel-header .case-search {
+  flex: 1;
+  min-width: 0;
+  margin-right: 8px;
+}
+
+.panel-header .folder-create-button {
+  width: 32px;
+  height: 24px;
+  padding: 0;
+}
+
+.panel-header .tree-toggle-button {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+}
+
+.panel-header .tree-toggle-button :deep(.el-icon) {
+  font-size: 16px;
+}
+
+.panel-header .folder-create-button :deep(.el-icon) {
+  font-size: 18px;
 }
 
 .test-case-list {
   flex: 1;
   overflow-y: auto;
-  padding: 10px;
+  padding: 8px 6px;
 }
+
+.test-case-tree-node {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  min-height: 32px;
+  padding: 3px 4px;
+  border-radius: 4px;
+  color: #303133;
+}
+
+.test-case-tree-node:hover,
+.test-case-tree-node.active {
+  background: #f0f8ff;
+  color: #409eff;
+}
+
+.test-case-tree-content {
+  flex: 1;
+  min-width: 0;
+  margin-left: 5px;
+}
+
+.test-case-tree-title {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 4px;
+}
+
+.test-case-tree-name {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.case-step-count {
+  flex: 0 0 auto;
+  color: #409eff;
+  font-size: 11px;
+}
+
+.test-case-tree-node .case-actions {
+  display: none;
+  align-items: center;
+  gap: 1px;
+}
+
+.test-case-tree-node:hover .case-actions {
+  display: inline-flex;
+}
+
+.test-case-tree-node .case-actions :deep(.el-button) {
+  width: 19px;
+  height: 19px;
+  padding: 0;
+}
+
+.folder-context-menu {
+  position: fixed;
+  z-index: 1000;
+  min-width: 150px;
+  margin: 0;
+  padding: 8px 0;
+  list-style: none;
+  background: #fff;
+  border: 1px solid #e9ecef;
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+}
+
+.folder-context-menu li {
+  padding: 9px 14px;
+  color: #303133;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.folder-context-menu li:hover { background: #f5f7fa; }
+.folder-context-menu li.danger { color: #f56c6c; }
 
 .test-case-item {
   border: 1px solid #e6e6e6;
@@ -1581,18 +2037,24 @@ onMounted(async () => {
   gap: 8px;
 }
 
-.detail-title {
-  margin: 0;
-  overflow-wrap: anywhere;
+.detail-title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 
-.detail-description {
-  margin: 0;
-  color: #666;
-  font-size: 14px;
-  line-height: 1.4;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
+.detail-title-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.detail-priority-select {
+  width: 100px;
+  flex: 0 0 auto;
+}
+
+.detail-description-input {
+  width: 100%;
 }
 
 .detail-actions {

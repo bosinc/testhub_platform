@@ -1,17 +1,19 @@
 <template>
   <div class="test-suites-page">
-    <div class="page-header">
-      <h2>{{ $t('apiTesting.testSuiteManagement.title') }}</h2>
-      <el-select
-        v-model="selectedProject"
-        class="project-select"
-        filterable
-        :placeholder="$t('apiTesting.testSuiteManagement.projectPlaceholder')"
-        @change="loadTestSuites"
-      >
-        <el-option v-for="project in projects" :key="project.id" :label="project.name" :value="project.id" />
-      </el-select>
-      <el-button type="primary" :icon="Plus" @click="openCreateSuite">{{ $t('apiTesting.testSuiteManagement.create') }}</el-button>
+    <div class="test-suites-header">
+      <h2 class="test-suites-title">{{ $t('apiTesting.testSuiteManagement.title') }}</h2>
+      <div class="test-suites-header-actions">
+        <el-select
+          v-model="selectedProject"
+          class="project-select"
+          filterable
+          :placeholder="$t('apiTesting.testSuiteManagement.projectPlaceholder')"
+          @change="loadTestSuites"
+        >
+          <el-option v-for="project in projects" :key="project.id" :label="project.name" :value="project.id" />
+        </el-select>
+        <el-button type="primary" :icon="Plus" @click="openCreateSuite">{{ $t('apiTesting.testSuiteManagement.create') }}</el-button>
+      </div>
     </div>
 
     <el-card class="table-card" shadow="never">
@@ -336,8 +338,9 @@ onMounted(loadProjects)
 </script>
 
 <style scoped>
-.page-header { display: flex; align-items: center; gap: 16px; padding: 20px; margin-bottom: 20px; background: #fff; border-radius: 4px; }
-.page-header h2 { margin: 0 auto 0 0; font-size: 22px; }
+.test-suites-header { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 16px; padding: 20px; margin-bottom: 20px; background: #fff; border-radius: 4px; }
+.test-suites-title { margin: 0; font-size: 22px; }
+.test-suites-header-actions { display: flex; width: max-content; align-items: center; justify-self: end; gap: 16px; }
 .project-select { flex: 0 0 200px; width: 200px; }
 .row-actions { display: flex; flex-wrap: nowrap; align-items: center; gap: 4px; white-space: nowrap; }
 .row-actions :deep(.el-button) { flex-shrink: 0; }
@@ -348,5 +351,5 @@ onMounted(loadProjects)
 .picker-header { display: flex; justify-content: space-between; align-items: center; padding: 10px 12px; border-bottom: 1px solid var(--el-border-color); font-weight: 600; }
 .picker-header :deep(.el-input) { width: 240px; font-weight: 400; }
 .tree-node-label { display: inline-flex; align-items: center; gap: 8px; }
-@media (max-width: 760px) { .page-header { flex-wrap: wrap; } .page-header h2 { flex-basis: 100%; } .search-input { width: 100%; } }
+@media (max-width: 760px) { .test-suites-header { grid-template-columns: minmax(0, 1fr); } .test-suites-header-actions { width: 100%; justify-self: stretch; } .project-select { flex: 1 1 auto; } .search-input { width: 100%; } }
 </style>

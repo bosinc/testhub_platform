@@ -23,8 +23,7 @@ from .models import (
     UiProject, StorageState, LocatorStrategy, Element, TestScript, TestSuite,
     TestSuiteScript, TestExecution, Screenshot,
     ElementGroup, PageObject, PageObjectElement, ScriptStep, ScriptElementUsage,
-    TestCase, TestCaseStep, TestCaseExecution, OperationRecord,
-    TestCase, TestCaseStep, TestCaseExecution, OperationRecord,
+    TestCase, TestCaseFolder, TestCaseStep, TestCaseExecution, OperationRecord,
     UiScheduledTask, UiNotificationLog, UiTaskNotificationSetting,
     AICase, AIExecutionRecord
 )
@@ -42,7 +41,7 @@ from .serializers import (
     PageObjectSerializer, PageObjectCreateSerializer, PageObjectElementSerializer,
     ScriptStepSerializer, ScriptElementUsageSerializer,
     ScriptAnalysisSerializer, ElementValidationSerializer, CodeGenerationSerializer,
-    TestCaseSerializer, TestCaseStepSerializer, TestCaseExecutionSerializer, TestCaseRunSerializer,
+    TestCaseSerializer, TestCaseFolderSerializer, TestCaseStepSerializer, TestCaseExecutionSerializer, TestCaseRunSerializer,
     OperationRecordSerializer,
     UiScheduledTaskSerializer, UiNotificationLogSerializer, UiTaskNotificationSettingSerializer,
     AICaseSerializer, AIExecutionRecordSerializer,
@@ -1535,6 +1534,65 @@ class ScreenshotViewSet(viewsets.ModelViewSet):
         return Screenshot.objects.filter(execution__in=executions)
 
 
+class TestCaseFolderViewSet(viewsets.ModelViewSet):
+    """UI 测试用例文件夹接口，使用父子关系管理嵌套目录。"""
+    serializer_class = TestCaseFolderSerializer
+    permission_classes = [IsAuthenticated]
+    http_method_names = ['get', 'post', 'put', 'patch', 'delete', 'head', 'options']
+
+    def get_queryset(self):
+        user = self.request.user
+        queryset = TestCaseFolder.objects.filter(
+            project__in=UiProject.objects.filter(models.Q(owner=user) | models.Q(members=user))
+        ).distinct()
+        project_id = self.request.query_params.get('project')
+        return queryset.filter(project_id=project_id) if project_id else queryset
+
+    def perform_create(self, serializer):
+        project = serializer.validated_data['project']
+        if not UiProject.objects.filter(
+            pk=project.pk,
+        ).filter(models.Q(owner=self.request.user) | models.Q(members=self.request.user)).exists():
+            raise ValidationError({'project': '无权访问该项目'})
+        parent = serializer.validated_data.get('parent')
+        if parent and parent.project_id != project.pk:
+            raise ValidationError({'parent': '父文件夹必须属于当前项目'})
+        serializer.save()
+
+    @transaction.atomic
+    def perform_update(self, serializer):
+        folder = self.get_object()
+        if serializer.validated_data.get('project', folder.project) != folder.project:
+            raise ValidationError({'project': '文件夹不能移动到其他项目'})
+        parent = serializer.validated_data.get('parent', folder.parent)
+        if parent and parent.project_id != folder.project_id:
+            raise ValidationError({'parent': '父文件夹必须属于当前项目'})
+        if parent and parent.pk == folder.pk:
+            raise ValidationError({'parent': '文件夹不能设置自身为父目录'})
+        if parent:
+            descendant_ids = {folder.pk}
+            pending_ids = [folder.pk]
+            while pending_ids:
+                child_ids = list(TestCaseFolder.objects.filter(parent_id__in=pending_ids).values_list('pk', flat=True))
+                descendant_ids.update(child_ids)
+                pending_ids = child_ids
+            if parent.pk in descendant_ids:
+                raise ValidationError({'parent': '不能将文件夹移动到自身子目录中'})
+        serializer.save()
+
+    @transaction.atomic
+    def perform_destroy(self, instance):
+        # 删除目录及其子目录前解除用例关联，避免用例被级联删除。
+        descendant_ids = {instance.pk}
+        pending_ids = [instance.pk]
+        while pending_ids:
+            child_ids = list(TestCaseFolder.objects.filter(parent_id__in=pending_ids).values_list('pk', flat=True))
+            descendant_ids.update(child_ids)
+            pending_ids = child_ids
+        TestCase.objects.filter(folder_id__in=descendant_ids).update(folder=None, updated_at=timezone.now())
+        instance.delete()
+
+
 class TestCaseViewSet(viewsets.ModelViewSet):
     """测试用例视图集"""
     queryset = TestCase.objects.all()
@@ -1563,7 +1621,7 @@ class TestCaseViewSet(viewsets.ModelViewSet):
         ).distinct()
         # 预取步骤及元素定位信息，保证详情序列化时能完整返回步骤回显数据。
         return TestCase.objects.filter(project__in=accessible_projects).select_related(
-            'project', 'created_by'
+            'project', 'created_by', 'folder'
         ).prefetch_related('steps__element__locator_strategy')
 
     def _validate_steps(self, steps_data, project_id):
@@ -1619,7 +1677,8 @@ class TestCaseViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         # 创建测试用例
-        self._validate_steps(self.request.data.get('steps', []), self.request.data.get('project'))
+        project_id = self.request.data.get('project')
+        self._validate_steps(self.request.data.get('steps', []), project_id)
         instance = serializer.save(created_by=self.request.user)
 
         # 记录操作
@@ -1681,6 +1740,7 @@ class TestCaseViewSet(viewsets.ModelViewSet):
                 project=test_case.project,
                 name=f"{test_case.name}_copy",
                 description=test_case.description,
+                folder=test_case.folder,
                 priority=test_case.priority,
                 status=test_case.status,
                 created_by=request.user

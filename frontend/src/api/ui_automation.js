@@ -19,26 +19,6 @@ export function getUiProjects(params) {
   })
 }
 
-// 登录态资源管理接口：列表、上传、编辑、下载和删除均按项目范围调用。
-export const getStorageStates = params => request({ url: '/ui-automation/storage-states/', method: 'get', params })
-// 登录态创建使用 FormData 上传 JSON 文件，需覆盖全局 JSON 请求头。
-export const createStorageState = data => request({
-  url: '/ui-automation/storage-states/',
-  method: 'post',
-  data,
-  headers: { 'Content-Type': 'multipart/form-data' }
-})
-// 手工编辑直接发送 JSON 内容，避免将浏览器 File 对象序列化成空对象。
-export const createStorageStateFromContent = data => request({
-  url: '/ui-automation/storage-states/',
-  method: 'post',
-  data
-})
-export const updateStorageState = (id, data) => request({ url: `/ui-automation/storage-states/${id}/`, method: 'patch', data })
-export const deleteStorageState = id => request({ url: `/ui-automation/storage-states/${id}/`, method: 'delete' })
-export const downloadStorageState = id => request({ url: `/ui-automation/storage-states/${id}/download/`, method: 'get', responseType: 'blob' })
-export const updateStorageStateContent = (id, content) => request({ url: `/ui-automation/storage-states/${id}/content/`, method: 'put', data: { content } })
-
 // 创建UI项目
 export function createUiProject(data) {
   return request({
@@ -137,6 +117,31 @@ export function deleteElement(id) {
     method: 'delete'
   })
 }
+
+// ============ 登录态相关API：列表、上传、编辑、下载和删除均按项目范围调用。 ============
+
+// 登录态创建使用 FormData 上传 JSON 文件，需覆盖全局 JSON 请求头。
+export const createStorageState = data => request({
+  url: '/ui-automation/storage-states/',
+  method: 'post',
+  data,
+  headers: { 'Content-Type': 'multipart/form-data' }
+})
+
+// 手工编辑直接发送 JSON 内容，避免将浏览器 File 对象序列化成空对象。
+export const createStorageStateFromContent = data => request({
+  url: '/ui-automation/storage-states/',
+  method: 'post',
+  data
+})
+export const getStorageStates = params => request({ url: '/ui-automation/storage-states/', method: 'get', params })
+export const updateStorageState = (id, data) => request({ url: `/ui-automation/storage-states/${id}/`, method: 'patch', data })
+export const deleteStorageState = id => request({ url: `/ui-automation/storage-states/${id}/`, method: 'delete' })
+export const downloadStorageState = id => request({ url: `/ui-automation/storage-states/${id}/download/`, method: 'get', responseType: 'blob' })
+export const updateStorageStateContent = (id, content) => request({ url: `/ui-automation/storage-states/${id}/content/`, method: 'put', data: { content } })
+
+
+
 
 // 测试脚本相关API
 
@@ -752,6 +757,41 @@ export function getTestCases(params) {
     url: '/ui-automation/test-cases/',
     method: 'get',
     params
+  })
+}
+
+// 获取 UI 测试用例文件夹列表
+export function getTestCaseFolders(params) {
+  return request({
+    url: '/ui-automation/test-case-folders/',
+    method: 'get',
+    params
+  })
+}
+
+// 创建 UI 测试用例文件夹
+export function createTestCaseFolder(data) {
+  return request({
+    url: '/ui-automation/test-case-folders/',
+    method: 'post',
+    data
+  })
+}
+
+// 更新 UI 测试用例文件夹名称或父目录。
+export function updateTestCaseFolder(id, data) {
+  return request({
+    url: `/ui-automation/test-case-folders/${id}/`,
+    method: 'patch',
+    data
+  })
+}
+
+// 删除 UI 测试用例文件夹
+export function deleteTestCaseFolder(id) {
+  return request({
+    url: `/ui-automation/test-case-folders/${id}/`,
+    method: 'delete'
   })
 }
 

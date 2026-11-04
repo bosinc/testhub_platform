@@ -27,32 +27,32 @@
     <div class="main-content">
       <el-table :data="scripts" stripe style="width: 100%">
         <el-table-column type="index" :label="$t('uiAutomation.script.index')" width="60" />
-        <el-table-column :label="$t('uiAutomation.script.projectColumn')" width="150">
+        <el-table-column :label="$t('uiAutomation.script.projectColumn')" min-width="180">
           <template #default="{ row }">
             {{ row.project?.name || $t('uiAutomation.script.unknownProject') }}
           </template>
         </el-table-column>
-        <el-table-column prop="name" :label="$t('uiAutomation.script.nameColumn')" min-width="300" show-overflow-tooltip />
-        <el-table-column :label="$t('uiAutomation.script.languageColumn')" width="100">
+        <el-table-column prop="name" :label="$t('uiAutomation.script.nameColumn')" min-width="340" show-overflow-tooltip />
+        <el-table-column :label="$t('uiAutomation.script.languageColumn')" min-width="110">
           <template #default="{ row }">
             <el-tag size="small" :type="row.language === 'python' ? 'success' : 'primary'">
               {{ getLanguageText(row.language) }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column :label="$t('uiAutomation.script.frameworkColumn')" width="120">
+        <el-table-column :label="$t('uiAutomation.script.frameworkColumn')" min-width="130">
           <template #default="{ row }">
             <el-tag size="small" :type="row.framework === 'playwright' ? 'warning' : 'info'">
               {{ getFrameworkText(row.framework) }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="created_at" :label="$t('uiAutomation.script.createTimeColumn')" width="180">
+        <el-table-column prop="created_at" :label="$t('uiAutomation.script.createTimeColumn')" min-width="200">
           <template #default="{ row }">
             {{ formatTime(row.created_at) }}
           </template>
         </el-table-column>
-        <el-table-column :label="$t('uiAutomation.script.operationColumn')" width="520" fixed="right">
+        <el-table-column :label="$t('uiAutomation.script.operationColumn')" width="420">
           <template #default="{ row }">
             <div class="row-actions">
               <el-button size="small" text type="primary" @click="replayScript(row)">
@@ -787,7 +787,13 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   flex-wrap: nowrap;
+  gap: 2px;
   white-space: nowrap;
+}
+
+.row-actions :deep(.el-button) {
+  margin: 0;
+  padding: 0 4px;
 }
 
 .script-detail {

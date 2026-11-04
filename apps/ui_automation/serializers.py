@@ -5,7 +5,7 @@ from .models import (
     UiProject, StorageState, LocatorStrategy, Element, TestScript, TestSuite,
     TestSuiteScript, TestSuiteTestCase, TestExecution, TestEnvironment, Screenshot,
     ElementGroup, PageObject, PageObjectElement, ScriptStep, ScriptElementUsage,
-    TestCase, TestCaseStep, TestCaseExecution, OperationRecord,
+    TestCase, TestCaseFolder, TestCaseStep, TestCaseExecution, OperationRecord,
     UiScheduledTask, UiNotificationLog, UiTaskNotificationSetting,
     AICase, AIExecutionRecord
 )
@@ -865,14 +865,35 @@ class TestCaseSerializer(serializers.ModelSerializer):
     class Meta:
         model = TestCase
         fields = [
-            'id', 'name', 'description', 'project', 'project_name', 'status', 'priority',
+            'id', 'name', 'description', 'folder', 'project', 'project_name', 'status', 'priority',
             'created_by', 'created_by_name', 'created_at', 'updated_at', 'steps'
         ]
         read_only_fields = ['created_by']
 
+    def validate_folder(self, folder):
+        project = self.initial_data.get('project') or getattr(self.instance, 'project_id', None)
+        if folder and project and str(folder.project_id) != str(project):
+            raise serializers.ValidationError('文件夹必须属于当前项目')
+        return folder
+
     def create(self, validated_data):
         validated_data['created_by'] = self.context['request'].user
         return super().create(validated_data)
+
+
+class TestCaseFolderSerializer(serializers.ModelSerializer):
+    """UI 测试用例文件夹序列化器。"""
+
+    class Meta:
+        model = TestCaseFolder
+        fields = ['id', 'project', 'name', 'parent', 'created_at', 'updated_at']
+        read_only_fields = ['created_at', 'updated_at']
+
+    def validate_parent(self, parent):
+        project = self.initial_data.get('project') or getattr(self.instance, 'project_id', None)
+        if parent and project and str(parent.project_id) != str(project):
+            raise serializers.ValidationError('父文件夹必须属于当前项目')
+        return parent
 
 
 class TestCaseExecutionSerializer(serializers.ModelSerializer):
