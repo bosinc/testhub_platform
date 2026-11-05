@@ -66,10 +66,16 @@
               :data="filteredModuleTree"
               :props="{ label: 'name', children: 'children' }"
               node-key="id"
-              default-expand-all
+              :default-expanded-keys="expandedModuleKeys"
+              :auto-expand-parent="false"
               highlight-current
+              draggable
+              :allow-drop="allowModuleDrop"
               :expand-on-click-node="false"
               @node-click="node => selectModule(String(node.id))"
+              @node-expand="handleModuleExpand"
+              @node-collapse="handleModuleCollapse"
+              @node-drop="handleModuleDrop"
             >
               <template #default="{ node, data }">
                 <div class="tree-node" :class="{ 'is-active': selectedModule === String(data.id) }">
@@ -153,7 +159,7 @@
           height="100%"
           @selection-change="handleSelectionChange">
           <el-table-column type="selection" width="40" />
-          <el-table-column type="index" :label="$t('testcase.serialNumber')" width="60" :index="getSerialNumber" />
+          <el-table-column prop="id" :label="$t('testcase.serialNumber')" width="80" />
           <el-table-column prop="title" :label="$t('testcase.caseTitle')" min-width="360">
             <template #default="{ row }">
               <el-tooltip :content="row.title" placement="top" :show-after="500">
@@ -277,6 +283,7 @@
         </el-form-item>
         <el-form-item :label="$t('testcase.selectImportFile')">
           <el-upload
+            ref="importUploadRef"
             class="import-upload"
             drag
             action="#"
@@ -286,6 +293,7 @@
             :show-file-list="false"
             :before-upload="beforeImportUpload"
             :on-change="handleImportFileChange"
+            :on-exceed="handleImportFileExceed"
           >
             <el-icon class="el-icon--upload"><Upload /></el-icon>
             <div class="el-upload__text">
@@ -327,11 +335,12 @@ import dayjs from 'dayjs'
 import * as XLSX from 'xlsx'
 import { getPreferredProjectId, rememberSelectedProject } from '@/utils/projectSelection'
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const router = useRouter()
 const loading = ref(false)
 const sidebarWidth = ref(280)
 const moduleTree = ref([])
+const expandedModuleKeys = ref([])
 const moduleProjectId = ref('')
 const moduleSearch = ref('')
 const selectedModule = ref('')
@@ -345,6 +354,7 @@ const moveDialogVisible = ref(false)
 const moveTargetModule = ref(null)
 const isMoving = ref(false)
 const movingModule = ref(null)
+const isReorderingModules = ref(false)
 const filteredModuleTree = computed(() => {
   const keyword = moduleSearch.value.trim().toLocaleLowerCase()
   if (!keyword) return moduleTree.value
@@ -372,6 +382,7 @@ const isDeleting = ref(false)
 const importDialogVisible = ref(false)
 const isCreatingImport = ref(false)
 const selectedImportFile = ref(null)
+const importUploadRef = ref(null)
 const importForm = ref({
   projectId: ''
 })
@@ -427,6 +438,53 @@ const loadModuleTree = async () => {
     allProjectCount.value = allCases.data.count || 0
     unassignedCount.value = unassigned.data.count || 0
   } catch (error) { ElMessage.error(t('testcase.fetchModulesFailed')) }
+}
+const handleModuleExpand = (module) => {
+  if (!expandedModuleKeys.value.includes(module.id)) {
+    expandedModuleKeys.value = [...expandedModuleKeys.value, module.id]
+  }
+}
+const handleModuleCollapse = (module) => {
+  const collapsedIds = new Set()
+  const collectDescendantIds = (node) => {
+    collapsedIds.add(node.id)
+    ;(node.children || []).forEach(collectDescendantIds)
+  }
+  collectDescendantIds(module)
+  expandedModuleKeys.value = expandedModuleKeys.value.filter(id => !collapsedIds.has(id))
+}
+const allowModuleDrop = (draggingNode, dropNode, dropType) => {
+  return !moduleSearch.value.trim()
+    && !isReorderingModules.value
+    && ['prev', 'next'].includes(dropType)
+    && draggingNode.data.parent_id === dropNode.data.parent_id
+}
+const findModuleSiblings = (nodes, parentId) => {
+  if (parentId === null || parentId === undefined) return nodes
+  for (const node of nodes) {
+    if (node.id === parentId) return node.children || []
+    const children = findModuleSiblings(node.children || [], parentId)
+    if (children.length) return children
+  }
+  return []
+}
+const handleModuleDrop = async (draggingNode) => {
+  const siblings = findModuleSiblings(moduleTree.value, draggingNode.data.parent_id)
+  isReorderingModules.value = true
+  try {
+    await api.post('/testcases/modules/reorder/', {
+      project_id: moduleProjectId.value,
+      parent_id: draggingNode.data.parent_id,
+      module_ids: siblings.map(module => module.id)
+    })
+    await loadModuleTree()
+    ElMessage.success(t('testcase.moduleOrderSaved'))
+  } catch (error) {
+    await loadModuleTree()
+    ElMessage.error(t('testcase.moduleOrderSaveFailed'))
+  } finally {
+    isReorderingModules.value = false
+  }
 }
 const handleModuleProjectChange = () => {
   rememberSelectedProject(moduleProjectId.value, projects.value)
@@ -528,11 +586,6 @@ const handleSelectionChange = (selection) => {
   selectedTestCases.value = selection
 }
 
-// 获取序号
-const getSerialNumber = (index) => {
-  return (currentPage.value - 1) * pageSize.value + index + 1
-}
-
 // 批量删除
 const batchDeleteTestCases = async () => {
   if (selectedTestCases.value.length === 0) {
@@ -627,6 +680,49 @@ const convertBrToNewline = (text) => {
   return text.replace(/<br\s*\/?>/gi, '\n')
 }
 
+// 将富文本备注转换为纯文本，便于写入 Excel 单元格。
+const getNotesText = (html) => {
+  if (!html) return ''
+  const parsed = new DOMParser().parseFromString(html, 'text/html')
+  const readNode = (node) => {
+    if (node.nodeType === Node.TEXT_NODE) return node.nodeValue || ''
+    if (node.nodeType !== Node.ELEMENT_NODE) return ''
+    if (node.tagName === 'BR') return '\n'
+    if (node.tagName === 'IMG') return '[图片]'
+
+    const content = [...node.childNodes].map(readNode).join('')
+    return ['P', 'H2', 'H3', 'LI'].includes(node.tagName) ? `${content}\n` : content
+  }
+  return readNode(parsed.body).replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim()
+}
+
+// 根据模块树还原每条用例的完整模块路径，导出时按实际最大层级生成列。
+const getExportModulePaths = async (testCases) => {
+  const projectIds = [...new Set(testCases
+    .filter(testcase => testcase.module)
+    .map(testcase => testcase.project?.id || testcase.module.project_id)
+    .filter(Boolean))]
+  const modulePaths = new Map()
+
+  await Promise.all(projectIds.map(async (projectId) => {
+    const { data } = await api.get('/testcases/modules/', { params: { project: projectId } })
+    const collectPaths = (modules, parentPath = []) => {
+      modules.forEach((module) => {
+        const path = [...parentPath, module.name]
+        modulePaths.set(`${projectId}:${module.id}`, path)
+        collectPaths(module.children || [], path)
+      })
+    }
+    collectPaths(data)
+  }))
+
+  return testCases.map((testcase) => {
+    const projectId = testcase.project?.id || testcase.module?.project_id
+    const key = `${projectId}:${testcase.module?.id}`
+    return testcase.module ? (modulePaths.get(key) || [testcase.module.name]) : []
+  })
+}
+
 const exportToExcel = async () => {
   try {
     loading.value = true
@@ -680,22 +776,25 @@ const exportToExcel = async () => {
 
     // 创建工作簿
     const workbook = XLSX.utils.book_new()
+    const modulePaths = await getExportModulePaths(testCasesToExport)
+    const moduleLevelLabels = ['一', '二', '三', '四', '五', '六', '七', '八']
+    const moduleLevelCount = Math.max(0, ...modulePaths.map(path => path.length))
+    const moduleHeaders = Array.from({ length: moduleLevelCount }, (_, index) => (
+      t('testcase.excelModuleLevel', {
+        level: locale.value.startsWith('zh') ? moduleLevelLabels[index] : index + 1
+      })
+    ))
 
     // 准备Excel数据
     const worksheetData = [
-      [t('testcase.excelNumber'), t('testcase.excelTitle'), t('testcase.excelProject'), t('testcase.excelVersions'), t('testcase.excelPreconditions'), t('testcase.excelSteps'), t('testcase.excelExpectedResult'), t('testcase.excelPriority'), t('testcase.excelTestType'), t('testcase.excelAuthor'), t('testcase.excelCreatedAt'), t('testcase.updatedAt'), t('testcase.notes')]
+      [t('testcase.excelNumber'), ...moduleHeaders, t('testcase.excelTitle'), t('testcase.excelPreconditions'), t('testcase.excelSteps'), t('testcase.excelExpectedResult'), t('testcase.excelPriority'), t('testcase.excelTestType'), t('testcase.excelAuthor'), t('testcase.excelCreatedAt'), t('testcase.updatedAt'), t('testcase.excelNotes')]
     ]
 
     testCasesToExport.forEach((testcase, index) => {
-      const versions = testcase.versions && testcase.versions.length > 0
-        ? testcase.versions.map(v => v.name + (v.is_baseline ? '(' + t('testcase.baseline') + ')' : '')).join('、')
-        : t('testcase.noVersion')
-
       worksheetData.push([
-        `TC${String(index + 1).padStart(3, '0')}`,
+        testcase.id,
+        ...Array.from({ length: moduleLevelCount }, (_, level) => modulePaths[index][level] || ''),
         testcase.title || '',
-        testcase.project?.name || '',
-        versions,
         convertBrToNewline(testcase.preconditions || ''),
         convertBrToNewline(testcase.steps || ''),
         convertBrToNewline(testcase.expected_result || ''),
@@ -713,10 +812,9 @@ const exportToExcel = async () => {
     
     // 设置列宽
     const colWidths = [
-      { wch: 15 }, // Test case number
+      { wch: 12 }, // Test case ID
+      ...Array.from({ length: moduleLevelCount }, () => ({ wch: 24 })), // Module hierarchy
       { wch: 30 }, // Case title
-      { wch: 20 }, // Related project
-      { wch: 25 }, // Related versions
       { wch: 30 }, // Preconditions
       { wch: 40 }, // Steps
       { wch: 30 }, // Expected result
@@ -796,6 +894,7 @@ const downloadImportTemplate = async () => {
 const openImportDialog = () => {
   importForm.value.projectId = projectFilter.value || ''
   selectedImportFile.value = null
+  importUploadRef.value?.clearFiles()
   importDialogVisible.value = true
 }
 
@@ -808,8 +907,22 @@ const beforeImportUpload = (file) => {
 }
 
 const handleImportFileChange = (uploadFile) => {
-  if (uploadFile?.raw) {
+  if (uploadFile?.raw && beforeImportUpload(uploadFile.raw)) {
     selectedImportFile.value = uploadFile.raw
+  } else if (uploadFile?.raw) {
+    selectedImportFile.value = null
+    importUploadRef.value?.clearFiles()
+  }
+}
+
+const handleImportFileExceed = (files) => {
+  const file = files[0]
+  // Replace the hidden upload entry so the next file selection can be accepted.
+  importUploadRef.value?.clearFiles()
+  if (file && beforeImportUpload(file)) {
+    selectedImportFile.value = file
+  } else {
+    selectedImportFile.value = null
   }
 }
 

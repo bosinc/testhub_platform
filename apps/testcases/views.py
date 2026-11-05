@@ -7,6 +7,7 @@ from django.db import models, transaction
 from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.views import APIView
 from rest_framework import serializers
+from django.utils import timezone
 
 from .models import TestCase, TestCaseModule, TestCaseStep, TestCaseAttachment, TestCaseComment, TestCaseImportRecord
 from .serializers import (
@@ -88,9 +89,60 @@ class TestCaseModuleListCreateView(APIView):
             return Response({'parent_id': '模块最多支持8层'}, status=status.HTTP_400_BAD_REQUEST)
         if TestCaseModule.objects.filter(project=project, parent=parent, name=name).exists():
             return Response({'name': '同一父模块下不能有重名模块'}, status=status.HTTP_400_BAD_REQUEST)
-        module = TestCaseModule.objects.create(project=project, parent=parent, name=name)
+        module = TestCaseModule.objects.create(
+            project=project,
+            parent=parent,
+            name=name,
+            sort_order=TestCaseModule.next_sort_order(project, parent),
+        )
         return Response({'id': module.id, 'name': module.name, 'project_id': project.id,
                          'parent_id': module.parent_id, 'count': 0, 'children': []}, status=status.HTTP_201_CREATED)
+
+
+class TestCaseModuleReorderSerializer(serializers.Serializer):
+    project_id = serializers.IntegerField(min_value=1)
+    parent_id = serializers.IntegerField(min_value=1, allow_null=True)
+    module_ids = serializers.ListField(child=serializers.IntegerField(min_value=1), allow_empty=True)
+
+    def validate_module_ids(self, value):
+        if len(value) != len(set(value)):
+            raise serializers.ValidationError('目录列表不能包含重复项')
+        return value
+
+
+class TestCaseModuleReorderView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        serializer = TestCaseModuleReorderSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        project_id = serializer.validated_data['project_id']
+        parent_id = serializer.validated_data['parent_id']
+        module_ids = serializer.validated_data['module_ids']
+        project = get_user_accessible_projects(request.user).filter(pk=project_id).first()
+        if not project:
+            return Response({'detail': '项目不存在或无权访问'}, status=status.HTTP_404_NOT_FOUND)
+        parent = validate_module_for_project(parent_id, project) if parent_id is not None else None
+
+        with transaction.atomic():
+            siblings = list(TestCaseModule.objects.select_for_update().filter(
+                project=project, parent=parent
+            ).order_by('id'))
+            sibling_ids = {module.id for module in siblings}
+            if len(module_ids) != len(siblings) or set(module_ids) != sibling_ids:
+                return Response({'module_ids': '必须提交该父目录下完整且有效的目录列表'}, status=status.HTTP_400_BAD_REQUEST)
+
+            modules_by_id = {module.id: module for module in siblings}
+            now = timezone.now()
+            ordered_modules = []
+            for sort_order, module_id in enumerate(module_ids):
+                module = modules_by_id[module_id]
+                module.sort_order = sort_order
+                module.updated_at = now
+                ordered_modules.append(module)
+            TestCaseModule.objects.bulk_update(ordered_modules, ['sort_order', 'updated_at'])
+
+        return Response({'updated': len(module_ids)})
 
 
 class TestCaseModuleDetailView(APIView):
@@ -135,7 +187,8 @@ class TestCaseModuleDetailView(APIView):
         if TestCaseModule.objects.filter(project=module.project, parent=parent, name=module.name).exclude(pk=module.pk).exists():
             return Response({'name': '目标父模块下已有同名模块'}, status=status.HTTP_400_BAD_REQUEST)
         module.parent = parent
-        module.save(update_fields=['parent', 'updated_at'])
+        module.sort_order = TestCaseModule.next_sort_order(module.project, parent)
+        module.save(update_fields=['parent', 'sort_order', 'updated_at'])
         return Response({'id': module.id, 'parent_id': module.parent_id})
 
 

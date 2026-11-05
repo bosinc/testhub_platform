@@ -18,6 +18,14 @@ class TestCaseModule(models.Model):
         ordering = ['sort_order', 'name', 'id']
         constraints = [models.UniqueConstraint(fields=['project', 'parent', 'name'], name='unique_testcase_module_name_per_parent')]
 
+    @classmethod
+    def next_sort_order(cls, project, parent):
+        """Return the next position after the existing sibling modules."""
+        max_order = cls.objects.filter(project=project, parent=parent).aggregate(
+            max_order=models.Max('sort_order')
+        )['max_order']
+        return 0 if max_order is None else max_order + 1
+
     def __str__(self):
         return self.name
 

@@ -1555,6 +1555,11 @@ const onNodeClick = async (data) => {
 
 const onNodeRightClick = async (event, node) => {
   event.preventDefault()
+  if (node.type !== 'collection') {
+    showContextMenu.value = false
+    return
+  }
+
   contextMenuReady.value = false
   showContextMenu.value = true
   contextMenuX.value = event.clientX

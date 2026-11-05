@@ -182,6 +182,77 @@ class TestCaseModuleApiTests(APITestCase):
         response = self.client.put(f'/api/testcases/modules/{module.id}/', {'parent_id': foreign_parent.id}, format='json')
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
+    def test_module_reorder_persists_manual_sibling_order(self):
+        first = self.create_module(name='Charlie')
+        second = self.create_module(name='Alpha')
+        third = self.create_module(name='Bravo')
+
+        response = self.client.get('/api/testcases/modules/', {'project': self.project.id})
+        self.assertEqual([module['name'] for module in response.data], ['Alpha', 'Bravo', 'Charlie'])
+
+        response = self.client.post('/api/testcases/modules/reorder/', {
+            'project_id': self.project.id,
+            'parent_id': None,
+            'module_ids': [first.id, second.id, third.id],
+        }, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        response = self.client.get('/api/testcases/modules/', {'project': self.project.id})
+        self.assertEqual([module['id'] for module in response.data], [first.id, second.id, third.id])
+
+    def test_module_reorder_requires_the_complete_sibling_set(self):
+        parent = self.create_module(name='父目录')
+        child = self.create_module(parent=parent, name='子目录')
+        sibling = self.create_module(name='另一个根目录')
+
+        response = self.client.post('/api/testcases/modules/reorder/', {
+            'project_id': self.project.id,
+            'parent_id': None,
+            'module_ids': [parent.id],
+        }, format='json')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+        response = self.client.post('/api/testcases/modules/reorder/', {
+            'project_id': self.project.id,
+            'parent_id': parent.id,
+            'module_ids': [sibling.id],
+        }, format='json')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+        response = self.client.post('/api/testcases/modules/reorder/', {
+            'project_id': self.project.id,
+            'parent_id': parent.id,
+            'module_ids': [child.id, child.id],
+        }, format='json')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_new_and_moved_modules_are_appended_to_siblings(self):
+        self.create_module(name='Zulu')
+        self.create_module(name='Alpha')
+        response = self.client.post('/api/testcases/modules/', {
+            'project_id': self.project.id, 'parent_id': None, 'name': 'Aardvark',
+        }, format='json')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+        destination = self.create_module(name='目标目录')
+        self.create_module(parent=destination, name='Zulu 子目录')
+        self.create_module(parent=destination, name='Alpha 子目录')
+        source = self.create_module(name='待移动目录')
+        response = self.client.put(f'/api/testcases/modules/{source.id}/', {
+            'parent_id': destination.id,
+        }, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        response = self.client.get('/api/testcases/modules/', {'project': self.project.id})
+        roots = {module['name']: module for module in response.data}
+        root_names = [module['name'] for module in response.data]
+        self.assertLess(root_names.index('Alpha'), root_names.index('Zulu'))
+        self.assertEqual(root_names[-1], 'Aardvark')
+        self.assertEqual(
+            [module['name'] for module in roots['目标目录']['children']],
+            ['Alpha 子目录', 'Zulu 子目录', '待移动目录'],
+        )
+
     def test_module_filter_includes_descendants_and_cases_can_move_to_unassigned(self):
         parent = self.create_module(name='父模块')
         child = self.create_module(parent=parent, name='子模块')

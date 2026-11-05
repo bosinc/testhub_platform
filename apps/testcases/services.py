@@ -332,7 +332,15 @@ class TestCaseExcelImportService:
         for name in names:
             if not name:
                 break
-            parent, _ = TestCaseModule.objects.get_or_create(project=project, parent=parent, name=name)
+            module = TestCaseModule.objects.filter(project=project, parent=parent, name=name).first()
+            if module is None:
+                module, _ = TestCaseModule.objects.get_or_create(
+                    project=project,
+                    parent=parent,
+                    name=name,
+                    defaults={'sort_order': TestCaseModule.next_sort_order(project, parent)},
+                )
+            parent = module
         return parent
 
     @staticmethod

@@ -4,6 +4,7 @@ from . import views
 urlpatterns = [
     # 测试用例相关
     path('modules/', views.TestCaseModuleListCreateView.as_view(), name='testcase-module-list'),
+    path('modules/reorder/', views.TestCaseModuleReorderView.as_view(), name='testcase-module-reorder'),
     path('modules/<int:pk>/', views.TestCaseModuleDetailView.as_view(), name='testcase-module-detail'),
     path('move/', views.TestCaseMoveView.as_view(), name='testcase-move'),
     path('', views.TestCaseListCreateView.as_view(), name='testcase-list'),
