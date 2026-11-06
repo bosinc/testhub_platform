@@ -17,7 +17,7 @@ export default {
     createCase: '创建用例',
     modules: '模块',
     allCases: '全部用例',
-    selectModule: '请选择模块（可不选）',
+    selectModule: '请选择模块',
     noModule: '无所属模块',
     noParentModule: '无父模块（一级模块）',
     addSubmodule: '新建子模块',
@@ -189,6 +189,7 @@ export default {
     titleRequired: '请输入用例标题',
     titleLength: '标题长度在 5 到 500 个字符',
     expectedResultRequired: '请输入预期结果',
+    stepsRequired: '请输入操作步骤',
     stepsMaxLength: '操作步骤不能超过1000个字符',
 
     // Excel export

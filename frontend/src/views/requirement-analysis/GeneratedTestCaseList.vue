@@ -233,7 +233,7 @@
           </div>
           <div class="detail-item">
             <label>{{ $t('generatedTestCases.preconditions') }}</label>
-            <p>{{ selectedTestCaseDetail.precondition }}</p>
+            <p class="pre-line-text">{{ selectedTestCaseDetail.precondition }}</p>
           </div>
           <div class="detail-item">
             <label>{{ $t('generatedTestCases.testSteps') }}</label>
@@ -241,7 +241,7 @@
           </div>
           <div class="detail-item">
             <label>{{ $t('generatedTestCases.expectedResult') }}</label>
-            <p v-html="selectedTestCaseDetail.expected_result"></p>
+            <p class="pre-line-text" v-html="selectedTestCaseDetail.expected_result"></p>
           </div>
           <div class="detail-item" v-if="selectedTestCaseDetail.review_comments">
             <label>{{ $t('generatedTestCases.reviewComments') }}</label>
@@ -1696,6 +1696,12 @@ export default {
   padding: 15px;
   border-radius: 6px;
   border-left: 4px solid #3498db;
+}
+
+/* 前置条件 / 预期结果同样是多行文本，需保留换行，否则会折叠成一行 */
+.pre-line-text {
+  white-space: pre-line;
+  word-break: break-word;
 }
 
 /* 采纳用例弹框样式 */

@@ -17,7 +17,7 @@ export default {
     createCase: 'Create Case',
     modules: 'Modules',
     allCases: 'All cases',
-    selectModule: 'Select a module (optional)',
+    selectModule: 'Select a module',
     noModule: 'Unassigned',
     noParentModule: 'No parent module (level 1)',
     addSubmodule: 'Add submodule',
@@ -189,6 +189,7 @@ export default {
     titleRequired: 'Please enter case title',
     titleLength: 'Title length must be between 5 and 500 characters',
     expectedResultRequired: 'Please enter expected result',
+    stepsRequired: 'Please enter steps',
     stepsMaxLength: 'Steps cannot exceed 1000 characters',
 
     // Excel export

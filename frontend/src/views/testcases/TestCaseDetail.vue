@@ -34,13 +34,13 @@
         <el-descriptions-item :label="$t('testcase.createdAt')" :span="2">{{ formatDate(testcase.created_at) }}</el-descriptions-item>
         <el-descriptions-item :label="$t('testcase.caseDescription')" :span="2">{{ testcase.description || $t('testcase.noDescription') }}</el-descriptions-item>
         <el-descriptions-item :label="$t('testcase.preconditions')" :span="2">
-          <div v-html="testcase.preconditions || $t('testcase.none')"></div>
+          <div class="text-content" v-html="testcase.preconditions || $t('testcase.none')"></div>
         </el-descriptions-item>
         <el-descriptions-item :label="$t('testcase.steps')" :span="2">
-          <div class="steps-content" v-html="testcase.steps || $t('testcase.none')"></div>
+          <div class="text-content" v-html="testcase.steps || $t('testcase.none')"></div>
         </el-descriptions-item>
         <el-descriptions-item :label="$t('testcase.expectedResult')" :span="2">
-          <div v-html="testcase.expected_result || $t('testcase.none')"></div>
+          <div class="text-content" v-html="testcase.expected_result || $t('testcase.none')"></div>
         </el-descriptions-item>
         <el-descriptions-item :label="$t('testcase.notes')" :span="2">
           <div v-if="safeNotes" class="notes-content" v-html="safeNotes" @mousedown.capture="previewNoteImage" @click="previewNoteImage" @dblclick="previewNoteImage"></div>
@@ -175,11 +175,14 @@ onMounted(() => {
   font-style: italic;
 }
 
-.steps-content {
+/* 操作步骤 / 预期结果 / 前置条件：库里存的是纯文本 + 换行符（导入的数据也可能含 <br>），
+   必须保留换行，否则多行内容会被折叠成一行 */
+.text-content {
   white-space: pre-wrap;
   line-height: 1.6;
   color: #303133;
   font-family: inherit;
+  word-break: break-word;
 }
 
 .notes-content {

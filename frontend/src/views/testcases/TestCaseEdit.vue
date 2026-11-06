@@ -25,39 +25,44 @@
           />
         </el-form-item>
 
-        <el-form-item :label="$t('testcase.maintainer')">
-          <el-select v-model="form.maintainer_id" filterable :placeholder="$t('testcase.maintainer')">
-            <el-option v-for="member in projectMembers" :key="member.id" :label="member.email ? `${member.username} (${member.email})` : member.username" :value="member.id" />
-          </el-select>
-        </el-form-item>
-
         <el-row :gutter="20">
           <el-col :span="8">
-            <el-form-item :label="$t('testcase.testType')" prop="test_type">
-              <el-select v-model="form.test_type" :placeholder="$t('testcase.selectTestType')">
-                <el-option :label="$t('testcase.functional')" value="functional" />
-                <el-option :label="$t('testcase.integration')" value="integration" />
-                <el-option :label="$t('testcase.api')" value="api" />
-                <el-option :label="$t('testcase.ui')" value="ui" />
-                <el-option :label="$t('testcase.performance')" value="performance" />
-                <el-option :label="$t('testcase.security')" value="security" />
-              </el-select>
-            </el-form-item>
-          </el-col>
-          <el-col :span="8">
             <el-form-item :label="$t('testcase.modules')">
-              <el-tree-select v-model="form.module_id" :data="moduleOptions" node-key="id" check-strictly default-expand-all clearable :render-after-expand="false" :disabled="!form.project_id" :placeholder="$t('testcase.selectModule')" />
+              <el-tree-select v-model="form.module_id" :data="moduleOptions" node-key="id" check-strictly default-expand-all clearable filterable :render-after-expand="false" :disabled="!form.project_id" :placeholder="$t('testcase.selectModule')" />
             </el-form-item>
           </el-col>
-          <el-col :span="8">
-            <el-form-item :label="$t('testcase.priority')" prop="priority">
-              <el-select v-model="form.priority" :placeholder="$t('testcase.selectPriority')">
-                <el-option :label="$t('testcase.low')" value="low" />
-                <el-option :label="$t('testcase.medium')" value="medium" />
-                <el-option :label="$t('testcase.high')" value="high" />
-                <el-option :label="$t('testcase.critical')" value="critical" />
-              </el-select>
-            </el-form-item>
+          <el-col :span="16">
+            <el-row :gutter="20">
+              <el-col :span="8">
+                <el-form-item :label="$t('testcase.testType')" prop="test_type">
+                  <el-select v-model="form.test_type" :placeholder="$t('testcase.selectTestType')">
+                    <el-option :label="$t('testcase.functional')" value="functional" />
+                    <el-option :label="$t('testcase.integration')" value="integration" />
+                    <el-option :label="$t('testcase.api')" value="api" />
+                    <el-option :label="$t('testcase.ui')" value="ui" />
+                    <el-option :label="$t('testcase.performance')" value="performance" />
+                    <el-option :label="$t('testcase.security')" value="security" />
+                  </el-select>
+                </el-form-item>
+              </el-col>
+              <el-col :span="8">
+                <el-form-item :label="$t('testcase.priority')" prop="priority">
+                  <el-select v-model="form.priority" :placeholder="$t('testcase.selectPriority')">
+                    <el-option :label="$t('testcase.low')" value="low" />
+                    <el-option :label="$t('testcase.medium')" value="medium" />
+                    <el-option :label="$t('testcase.high')" value="high" />
+                    <el-option :label="$t('testcase.critical')" value="critical" />
+                  </el-select>
+                </el-form-item>
+              </el-col>
+              <el-col :span="8">
+                <el-form-item :label="$t('testcase.maintainer')">
+                  <el-select v-model="form.maintainer_id" filterable :placeholder="$t('testcase.maintainer')">
+                    <el-option v-for="member in projectMembers" :key="member.id" :label="member.email ? `${member.username} (${member.email})` : member.username" :value="member.id" />
+                  </el-select>
+                </el-form-item>
+              </el-col>
+            </el-row>
           </el-col>
           <el-col :span="8">
             <el-form-item :label="$t('testcase.automation')">
@@ -149,10 +154,12 @@ import { ElMessage } from 'element-plus'
 import api from '@/utils/api'
 import RichTextEditor from '@/components/RichTextEditor.vue'
 import AutomationCaseLinks from '@/components/AutomationCaseLinks.vue'
+import { useUserStore } from '@/stores/user'
 
 const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
+const userStore = useUserStore()
 const formRef = ref()
 const loading = ref(true)
 const submitting = ref(false)
@@ -161,6 +168,9 @@ const projectMembers = ref([])
 const moduleOptions = ref([])
 const automationLinks = ref([])
 const notesEditor = ref()
+
+// 维护人默认取当前登录用户
+const currentUserId = computed(() => userStore.user?.id ?? null)
 
 const form = reactive({
   title: '',
@@ -186,6 +196,7 @@ const rules = {
     { required: true, message: computed(() => t('testcase.expectedResultRequired')), trigger: 'blur' }
   ],
   steps: [
+    { required: true, message: computed(() => t('testcase.stepsRequired')), trigger: 'blur' },
     { max: 1000, message: computed(() => t('testcase.stepsMaxLength')), trigger: 'blur' }
   ]
 }
@@ -235,6 +246,13 @@ const fetchProjectMembers = async (projectId) => {
     projectMembers.value = response.data || []
   } catch (error) {
     console.error('Fetch project members failed:', error)
+  } finally {
+    // 成员加载完成后回填默认维护人：仅当前用户是项目成员时才回填，
+    // 既避免下拉框显示原始 id，也与后端「维护人必须是项目成员」的校验保持一致
+    const uid = currentUserId.value
+    if (!form.maintainer_id && uid && projectMembers.value.some(member => member.id === uid)) {
+      form.maintainer_id = uid
+    }
   }
 }
 
