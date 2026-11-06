@@ -69,6 +69,49 @@ export function getScenarioCases(params) {
   })
 }
 
+// 获取单个接口场景用例详情。
+export function getScenarioCaseDetail(id) {
+  return request({
+    url: `/api-testing/scenario-cases/${id}/`,
+    method: 'get'
+  })
+}
+
+// 创建接口场景用例。
+export function createScenarioCase(data) {
+  return request({
+    url: '/api-testing/scenario-cases/',
+    method: 'post',
+    data
+  })
+}
+
+// 完整更新接口场景用例。
+export function updateScenarioCase(id, data) {
+  return request({
+    url: `/api-testing/scenario-cases/${id}/`,
+    method: 'put',
+    data
+  })
+}
+
+// 部分更新接口场景用例。
+export function patchScenarioCase(id, data) {
+  return request({
+    url: `/api-testing/scenario-cases/${id}/`,
+    method: 'patch',
+    data
+  })
+}
+
+// 删除接口场景用例。
+export function deleteScenarioCase(id) {
+  return request({
+    url: `/api-testing/scenario-cases/${id}/`,
+    method: 'delete'
+  })
+}
+
 // 获取项目下的全部场景用例，自动读取分页结果。
 export async function getAllScenarioCases(params = {}) {
   return getAllPages('/api-testing/scenario-cases/', params)
@@ -77,6 +120,15 @@ export async function getAllScenarioCases(params = {}) {
 // 获取项目下的全部场景用例文件夹，自动读取分页结果。
 export async function getScenarioCaseFolders(params = {}) {
   return getAllPages('/api-testing/scenario-case-folders/', params)
+}
+
+// 获取项目下的全部接口集合及请求，供场景用例树使用。
+export async function getAllApiCollections(params = {}) {
+  return getAllPages('/api-testing/collections/', params)
+}
+
+export async function getAllApiRequests(params = {}) {
+  return getAllPages('/api-testing/requests/', params)
 }
 
 // 创建场景用例文件夹。
@@ -172,6 +224,59 @@ export function executeScenarioCase(id, data) {
     url: `/api-testing/scenario-cases/${id}/execute/`,
     method: 'post',
     data
+  })
+}
+
+// 获取场景用例的执行历史。
+export function getScenarioCaseExecutions(params) {
+  return request({
+    url: '/api-testing/test-executions/',
+    method: 'get',
+    params
+  })
+}
+
+// 向场景用例添加接口请求。
+export function addRequestsToScenarioCase(id, requestIds) {
+  return request({
+    url: `/api-testing/scenario-cases/${id}/add-requests/`,
+    method: 'post',
+    data: { request_ids: requestIds }
+  })
+}
+
+// 更新场景用例中的接口请求启用状态。
+export function updateScenarioCaseRequest(id, data) {
+  return request({
+    url: `/api-testing/scenario-case-requests/${id}/`,
+    method: 'put',
+    data
+  })
+}
+
+// 更新场景用例中的接口请求断言与提取器配置。
+export function patchScenarioCaseRequest(id, data) {
+  return request({
+    url: `/api-testing/scenario-case-requests/${id}/`,
+    method: 'patch',
+    data
+  })
+}
+
+// 调整场景用例中接口请求的执行顺序。
+export function moveScenarioCaseRequest(id, direction) {
+  return request({
+    url: `/api-testing/scenario-case-requests/${id}/move/`,
+    method: 'post',
+    data: { direction }
+  })
+}
+
+// 从场景用例中移除接口请求。
+export function deleteScenarioCaseRequest(id) {
+  return request({
+    url: `/api-testing/scenario-case-requests/${id}/`,
+    method: 'delete'
   })
 }
 

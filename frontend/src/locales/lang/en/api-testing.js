@@ -418,6 +418,7 @@ export default {
     run: 'Run',
     duplicate: 'Duplicate',
     selectScenarioCaseHint: 'Select a scenario case to view details',
+    linkedScenarioUnavailable: 'The linked scenario case is unavailable or you do not have access',
     selectScenarioCaseTip: 'Select a scenario case to view details',
     noDescription: 'No description',
     creator: 'Creator: ',

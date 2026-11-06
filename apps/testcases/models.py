@@ -81,6 +81,50 @@ class TestCase(models.Model):
         verbose_name_plural = '测试用例'
         ordering = ['-created_at']
 
+
+class TestCaseAutomationLink(models.Model):
+    """将正式测试用例关联到其他测试模块中的自动化用例。"""
+
+    CASE_TYPE_CHOICES = [
+        ('ui_test_case', 'UI自动化用例'),
+        ('api_scenario_case', '接口测试场景用例'),
+    ]
+
+    test_case = models.ForeignKey(
+        TestCase,
+        on_delete=models.CASCADE,
+        related_name='automation_links',
+        verbose_name='正式测试用例',
+    )
+    case_type = models.CharField(max_length=40, choices=CASE_TYPE_CHOICES, verbose_name='自动化用例类型')
+    object_id = models.PositiveBigIntegerField(verbose_name='目标自动化用例ID')
+    linked_by = models.ForeignKey(
+        User,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='test_case_automation_links',
+        verbose_name='关联操作人',
+    )
+    created_at = models.DateTimeField(default=timezone.now, verbose_name='创建时间')
+    updated_at = models.DateTimeField(auto_now=True, verbose_name='更新时间')
+
+    class Meta:
+        db_table = 'testcase_automation_links'
+        verbose_name = '测试用例自动化关联'
+        verbose_name_plural = '测试用例自动化关联'
+        ordering = ['case_type', 'id']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['test_case', 'case_type'],
+                name='unique_test_case_automation_type',
+            ),
+        ]
+        indexes = [models.Index(fields=['case_type', 'object_id'])]
+
+    def __str__(self):
+        return f'{self.test_case_id}:{self.case_type}:{self.object_id}'
+
 class TestCaseStep(models.Model):
     """测试用例步骤"""
     testcase = models.ForeignKey(TestCase, on_delete=models.CASCADE, related_name='step_details')

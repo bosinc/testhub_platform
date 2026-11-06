@@ -1,7 +1,13 @@
 <template>
-  <div class="page-container">
+  <div class="page-container testcase-form-page">
     <div class="page-header">
       <h1 class="page-title">{{ $t('testcase.edit') }}</h1>
+      <div>
+        <el-button @click="$router.back()">{{ $t('common.cancel') }}</el-button>
+        <el-button type="primary" :loading="submitting" :disabled="loading" @click="handleSubmit">
+          {{ $t('testcase.saveChanges') }}
+        </el-button>
+      </div>
     </div>
 
     <div class="card-container" v-if="!loading">
@@ -27,20 +33,14 @@
 
         <el-row :gutter="20">
           <el-col :span="8">
-            <el-form-item :label="$t('testcase.project')" prop="project_id">
-              <el-select
-                v-model="form.project_id"
-                :placeholder="$t('testcase.selectProject')"
-                clearable
-                filterable
-                @change="onProjectChange"
-              >
-                <el-option
-                  v-for="project in projects"
-                  :key="project.id"
-                  :label="project.name"
-                  :value="project.id"
-                />
+            <el-form-item :label="$t('testcase.testType')" prop="test_type">
+              <el-select v-model="form.test_type" :placeholder="$t('testcase.selectTestType')">
+                <el-option :label="$t('testcase.functional')" value="functional" />
+                <el-option :label="$t('testcase.integration')" value="integration" />
+                <el-option :label="$t('testcase.api')" value="api" />
+                <el-option :label="$t('testcase.ui')" value="ui" />
+                <el-option :label="$t('testcase.performance')" value="performance" />
+                <el-option :label="$t('testcase.security')" value="security" />
               </el-select>
             </el-form-item>
           </el-col>
@@ -60,15 +60,15 @@
             </el-form-item>
           </el-col>
           <el-col :span="8">
-            <el-form-item :label="$t('testcase.testType')" prop="test_type">
-              <el-select v-model="form.test_type" :placeholder="$t('testcase.selectTestType')">
-                <el-option :label="$t('testcase.functional')" value="functional" />
-                <el-option :label="$t('testcase.integration')" value="integration" />
-                <el-option :label="$t('testcase.api')" value="api" />
-                <el-option :label="$t('testcase.ui')" value="ui" />
-                <el-option :label="$t('testcase.performance')" value="performance" />
-                <el-option :label="$t('testcase.security')" value="security" />
-              </el-select>
+            <el-form-item :label="$t('testcase.automation')">
+              <AutomationCaseLinks
+                :test-case-id="route.params.id"
+                :project-id="form.project_id"
+                :links="automationLinks"
+                allow-unlink
+                load-links-on-mount
+                @update:links="automationLinks = $event"
+              />
             </el-form-item>
           </el-col>
         </el-row>
@@ -119,7 +119,7 @@
           <el-input
             v-model="form.expected_result"
             type="textarea"
-            :rows="3"
+            :rows="6"
             :placeholder="$t('testcase.expectedResultPlaceholder')"
           />
         </el-form-item>
@@ -130,13 +130,6 @@
             v-model="form.notes"
             :upload-url="`/testcases/${route.params.id}/notes-image/`"
           />
-        </el-form-item>
-
-        <el-form-item>
-          <el-button type="primary" @click="handleSubmit" :loading="submitting">
-            {{ $t('testcase.saveChanges') }}
-          </el-button>
-          <el-button @click="$router.back()">{{ $t('common.cancel') }}</el-button>
         </el-form-item>
       </el-form>
     </div>
@@ -155,7 +148,7 @@ import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 import api from '@/utils/api'
 import RichTextEditor from '@/components/RichTextEditor.vue'
-import { rememberSelectedProject } from '@/utils/projectSelection'
+import AutomationCaseLinks from '@/components/AutomationCaseLinks.vue'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -163,10 +156,10 @@ const router = useRouter()
 const formRef = ref()
 const loading = ref(true)
 const submitting = ref(false)
-const projects = ref([])
 const projectVersions = ref([])
 const projectMembers = ref([])
 const moduleOptions = ref([])
+const automationLinks = ref([])
 const notesEditor = ref()
 
 const form = reactive({
@@ -209,15 +202,6 @@ const convertNewlineToBr = (text) => {
   return text.replace(/\n/g, '<br>')
 }
 
-const fetchProjects = async () => {
-  try {
-    const response = await api.get('/projects/list/')
-    projects.value = response.data.results || []
-  } catch (error) {
-    ElMessage.error(t('testcase.fetchProjectsFailed'))
-  }
-}
-
 const fetchProjectVersions = async (projectId) => {
   if (!projectId) {
     projectVersions.value = []
@@ -232,16 +216,6 @@ const fetchProjectVersions = async (projectId) => {
     ElMessage.error(t('testcase.fetchVersionsFailed'))
     projectVersions.value = []
   }
-}
-
-const onProjectChange = (projectId) => {
-  rememberSelectedProject(projectId, projects.value)
-  form.version_ids = []
-  form.maintainer_id = null
-  form.module_id = null
-  fetchProjectVersions(projectId)
-  fetchProjectMembers(projectId)
-  fetchModules(projectId)
 }
 
 const fetchModules = async (projectId) => {
@@ -335,7 +309,16 @@ const handleSubmit = async () => {
 }
 
 onMounted(async () => {
-  await fetchProjects()
   await fetchTestCase()  // fetchTestCase中会根据项目获取版本列表
 })
 </script>
+
+<style lang="scss" scoped>
+.testcase-form-page {
+  padding-top: 8px;
+}
+
+.testcase-form-page .page-header .page-title {
+  margin: 0;
+}
+</style>

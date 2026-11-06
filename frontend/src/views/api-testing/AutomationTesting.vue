@@ -468,25 +468,43 @@ import ResizableSplitPane from '@/components/ResizableSplitPane.vue'
 import { ref, reactive, onMounted, computed, nextTick, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useI18n } from 'vue-i18n'
+import { useRoute } from 'vue-router'
 import {
   Plus, Refresh, MoreFilled, VideoPlay, Edit, Search,
   Folder, FolderAdd, Document, ArrowUp, ArrowDown, Delete
 } from '@element-plus/icons-vue'
 import AssertionEditor from '@/components/api-testing/AssertionEditor.vue'
 import VariableExtractorEditor from '@/components/api-testing/VariableExtractorEditor.vue'
-import api from '@/utils/api'
 import {
+  addRequestsToScenarioCase,
+  createScenarioCase,
   createScenarioCaseFolder,
+  deleteScenarioCase as deleteScenarioCaseApi,
   deleteScenarioCaseFolder,
+  deleteScenarioCaseRequest,
+  executeScenarioCase,
+  getAllApiCollections,
+  getAllApiRequests,
   getAllScenarioCases,
+  getApiProjects,
+  getEnvironments,
+  getScenarioCaseExecutions,
+  getScenarioCaseDetail,
   getScenarioCaseFolders,
+  moveScenarioCaseRequest,
+  patchScenarioCase,
+  patchScenarioCaseRequest,
+  updateScenarioCase,
+  updateScenarioCaseRequest,
   updateScenarioCaseFolder
 } from '@/api/api-testing'
+import { createTestCaseAutomationLink } from '@/api/testcases'
 import dayjs from 'dayjs'
 import { getPreferredProjectId, useRememberedProject } from '@/utils/projectSelection'
 import { normalizeAssertions, stripLegacyAssertionValue } from '@/utils/assertions'
 
 const { t } = useI18n()
+const route = useRoute()
 const sidebarWidth = ref(300)
 
 const projects = ref([])
@@ -672,11 +690,44 @@ const getEnvironmentName = (environmentId) => {
 
 const loadProjects = async () => {
   try {
-    const response = await api.get('/api-testing/projects/')
+    const response = await getApiProjects()
     projects.value = response.data.results || response.data
 
     // 过滤出HTTP项目
     const httpProjects = projects.value.filter(project => project.project_type !== 'WEBSOCKET')
+
+    const formalCaseId = route.query.automation_for_test_case_id
+    if (formalCaseId) {
+      const workspaceProjectId = route.query.workspace_project_id
+      const linkedProject = httpProjects.find(project =>
+        String(project.workspace_project_id) === String(workspaceProjectId)
+      )
+      if (!linkedProject) {
+        ElMessage.warning(t('apiTesting.automation.linkedScenarioUnavailable'))
+        return
+      }
+      selectedProject.value = linkedProject.id
+      await onProjectChange()
+      openCreateScenarioCaseDialog()
+      return
+    }
+
+    const linkedCaseId = route.query.scenario_case_id
+    if (linkedCaseId) {
+      const detailResponse = await getScenarioCaseDetail(linkedCaseId)
+      const linkedCase = detailResponse.data
+      const linkedProject = httpProjects.find(project => String(project.id) === String(linkedCase.project))
+      if (!linkedProject) {
+        ElMessage.warning(t('apiTesting.automation.linkedScenarioUnavailable'))
+        return
+      }
+      selectedProject.value = linkedProject.id
+      await onProjectChange()
+      const listedCase = scenarioCases.value.find(item => String(item.id) === String(linkedCaseId))
+      if (listedCase) selectScenarioCase(listedCase)
+      else ElMessage.warning(t('apiTesting.automation.linkedScenarioUnavailable'))
+      return
+    }
 
     if (httpProjects.length > 0 && !selectedProject.value) {
       selectedProject.value = getPreferredProjectId(httpProjects, httpProjects[0].id)
@@ -745,7 +796,7 @@ const moveScenarioCaseToFolder = async () => {
   if (!scenarioCase) return
   movingScenarioCase.value = true
   try {
-    const response = await api.patch(`/api-testing/scenario-cases/${scenarioCase.id}/`, { folder: moveTargetFolder.value })
+    const response = await patchScenarioCase(scenarioCase.id, { folder: moveTargetFolder.value })
     const updatedScenarioCase = response.data || { ...scenarioCase, folder: moveTargetFolder.value }
     scenarioCases.value = scenarioCases.value.map(item =>
       item.id === scenarioCase.id ? { ...item, ...updatedScenarioCase } : item
@@ -902,9 +953,8 @@ const treeDefaultExpandedKeys = computed(() =>
 const loadEnvironments = async () => {
   try {
     // 获取全局环境 + 当前项目环境
-    const response = await api.get('/api-testing/environments/', {
-      // 不传递project参数，让后端返回所有可访问的环境（全局+当前项目）
-    })
+    // 不传递 project 参数，让后端返回所有可访问的全局和项目环境。
+    const response = await getEnvironments()
     const allEnvironments = response.data.results || response.data
 
     // 过滤当前项目相关或全局环境
@@ -927,8 +977,8 @@ const loadRequestTree = async () => {
   requestTree.value = []
   try {
     const [collections, requests] = await Promise.all([
-      fetchAllPages('/api-testing/collections/', { project: projectId, tree: 1 }),
-      fetchAllPages('/api-testing/requests/', { project: projectId, tree: 1 })
+      getAllApiCollections({ project: projectId, tree: 1 }),
+      getAllApiRequests({ project: projectId, tree: 1 })
     ])
 
     // 构建树形结构
@@ -939,22 +989,6 @@ const loadRequestTree = async () => {
     if (selectedProject.value === projectId) {
       ElMessage.error(t('apiTesting.messages.error.loadRequestTree'))
     }
-  }
-}
-
-// 读取 DRF 分页接口的全部数据，避免场景用例弹窗只显示接口树的第一页。
-const fetchAllPages = async (url, params = {}) => {
-  const results = []
-  let page = 1
-  while (true) {
-    const response = await api.get(url, {
-      params: { ...params, page, page_size: 1500 }
-    })
-    const data = response.data
-    if (Array.isArray(data)) return data
-    results.push(...(data.results || []))
-    if (!data.next) return results
-    page += 1
   }
 }
 
@@ -1006,9 +1040,7 @@ const loadExecutions = async () => {
 
   executionsLoading.value = true
   try {
-    const response = await api.get('/api-testing/test-executions/', {
-      params: { scenario_case: selectedScenarioCase.value.id }
-    })
+    const response = await getScenarioCaseExecutions({ scenario_case: selectedScenarioCase.value.id })
     executions.value = response.data.results || response.data
   } catch (error) {
     ElMessage.error(t('apiTesting.messages.error.loadExecutionHistory'))
@@ -1066,7 +1098,7 @@ const handleScenarioCaseAction = async ({ action, scenarioCase }) => {
 const runScenarioCase = async (scenarioCase) => {
   running.value = true
   try {
-    const response = await api.post(`/api-testing/scenario-cases/${scenarioCase.id}/execute/`)
+    const response = await executeScenarioCase(scenarioCase.id)
     currentExecution.value = response.data
     showExecutionDialog.value = true
     await loadExecutions()
@@ -1092,7 +1124,7 @@ const runSelectedScenarioCases = async () => {
   running.value = true
   try {
     for (const id of [...selectedScenarioCaseIds.value]) {
-      await api.post(`/api-testing/scenario-cases/${id}/execute/`)
+      await executeScenarioCase(id)
     }
     ElMessage.success(t('apiTesting.automation.batchRunSuccess', { count: selectedScenarioCaseIds.value.length }))
     await loadExecutions()
@@ -1135,7 +1167,7 @@ const duplicateScenarioCase = async (scenarioCase) => {
       project: scenarioCase.project,
       environment: scenarioCase.environment || null  // 修复：直接使用environment ID
     }
-    await api.post('/api-testing/scenario-cases/', newScenarioCase)
+    await createScenarioCase(newScenarioCase)
     ElMessage.success(t('apiTesting.messages.success.copy'))
     await loadScenarioCases()
   } catch (error) {
@@ -1155,7 +1187,7 @@ const deleteScenarioCase = async (scenarioCase) => {
       }
     )
 
-    await api.delete(`/api-testing/scenario-cases/${scenarioCase.id}/`)
+    await deleteScenarioCaseApi(scenarioCase.id)
     ElMessage.success(t('apiTesting.messages.success.delete'))
 
     if (selectedScenarioCase.value?.id === scenarioCase.id) {
@@ -1181,12 +1213,33 @@ const submitScenarioCaseForm = async () => {
       ...scenarioCaseForm,
       project: editingScenarioCase.value?.project ?? selectedProject.value
     }
+    let savedScenarioCaseId = editingScenarioCase.value?.id
     if (editingScenarioCase.value) {
-      await api.put(`/api-testing/scenario-cases/${editingScenarioCase.value.id}/`, formData)
+      await updateScenarioCase(editingScenarioCase.value.id, formData)
       ElMessage.success(t('apiTesting.messages.success.scenarioCaseUpdated'))
     } else {
-      await api.post('/api-testing/scenario-cases/', formData)
+      const response = await createScenarioCase(formData)
+      savedScenarioCaseId = response.data.id
       ElMessage.success(t('apiTesting.messages.success.scenarioCaseCreated'))
+    }
+
+    const formalCaseId = route.query.automation_for_test_case_id
+    if (formalCaseId && savedScenarioCaseId) {
+      try {
+        await createTestCaseAutomationLink(formalCaseId, {
+          type: 'api_scenario_case',
+          object_id: savedScenarioCaseId
+        })
+      } catch (error) {
+        editingScenarioCase.value = { id: savedScenarioCaseId, project: selectedProject.value }
+        ElMessage.error(error.response?.data?.detail || t('testcase.linkAutomationFailed'))
+        return
+      }
+
+      ElMessage.success(t('testcase.automationLinked'))
+      showCreateScenarioCaseDialog.value = false
+      await loadScenarioCases()
+      return
     }
 
     showCreateScenarioCaseDialog.value = false
@@ -1250,9 +1303,7 @@ const addSelectedRequests = async () => {
   addingRequests.value = true
   try {
     // 这里需要调用添加请求到场景用例的API
-    await api.post(`/api-testing/scenario-cases/${selectedScenarioCase.value.id}/add-requests/`, {
-      request_ids: requestIds
-    })
+    await addRequestsToScenarioCase(selectedScenarioCase.value.id, requestIds)
 
     ElMessage.success(t('apiTesting.messages.success.addSuccess'))
     showAddRequestDialog.value = false
@@ -1267,7 +1318,7 @@ const addSelectedRequests = async () => {
 
 const updateRequestEnabled = async (scenarioCaseRequest) => {
   try {
-    await api.put(`/api-testing/scenario-case-requests/${scenarioCaseRequest.id}/`, {
+    await updateScenarioCaseRequest(scenarioCaseRequest.id, {
       enabled: scenarioCaseRequest.enabled
     })
   } catch (error) {
@@ -1291,7 +1342,7 @@ const saveScenarioCaseAssertions = async () => {
   try {
     const assertions = assertionDraft.value.map(stripLegacyAssertionValue)
     const extractors = extractorDraft.value
-    await api.patch(`/api-testing/scenario-case-requests/${editingScenarioCaseRequest.value.id}/`, { assertions, extractors })
+    await patchScenarioCaseRequest(editingScenarioCaseRequest.value.id, { assertions, extractors })
     editingScenarioCaseRequest.value.assertions = assertions
     editingScenarioCaseRequest.value.extractors = extractors
     showAssertionDialog.value = false
@@ -1305,7 +1356,7 @@ const saveScenarioCaseAssertions = async () => {
 
 const moveRequest = async (scenarioCaseRequest, direction) => {
   try {
-    await api.post(`/api-testing/scenario-case-requests/${scenarioCaseRequest.id}/move/`, { direction })
+    await moveScenarioCaseRequest(scenarioCaseRequest.id, direction)
     await reloadCurrentScenarioCase()
   } catch (error) {
     ElMessage.error(t('apiTesting.messages.error.reorderFailed'))
@@ -1320,7 +1371,7 @@ const removeRequest = async (scenarioCaseRequest) => {
       type: 'warning'
     })
 
-    await api.delete(`/api-testing/scenario-case-requests/${scenarioCaseRequest.id}/`)
+    await deleteScenarioCaseRequest(scenarioCaseRequest.id)
     ElMessage.success(t('apiTesting.messages.success.removeSuccess'))
     // 重新加载当前场景用例详情
     await reloadCurrentScenarioCase()
@@ -1336,7 +1387,7 @@ const reloadCurrentScenarioCase = async () => {
 
   try {
     // 重新加载当前场景用例的详细信息
-    const response = await api.get(`/api-testing/scenario-cases/${selectedScenarioCase.value.id}/`)
+    const response = await getScenarioCaseDetail(selectedScenarioCase.value.id)
     const updatedScenarioCase = response.data
 
     // 强制重新设置响应式数据

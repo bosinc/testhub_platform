@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import TestCase, TestCaseModule, TestCaseStep, TestCaseAttachment, TestCaseComment, TestCaseImportRecord
+from .models import TestCase, TestCaseAutomationLink, TestCaseModule, TestCaseStep, TestCaseAttachment, TestCaseComment, TestCaseImportRecord
 from apps.users.serializers import UserSerializer
 from apps.versions.serializers import VersionSimpleSerializer
 
@@ -53,13 +53,14 @@ class TestCaseListSerializer(serializers.ModelSerializer):
     project = serializers.SerializerMethodField()
     versions = serializers.SerializerMethodField()
     module = TestCaseModuleSimpleSerializer(read_only=True)
+    automation_links = serializers.SerializerMethodField()
     
     class Meta:
         model = TestCase
         fields = [
             'id', 'title', 'description', 'notes', 'preconditions', 'steps', 'expected_result',
             'priority', 'test_type',
-            'author', 'assignee', 'project', 'module', 'versions', 'tags', 'created_at', 'updated_at'
+            'author', 'assignee', 'project', 'module', 'versions', 'tags', 'automation_links', 'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
     
@@ -74,6 +75,9 @@ class TestCaseListSerializer(serializers.ModelSerializer):
     
     def get_versions(self, obj):
         return [{'id': v.id, 'name': v.name, 'is_baseline': v.is_baseline} for v in obj.versions.all()]
+
+    def get_automation_links(self, obj):
+        return self.context.get('automation_links_by_test_case', {}).get(obj.id, [])
 
 class TestCaseCreateSerializer(serializers.ModelSerializer):
     project_id = serializers.IntegerField(required=False, allow_null=True, help_text="项目ID，可选")

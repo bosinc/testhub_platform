@@ -3,12 +3,15 @@ from __future__ import annotations
 import re
 import uuid
 from dataclasses import dataclass
+from datetime import datetime, time
 from io import BytesIO
 from typing import Dict, List, Optional
 
+from django.conf import settings
 from django.core.files.base import ContentFile
 from django.db import transaction, models
 from django.utils import timezone
+from django.utils.dateparse import parse_date, parse_datetime
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 
@@ -19,7 +22,7 @@ from apps.versions.models import Version
 from .models import TestCase, TestCaseModule, TestCaseImportRecord
 
 
-TEMPLATE_VERSION = 'v2'
+TEMPLATE_VERSION = 'v1'
 TEMPLATE_SHEET_NAME = '用例导入模板'
 INSTRUCTION_SHEET_NAME = '填写说明'
 
@@ -53,6 +56,7 @@ class TestCaseImportTemplateService:
         ['步骤描述', '必填，支持多行文本'],
         ['预期结果', '必填，支持多行文本'],
         ['一级模块至三级模块', '可选，逐级填写模块名称；全部留空时用例归入无所属模块。需要更深层级时，可自行新增“4级模块”至“8级模块”列，不能跳级填写'],
+        ['创建时间、更新时间', '如需导入原始时间，可在用例导入模板中自行添加“创建时间”和“更新时间”列；未添加或留空时由系统按现有逻辑自动设置'],
         ['优先级', '可选，支持中文或英文：低/中/高/紧急 或 low/medium/high/critical；默认 medium(中)'],
         ['测试类型', '可选，支持中文或英文：功能测试/集成测试/API测试/UI测试/性能测试/安全测试 或 functional/integration/api/ui/performance/security；默认 functional(功能测试)'],
         ['中英文示例', '优先级示例：高 或 high；测试类型示例：功能测试 或 functional'],
@@ -139,6 +143,8 @@ class TestCaseExcelImportService:
         '关联项目': 'project',
         '项目': 'project',
         '维护人': 'maintainer',
+        '创建时间': 'created_at',
+        '更新时间': 'updated_at',
         **{f'{level}级模块': f'module_{index}' for index, level in enumerate(('一', '二', '三', '四', '五', '六', '七', '八'), start=1)},
     }
     EXPECTED_HEADER_FIELDS = [
@@ -160,11 +166,27 @@ class TestCaseExcelImportService:
 
         worksheet = workbook[TEMPLATE_SHEET_NAME]
         raw_headers = [cls._normalize_header(cell.value) for cell in next(worksheet.iter_rows(min_row=1, max_row=1))]
-        effective_headers = [header for header in raw_headers if header]
-        header_fields = [cls.HEADER_ALIASES.get(header) for header in effective_headers]
+        header_entries = [
+            (column_index, cls.HEADER_ALIASES.get(header))
+            for column_index, header in enumerate(raw_headers)
+            if header
+        ]
+        header_fields = [field for _, field in header_entries]
+        populated_fields = [field for field in header_fields if field]
         base_fields = [field for field in header_fields if not (field or '').startswith('module_')]
         module_fields = [field for field in header_fields if (field or '').startswith('module_')]
-        if None in header_fields or base_fields != cls.EXPECTED_HEADER_FIELDS or module_fields != [f'module_{i}' for i in range(1, len(module_fields) + 1)]:
+        timestamp_fields = [field for field in base_fields if field in {'created_at', 'updated_at'}]
+        required_base_fields = [field for field in base_fields if field not in {'created_at', 'updated_at'}]
+        expected_module_fields = [f'module_{i}' for i in range(1, len(module_fields) + 1)]
+        if (
+            any(field is None for _, field in header_entries)
+            or set(required_base_fields) != set(cls.EXPECTED_HEADER_FIELDS)
+            or len(required_base_fields) != len(cls.EXPECTED_HEADER_FIELDS)
+            or len(timestamp_fields) != len(set(timestamp_fields))
+            or len(populated_fields) != len(set(populated_fields))
+            or set(module_fields) != set(expected_module_fields)
+            or len(module_fields) != len(expected_module_fields)
+        ):
             raise ValueError('导入模板表头不匹配，请先下载最新模板后再导入')
 
         rows = list(worksheet.iter_rows(min_row=2, values_only=True))
@@ -187,10 +209,10 @@ class TestCaseExcelImportService:
                 projects_by_name[project.name] = project
 
         for index, row in enumerate(effective_rows, start=2):
-            row_values = list(row[:len(header_fields)])
             row_data = {
-                field: cls._normalize_text(value)
-                for field, value in zip(header_fields, row_values)
+                field: cls._normalize_text(row[column_index] if column_index < len(row) else None)
+                for column_index, field in header_entries
+                if field
             }
 
             project_name = row_data.get('project')
@@ -205,6 +227,14 @@ class TestCaseExcelImportService:
                 for version in Version.objects.filter(projects=project).distinct()
             } if project else {}
             error_messages.extend(cls._validate_row(row_data, version_map))
+            imported_timestamps = {}
+            for field, label in (('created_at', '创建时间'), ('updated_at', '更新时间')):
+                value = row_data.get(field)
+                if value:
+                    try:
+                        imported_timestamps[field] = cls._parse_import_datetime(value)
+                    except ValueError:
+                        error_messages.append(f'{label}格式无效: {value}')
             modules = [row_data.get(f'module_{level}', '') for level in range(1, 9)]
             if any(modules[level] and not modules[level - 1] for level in range(1, 8)):
                 error_messages.append('模块层级不能跳级填写')
@@ -240,6 +270,9 @@ class TestCaseExcelImportService:
                     author=maintainer or record.created_by,
                     assignee=None,
                 )
+                if imported_timestamps:
+                    # auto_now overrides updated_at during save, so preserve imported values with a direct update.
+                    TestCase.objects.filter(pk=testcase.pk).update(**imported_timestamps)
                 if version_names:
                     testcase.versions.set([version_map[name].id for name in version_names])
 
@@ -362,3 +395,25 @@ class TestCaseExcelImportService:
             return ''
         text = text.replace('\ufeff', '').replace('\u200b', '')
         return re.sub(r'\s+', '', text)
+
+    @staticmethod
+    def _parse_import_datetime(value: str) -> datetime:
+        """Parse Excel date values and common text date formats into the active timezone."""
+        text = str(value).strip()
+        parsed = parse_datetime(text)
+        if parsed is None:
+            parsed_date = parse_date(text)
+            if parsed_date is not None:
+                parsed = datetime.combine(parsed_date, time.min)
+        if parsed is None:
+            for date_format in ('%Y/%m/%d %H:%M:%S', '%Y/%m/%d %H:%M', '%Y/%m/%d'):
+                try:
+                    parsed = datetime.strptime(text, date_format)
+                    break
+                except ValueError:
+                    continue
+        if parsed is None:
+            raise ValueError('Unsupported date value')
+        if settings.USE_TZ and timezone.is_naive(parsed):
+            parsed = timezone.make_aware(parsed, timezone.get_current_timezone())
+        return parsed

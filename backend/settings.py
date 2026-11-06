@@ -72,7 +72,7 @@ MONITOR_DEFAULT_MANUAL_ALERT_COOLDOWN = config(
 LOCAL_APPS = [
     'apps.users',
     'apps.projects',
-    'apps.testcases',
+    'apps.testcases.apps.TestcasesConfig',
     'apps.testsuites',
     'apps.executions',
     'apps.reports',

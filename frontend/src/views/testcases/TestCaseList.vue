@@ -29,7 +29,7 @@
         <el-button @click="goToImportRecords">
           {{ $t('testcase.importRecords') }}
         </el-button>
-        <el-button type="primary" @click="$router.push('/ai-generation/testcases/create')">
+        <el-button type="primary" @click="goToCreateTestCase">
           <el-icon><Plus /></el-icon>
           {{ $t('testcase.newCase') }}
         </el-button>
@@ -52,9 +52,7 @@
               >
                 <template #prefix><el-icon><Search /></el-icon></template>
               </el-input>
-              <el-tooltip :content="$t('testcase.createModule')" placement="top">
-                <el-button type="success" size="small" :disabled="!moduleProjectId" @click="openModuleDialog()"><el-icon><Plus /></el-icon></el-button>
-              </el-tooltip>
+              <el-button type="success" size="small" :disabled="!moduleProjectId" @click="openModuleDialog()"><el-icon><Plus /></el-icon></el-button>
             </div>
           </div>
           <div class="collection-tree">
@@ -63,6 +61,7 @@
             </div>
             <el-tree
               v-if="moduleProjectId"
+              ref="moduleTreeRef"
               :data="filteredModuleTree"
               :props="{ label: 'name', children: 'children' }"
               node-key="id"
@@ -158,8 +157,8 @@
           style="width: 100%"
           height="100%"
           @selection-change="handleSelectionChange">
-          <el-table-column type="selection" width="40" />
-          <el-table-column prop="id" :label="$t('testcase.serialNumber')" width="80" />
+          <el-table-column type="selection" width="30" />
+          <el-table-column prop="id" :label="$t('testcase.serialNumber')" width="60" />
           <el-table-column prop="title" :label="$t('testcase.caseTitle')" min-width="360">
             <template #default="{ row }">
               <el-tooltip :content="row.title" placement="top" :show-after="500">
@@ -174,30 +173,14 @@
               </el-tooltip>
             </template>
           </el-table-column>
-          <el-table-column prop="project.name" :label="$t('testcase.relatedProject')" width="120">
+          <el-table-column :label="$t('testcase.automation')" width="110">
             <template #default="{ row }">
-              {{ row.project?.name || '-' }}
-            </template>
-          </el-table-column>
-          <el-table-column prop="versions" :label="$t('testcase.relatedVersions')" width="120">
-            <template #default="{ row }">
-              <div v-if="row.versions && row.versions.length > 0" class="version-tags">
-                <el-tag 
-                  v-for="version in row.versions.slice(0, 2)" 
-                  :key="version.id" 
-                  size="small" 
-                  :type="version.is_baseline ? 'warning' : 'info'"
-                  class="version-tag"
-                >
-                  {{ version.name }}
-                </el-tag>
-                <el-tooltip v-if="row.versions.length > 2" :content="getVersionsTooltip(row.versions)">
-                  <el-tag size="small" type="info" class="version-tag">
-                    +{{ row.versions.length - 2 }}
-                  </el-tag>
-                </el-tooltip>
-              </div>
-              <span v-else class="no-version">{{ $t('testcase.noVersion') }}</span>
+              <AutomationCaseLinks
+                :test-case-id="row.id"
+                :project-id="row.project?.id"
+                :links="row.automation_links || []"
+                @update:links="row.automation_links = $event"
+              />
             </template>
           </el-table-column>
           <el-table-column prop="priority" :label="$t('testcase.priority')" width="80">
@@ -216,11 +199,27 @@
               {{ formatDate(row.updated_at) }}
             </template>
           </el-table-column>
-          <el-table-column :label="$t('project.actions')" width="150" fixed="right">
+          <el-table-column :label="$t('project.actions')" width="80" fixed="right">
             <template #default="{ row }">
               <div class="row-actions">
-                <el-button size="small" @click="editTestCase(row)">{{ $t('common.edit') }}</el-button>
-                <el-button size="small" type="danger" @click="deleteTestCase(row)">{{ $t('common.delete') }}</el-button>
+                <el-button
+                  link
+                  type="primary"
+                  size="default"
+                  :aria-label="$t('common.edit')"
+                  @click="editTestCase(row)"
+                >
+                  <el-icon><Edit /></el-icon>
+                </el-button>
+                <el-button
+                  link
+                  type="danger"
+                  size="default"
+                  :aria-label="$t('common.delete')"
+                  @click="deleteTestCase(row)"
+                >
+                  <el-icon><Delete /></el-icon>
+                </el-button>
               </div>
             </template>
           </el-table-column>
@@ -324,12 +323,13 @@
 <script setup>
 defineOptions({ name: 'TestCaseList' })
 
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, onActivated, onUnmounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Search, Download, Delete, Upload, Folder, FolderOpened, MoreFilled } from '@element-plus/icons-vue'
+import { Plus, Search, Download, Delete, Edit, Upload, Folder, FolderOpened, MoreFilled } from '@element-plus/icons-vue'
 import ResizableSplitPane from '@/components/ResizableSplitPane.vue'
+import AutomationCaseLinks from '@/components/AutomationCaseLinks.vue'
 import api from '@/utils/api'
 import dayjs from 'dayjs'
 import * as XLSX from 'xlsx'
@@ -340,6 +340,7 @@ const router = useRouter()
 const loading = ref(false)
 const sidebarWidth = ref(280)
 const moduleTree = ref([])
+const moduleTreeRef = ref(null)
 const expandedModuleKeys = ref([])
 const moduleProjectId = ref('')
 const moduleSearch = ref('')
@@ -386,7 +387,6 @@ const importUploadRef = ref(null)
 const importForm = ref({
   projectId: ''
 })
-
 const fetchTestCases = async () => {
   loading.value = true
   try {
@@ -411,6 +411,13 @@ const fetchTestCases = async () => {
     loading.value = false
   }
 }
+onActivated(fetchTestCases)
+
+const refreshTestCasesOnFocus = () => {
+  if (document.visibilityState === 'visible') fetchTestCases()
+}
+onMounted(() => window.addEventListener('focus', refreshTestCasesOnFocus))
+onUnmounted(() => window.removeEventListener('focus', refreshTestCasesOnFocus))
 
 const handleSearch = () => {
   currentPage.value = 1
@@ -489,6 +496,7 @@ const handleModuleDrop = async (draggingNode) => {
 const handleModuleProjectChange = () => {
   rememberSelectedProject(moduleProjectId.value, projects.value)
   selectedModule.value = ''
+  moduleTreeRef.value?.setCurrentKey(null)
   projectFilter.value = moduleProjectId.value || ''
   if (!moduleProjectId.value) { allProjectCount.value = 0; unassignedCount.value = 0 }
   loadModuleTree()
@@ -500,12 +508,18 @@ const handleProjectFilterChange = async () => {
     if (moduleProjectId.value !== projectFilter.value) {
       moduleProjectId.value = projectFilter.value
       selectedModule.value = ''
+      moduleTreeRef.value?.setCurrentKey(null)
       await loadModuleTree()
     }
   }
   handleFilter()
 }
-const selectModule = (id) => { selectedModule.value = id; projectFilter.value = moduleProjectId.value || ''; handleFilter() }
+const selectModule = (id) => {
+  selectedModule.value = id
+  moduleTreeRef.value?.setCurrentKey(id && id !== 'none' ? Number(id) : null)
+  projectFilter.value = moduleProjectId.value || ''
+  handleFilter()
+}
 const openModuleDialog = (parent = null) => {
   moduleEditing.value = Boolean(parent?.id && parent?.rename)
   moduleForm.value = { name: moduleEditing.value ? parent.name : '', id: moduleEditing.value ? parent.id : null, parentId: parent?.id || null }
@@ -557,6 +571,11 @@ const handleSizeChange = () => {
 
 const goToTestCase = (id) => {
   router.push(`/ai-generation/testcases/${id}`)
+}
+
+const goToCreateTestCase = () => {
+  const selectedProject = projectFilter.value || moduleProjectId.value || getPreferredProjectId(projects.value)
+  router.push({ path: '/ai-generation/testcases/create', query: selectedProject ? { project_id: selectedProject } : {} })
 }
 
 const editTestCase = (testcase) => {
@@ -668,10 +687,6 @@ const getTypeText = (type) => {
 
 const formatDate = (dateString) => {
   return dayjs(dateString).format('YYYY-MM-DD HH:mm')
-}
-
-const getVersionsTooltip = (versions) => {
-  return versions.map(v => v.name + (v.is_baseline ? ' (' + t('testcase.baseline') + ')' : '')).join('、')
 }
 
 // 将HTML的<br>标签转换为换行符（用于Excel导出）
@@ -883,7 +898,7 @@ const downloadImportTemplate = async () => {
     const response = await api.get('/testcases/import/template/', {
       responseType: 'blob'
     })
-    downloadBlob(response.data, 'testcase_import_template_v2.xlsx')
+    downloadBlob(response.data, 'testcase_import_template.xlsx')
     ElMessage.success(t('testcase.downloadTemplateSuccess'))
   } catch (error) {
     console.error('Download import template failed:', error)
@@ -1125,22 +1140,6 @@ onMounted(async () => {
   &.medium { color: #e6a23c; }
   &.high { color: #f56c6c; }
   &.critical { color: #f56c6c; font-weight: bold; }
-}
-
-.version-tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  
-  .version-tag {
-    margin: 0;
-  }
-}
-
-.no-version {
-  color: #909399;
-  font-size: 12px;
-  font-style: italic;
 }
 
 @media (max-width: 1200px) {

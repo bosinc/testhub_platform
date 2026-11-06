@@ -430,6 +430,7 @@ export default {
     run: '运行',
     duplicate: '复制',
     selectScenarioCaseHint: '请选择一个场景用例查看详情',
+    linkedScenarioUnavailable: '关联的场景用例不存在或无权访问',
     selectScenarioCaseTip: '请选择一个场景用例查看详情',
     noDescription: '暂无描述',
     creator: '创建者：',

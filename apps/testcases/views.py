@@ -9,7 +9,7 @@ from rest_framework.views import APIView
 from rest_framework import serializers
 from django.utils import timezone
 
-from .models import TestCase, TestCaseModule, TestCaseStep, TestCaseAttachment, TestCaseComment, TestCaseImportRecord
+from .models import TestCase, TestCaseAutomationLink, TestCaseModule, TestCaseStep, TestCaseAttachment, TestCaseComment, TestCaseImportRecord
 from .serializers import (
     TestCaseSerializer, TestCaseListSerializer, TestCaseCreateSerializer, TestCaseUpdateSerializer,
     TestCaseImportRecordListSerializer, TestCaseImportRecordDetailSerializer
@@ -281,6 +281,21 @@ class TestCaseListCreateView(generics.ListCreateAPIView):
         if maintainer_param and maintainer_param.isdigit():
             queryset = queryset.filter(author_id=int(maintainer_param))
         return queryset
+
+    def list(self, request, *args, **kwargs):
+        """Serialize the current page with its typed automation links in bulk."""
+        queryset = self.filter_queryset(self.get_queryset())
+        page = self.paginate_queryset(queryset)
+        cases = list(page if page is not None else queryset)
+        links_by_case = get_automation_links_for_cases(cases, request.user)
+        serializer = self.get_serializer(
+            cases,
+            many=True,
+            context={**self.get_serializer_context(), 'automation_links_by_test_case': links_by_case},
+        )
+        if page is not None:
+            return self.get_paginated_response(serializer.data)
+        return Response(serializer.data)
     
     def get_user_accessible_projects(self, user):
         """获取用户有权限访问的项目"""
@@ -330,6 +345,248 @@ class TestCaseListCreateView(generics.ListCreateAPIView):
             if not maintainer:
                 raise serializers.ValidationError({'maintainer_id': '维护人不存在'})
         serializer.save(author=maintainer, project=project, module=module)
+
+
+AUTOMATION_CASE_TYPES = {
+    'ui_test_case': {
+        'label': 'UI自动化用例',
+        'detail_url': '/ui-automation/test-cases',
+        'query_parameter': 'test_case_id',
+    },
+    'api_scenario_case': {
+        'label': '接口测试场景用例',
+        'detail_url': '/api-testing/automation',
+        'query_parameter': 'scenario_case_id',
+    },
+}
+
+
+def get_automation_target_queryset(case_type, user, workspace_project_id):
+    """Return targets the user can access inside the formal case's project."""
+    from django.db.models import Q
+
+    if case_type == 'ui_test_case':
+        from apps.ui_automation.models import TestCase as UiTestCase, UiProject
+
+        projects = UiProject.objects.filter(
+            Q(owner=user) | Q(members=user),
+            workspace_project_id=workspace_project_id,
+        ).distinct()
+        return UiTestCase.objects.filter(project__in=projects).select_related('project')
+
+    if case_type == 'api_scenario_case':
+        from apps.api_testing.models import ApiProject, ScenarioCase
+
+        projects = ApiProject.objects.filter(
+            Q(owner=user) | Q(members=user),
+            workspace_project_id=workspace_project_id,
+        ).distinct()
+        return ScenarioCase.objects.filter(project__in=projects).select_related('project')
+
+    return None
+
+
+def get_automation_target_folders(case_type, user, workspace_project_id):
+    """Return folders belonging to linkable automation projects."""
+    from django.db.models import Q
+
+    if case_type == 'ui_test_case':
+        from apps.ui_automation.models import TestCaseFolder, UiProject
+
+        projects = UiProject.objects.filter(
+            Q(owner=user) | Q(members=user),
+            workspace_project_id=workspace_project_id,
+        ).distinct()
+        return TestCaseFolder.objects.filter(project__in=projects).select_related('project')
+
+    if case_type == 'api_scenario_case':
+        from apps.api_testing.models import ApiProject, ScenarioCaseFolder
+
+        projects = ApiProject.objects.filter(
+            Q(owner=user) | Q(members=user),
+            workspace_project_id=workspace_project_id,
+        ).distinct()
+        return ScenarioCaseFolder.objects.filter(project__in=projects).select_related('project')
+
+    return None
+
+
+def get_automation_links_for_cases(cases, user):
+    """Resolve target names for one page of formal test cases without per-row queries."""
+    if not cases:
+        return {}
+
+    cases_by_id = {case.id: case for case in cases}
+    links = list(
+        TestCaseAutomationLink.objects.filter(test_case_id__in=cases_by_id)
+        .order_by('id')
+    )
+    links_by_type = {}
+    for link in links:
+        links_by_type.setdefault(link.case_type, []).append(link)
+
+    result = {case_id: [] for case_id in cases_by_id}
+    for case_type, type_links in links_by_type.items():
+        type_config = AUTOMATION_CASE_TYPES.get(case_type)
+        if not type_config:
+            continue
+        targets = {}
+        workspace_ids = {cases_by_id[link.test_case_id].project_id for link in type_links}
+        for workspace_id in workspace_ids:
+            workspace_links = [
+                link for link in type_links
+                if cases_by_id[link.test_case_id].project_id == workspace_id
+            ]
+            queryset = get_automation_target_queryset(case_type, user, workspace_id)
+            if queryset is None:
+                continue
+            target_ids = {link.object_id for link in workspace_links}
+            targets.update({(workspace_id, target.id): target for target in queryset.filter(id__in=target_ids)})
+
+        for link in type_links:
+            workspace_id = cases_by_id[link.test_case_id].project_id
+            target = targets.get((workspace_id, link.object_id))
+            target_exists = bool(target and target.project.workspace_project_id == workspace_id)
+            detail_url = None
+            target_name = ''
+            if target_exists:
+                detail_url = (
+                    f"{type_config['detail_url']}?"
+                    f"{type_config['query_parameter']}={target.id}"
+                )
+                target_name = target.name
+            result[link.test_case_id].append({
+                'id': link.id,
+                'type': link.case_type,
+                'type_label': type_config['label'],
+                'object_id': link.object_id,
+                'target_name': target_name,
+                'target_exists': target_exists,
+                'detail_url': detail_url,
+            })
+    return result
+
+
+class TestCaseAutomationOptionsPagination(pagination.PageNumberPagination):
+    page_size = 20
+    page_size_query_param = 'page_size'
+    max_page_size = 100
+
+
+class TestCaseAutomationOptionsView(APIView):
+    """List linkable UI or API automation cases for a formal test case."""
+
+    permission_classes = [permissions.IsAuthenticated]
+    pagination_class = TestCaseAutomationOptionsPagination
+
+    def get(self, request, pk):
+        test_case = TestCase.objects.filter(
+            pk=pk,
+            project__in=get_user_accessible_projects(request.user),
+        ).select_related('project').first()
+        if not test_case:
+            return Response({'detail': '测试用例不存在或无权访问'}, status=status.HTTP_404_NOT_FOUND)
+
+        case_type = request.query_params.get('type')
+        if case_type not in AUTOMATION_CASE_TYPES:
+            return Response({'type': '请选择有效的自动化用例类型'}, status=status.HTTP_400_BAD_REQUEST)
+
+        queryset = get_automation_target_queryset(case_type, request.user, test_case.project_id)
+        if queryset is None:
+            return Response({'type': '不支持的自动化用例类型'}, status=status.HTTP_400_BAD_REQUEST)
+        search = request.query_params.get('search', '').strip()
+        if search:
+            queryset = queryset.filter(name__icontains=search)
+        queryset = queryset.order_by('name', 'id')
+
+        paginator = self.pagination_class()
+        page = paginator.paginate_queryset(queryset, request, view=self)
+        results = [{
+            'id': target.id,
+            'name': target.name,
+            'project_id': target.project_id,
+            'project_name': target.project.name,
+            'folder_id': target.folder_id,
+            'updated_at': target.updated_at,
+        } for target in page]
+        response = paginator.get_paginated_response(results)
+        folders = get_automation_target_folders(case_type, request.user, test_case.project_id)
+        response.data['folders'] = [{
+            'id': folder.id,
+            'project_id': folder.project_id,
+            'project_name': folder.project.name,
+            'parent_id': folder.parent_id,
+            'name': folder.name,
+        } for folder in folders.order_by('project_id', 'name', 'id')]
+        return response
+
+
+class TestCaseAutomationLinkView(APIView):
+    """Manage typed automation links for one formal test case."""
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_test_case(self, request, pk):
+        return TestCase.objects.filter(
+            pk=pk,
+            project__in=get_user_accessible_projects(request.user),
+        ).select_related('project').first()
+
+    def get(self, request, pk):
+        test_case = self.get_test_case(request, pk)
+        if not test_case:
+            return Response({'detail': '测试用例不存在或无权访问'}, status=status.HTTP_404_NOT_FOUND)
+        links = get_automation_links_for_cases([test_case], request.user).get(test_case.id, [])
+        return Response(links)
+
+    def post(self, request, pk):
+        test_case = self.get_test_case(request, pk)
+        if not test_case:
+            return Response({'detail': '测试用例不存在或无权访问'}, status=status.HTTP_404_NOT_FOUND)
+
+        case_type = request.data.get('type')
+        object_id = request.data.get('object_id')
+        if case_type not in AUTOMATION_CASE_TYPES:
+            return Response({'type': '请选择有效的自动化用例类型'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            object_id = int(object_id)
+            if object_id <= 0:
+                raise ValueError
+        except (TypeError, ValueError):
+            return Response({'object_id': '请选择有效的自动化用例'}, status=status.HTTP_400_BAD_REQUEST)
+
+        target = get_automation_target_queryset(case_type, request.user, test_case.project_id).filter(
+            pk=object_id
+        ).first()
+        if not target:
+            return Response({'object_id': '目标用例不存在、项目不匹配或无权访问'}, status=status.HTTP_404_NOT_FOUND)
+
+        from django.db import IntegrityError
+
+        try:
+            with transaction.atomic():
+                link = TestCaseAutomationLink.objects.create(
+                    test_case=test_case,
+                    case_type=case_type,
+                    object_id=target.id,
+                    linked_by=request.user,
+                )
+        except IntegrityError:
+            return Response({'detail': '该类型已关联用例，请先解除现有关联'}, status=status.HTTP_409_CONFLICT)
+
+        links = get_automation_links_for_cases([test_case], request.user).get(test_case.id, [])
+        created = next((item for item in links if item['id'] == link.id), None)
+        return Response(created, status=status.HTTP_201_CREATED)
+
+    def delete(self, request, pk, link_id):
+        test_case = self.get_test_case(request, pk)
+        if not test_case:
+            return Response({'detail': '测试用例不存在或无权访问'}, status=status.HTTP_404_NOT_FOUND)
+        link = TestCaseAutomationLink.objects.filter(id=link_id, test_case=test_case).first()
+        if not link:
+            return Response({'detail': '关联不存在'}, status=status.HTTP_404_NOT_FOUND)
+        link.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 class TestCaseDetailView(generics.RetrieveUpdateDestroyAPIView):
     queryset = TestCase.objects.all()
@@ -430,7 +687,7 @@ class TestCaseImportTemplateDownloadView(APIView):
         return FileResponse(
             template_stream,
             as_attachment=True,
-            filename='testcase_import_template_v2.xlsx',
+            filename='testcase_import_template.xlsx',
             content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
         )
 

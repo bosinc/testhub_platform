@@ -539,8 +539,12 @@ import {
 } from '@element-plus/icons-vue'
 import DataFactorySelector from '@/components/DataFactorySelector.vue'
 import { useI18n } from 'vue-i18n'
+import { useRoute } from 'vue-router'
+import api from '@/utils/api'
+import { createTestCaseAutomationLink } from '@/api/testcases'
 
 const { t } = useI18n()
+const route = useRoute()
 const leftPanelWidth = ref(350)
 
 import {
@@ -1633,6 +1637,7 @@ const saveTestCaseForm = async () => {
       project: projectId.value
     }
 
+    let savedAutomationCaseId = editingTestCase.value?.id
     if (editingTestCase.value) {
       // 编辑现有用例
       await updateTestCase(editingTestCase.value.id, data)
@@ -1649,8 +1654,24 @@ const saveTestCaseForm = async () => {
     } else {
       // 创建新用例
       const response = await createTestCase(data)
+      savedAutomationCaseId = response.data.id
       ElMessage.success(t('uiAutomation.testCase.create.success'))
       testCases.value.push(response.data)
+    }
+
+    const formalCaseId = route.query.automation_for_test_case_id
+    if (formalCaseId && savedAutomationCaseId) {
+      try {
+        await createTestCaseAutomationLink(formalCaseId, {
+          type: 'ui_test_case',
+          object_id: savedAutomationCaseId
+        })
+        ElMessage.success(t('testcase.automationLinked'))
+      } catch (error) {
+        editingTestCase.value = testCases.value.find(item => item.id === savedAutomationCaseId) || editingTestCase.value
+        ElMessage.error(error.response?.data?.detail || t('testcase.linkAutomationFailed'))
+        return
+      }
     }
 
     showCreateDialog.value = false
@@ -1762,6 +1783,46 @@ onMounted(async () => {
   console.log('loadProjects 完成，准备加载变量函数...')
   await loadVariableFunctions()
   console.log('loadVariableFunctions 完成')
+
+  const formalCaseId = route.query.automation_for_test_case_id
+  if (formalCaseId) {
+    const workspaceProjectId = route.query.workspace_project_id
+    const linkedProject = projects.value.find(project =>
+      String(project.workspace_project?.id || project.workspace_project) === String(workspaceProjectId)
+    )
+    if (!linkedProject) {
+      ElMessage.warning('未找到当前正式用例对应的 UI 自动化项目')
+      return
+    }
+    projectId.value = linkedProject.id
+    await onProjectChange()
+    resetForm()
+    editingTestCase.value = null
+    showCreateDialog.value = true
+    return
+  }
+
+  const linkedCaseId = route.query.test_case_id
+  if (linkedCaseId) {
+    try {
+      const response = await getTestCaseDetail(linkedCaseId)
+      const linkedCase = response.data
+      const linkedProjectId = linkedCase.project?.id || linkedCase.project
+      const accessibleProject = projects.value.find(project => String(project.id) === String(linkedProjectId))
+      if (!accessibleProject) {
+        ElMessage.warning('无权访问该UI自动化项目')
+        return
+      }
+      projectId.value = accessibleProject.id
+      await onProjectChange()
+      const listedCase = testCases.value.find(testCase => String(testCase.id) === String(linkedCaseId))
+      await selectTestCase(listedCase || linkedCase)
+      return
+    } catch (error) {
+      ElMessage.error('打开关联的UI自动化用例失败')
+      return
+    }
+  }
 
   if (projects.value.length > 0) {
     projectId.value = getPreferredProjectId(projects.value, projects.value[0].id)
