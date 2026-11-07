@@ -33,3 +33,28 @@ export function deleteTestCaseAutomationLink(testCaseId, linkId) {
     method: 'delete'
   })
 }
+
+// 删除单条测试用例。
+export function deleteTestCase(id) {
+  return request({
+    url: `/testcases/${id}/`,
+    method: 'delete'
+  })
+}
+
+// 批量删除测试用例（后端单次上限 5000 个 id）。
+export function bulkDeleteTestCases(testcaseIds) {
+  return request({
+    url: '/testcases/bulk-delete/',
+    method: 'post',
+    data: { testcase_ids: testcaseIds }
+  })
+}
+
+// 删除测试用例模块。
+export function deleteTestCaseModule(moduleId) {
+  return request({
+    url: `/testcases/modules/${moduleId}/`,
+    method: 'delete'
+  })
+}

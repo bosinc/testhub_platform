@@ -4,7 +4,7 @@
       <h1 class="page-title">{{ $t('testcase.title') }}</h1>
       <div class="header-actions">
         <el-button v-if="selectedTestCases.length > 0" @click="openMoveDialog">
-          <el-icon><FolderOpened /></el-icon>{{ $t('testcase.moveCases') }} ({{ selectedTestCases.length }})
+          <el-icon><FolderOpened /></el-icon>{{ $t('testcase.moveCases') }} ({{ selectedCount }})
         </el-button>
         <el-button
           v-if="selectedTestCases.length > 0"
@@ -12,7 +12,7 @@
           @click="batchDeleteTestCases"
           :disabled="isDeleting">
           <el-icon><Delete /></el-icon>
-          {{ $t('testcase.batchDelete') }} ({{ selectedTestCases.length }})
+          {{ $t('testcase.batchDelete') }} ({{ selectedCount }})
         </el-button>
         <el-button type="success" @click="exportToExcel">
           <el-icon><Download /></el-icon>
@@ -106,57 +106,76 @@
       <template #second>
       <section class="card-container">
       <div class="filter-bar">
-        <el-row :gutter="20">
-          <el-col :span="5">
-            <el-input
-              v-model="searchText"
-              :placeholder="$t('testcase.searchPlaceholder')"
+        <div class="filter-row">
+          <el-input
+            v-model="searchText"
+            class="filter-search"
+            :placeholder="$t('testcase.searchPlaceholder')"
+            clearable
+            @input="handleSearch"
+          >
+            <template #prefix>
+              <el-icon><Search /></el-icon>
+            </template>
+          </el-input>
+          <el-select
+            v-model="priorityFilter"
+            class="filter-select"
+            :placeholder="$t('testcase.priorityFilter')"
+            clearable
+            @change="handleFilter"
+          >
+            <el-option :label="$t('testcase.low')" value="low" />
+            <el-option :label="$t('testcase.medium')" value="medium" />
+            <el-option :label="$t('testcase.high')" value="high" />
+            <el-option :label="$t('testcase.critical')" value="critical" />
+          </el-select>
+          <el-select
+            v-model="maintainerFilter"
+            class="filter-select"
+            :placeholder="$t('testcase.maintainerFilter')"
+            clearable
+            filterable
+            @change="handleFilter"
+          >
+            <el-option
+              v-for="maintainer in maintainers"
+              :key="maintainer.id"
+              :label="maintainer.email ? `${maintainer.username} (${maintainer.email})` : maintainer.username"
+              :value="maintainer.id"
+            />
+          </el-select>
+          <el-tooltip :content="$t('testcase.dateRangeTip')" placement="top" :show-after="400">
+            <el-date-picker
+              v-model="dateRange"
+              class="filter-date"
+              type="daterange"
+              value-format="YYYY-MM-DD"
+              :range-separator="$t('testcase.dateRangeSeparator')"
+              :start-placeholder="$t('testcase.dateRangeStart')"
+              :end-placeholder="$t('testcase.dateRangeEnd')"
+              unlink-panels
               clearable
-              @input="handleSearch"
-            >
-              <template #prefix>
-                <el-icon><Search /></el-icon>
-              </template>
-            </el-input>
-          </el-col>
-          <el-col :span="4">
-            <el-select v-model="projectFilter" :placeholder="$t('testcase.relatedProject')" clearable @change="handleProjectFilterChange">
-              <el-option
-                v-for="project in projects"
-                :key="project.id"
-                :label="project.name"
-                :value="project.id"
-              />
-            </el-select>
-          </el-col>
-          <el-col :span="3">
-            <el-select v-model="priorityFilter" :placeholder="$t('testcase.priorityFilter')" clearable @change="handleFilter">
-              <el-option :label="$t('testcase.low')" value="low" />
-              <el-option :label="$t('testcase.medium')" value="medium" />
-              <el-option :label="$t('testcase.high')" value="high" />
-              <el-option :label="$t('testcase.critical')" value="critical" />
-            </el-select>
-          </el-col>
-          <el-col :span="4">
-            <el-select v-model="maintainerFilter" :placeholder="$t('testcase.maintainerFilter')" clearable filterable @change="handleFilter">
-              <el-option
-                v-for="maintainer in maintainers"
-                :key="maintainer.id"
-                :label="maintainer.email ? `${maintainer.username} (${maintainer.email})` : maintainer.username"
-                :value="maintainer.id"
-              />
-            </el-select>
-          </el-col>
-        </el-row>
+              @change="handleFilter"
+            />
+          </el-tooltip>
+        </div>
       </div>
       
+      <div class="list-summary">
+        <span class="summary-text">{{ $t('testcase.listSummary', { total, selected: selectedCount }) }}</span>
+      </div>
+
       <div class="table-container">
         <el-table 
+          ref="tableRef"
           :data="testcases" 
+          row-key="id"
           v-loading="loading" 
           style="width: 100%"
           height="100%"
-          @selection-change="handleSelectionChange">
+          @selection-change="handleSelectionChange"
+          @select-all="handleSelectAll">
           <el-table-column type="selection" width="30" />
           <el-table-column prop="id" :label="$t('testcase.serialNumber')" width="60" />
           <el-table-column prop="title" :label="$t('testcase.caseTitle')" min-width="360">
@@ -223,20 +242,18 @@
               </div>
             </template>
           </el-table-column>
+          <!-- 滚动到底部的哨兵元素：进入可视区域时加载下一页 -->
+          <template #append>
+            <div ref="loadMoreSentinel" class="load-more-sentinel">
+              <el-icon v-if="loadingMore" class="is-loading"><Loading /></el-icon>
+              <span v-if="loadingMore">{{ $t('testcase.loadingMore') }}</span>
+              <span v-else-if="hasMore">{{ $t('testcase.scrollToLoadMore') }}</span>
+              <span v-else-if="testcases.length">{{ $t('testcase.allLoaded') }}</span>
+            </div>
+          </template>
         </el-table>
       </div>
       
-      <div class="pagination-container">
-        <el-pagination
-          v-model:current-page="currentPage"
-          v-model:page-size="pageSize"
-          :page-sizes="[15, 25, 35, 50, 100]"
-          :total="total"
-          layout="total, sizes, prev, pager, next"
-          @current-change="handlePageChange"
-          @size-change="handleSizeChange"
-        />
-      </div>
       </section>
       </template>
     </ResizableSplitPane>
@@ -323,14 +340,15 @@
 <script setup>
 defineOptions({ name: 'TestCaseList' })
 
-import { ref, onMounted, onActivated, onUnmounted, computed } from 'vue'
+import { ref, onMounted, onActivated, onUnmounted, computed, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Search, Download, Delete, Edit, Upload, Folder, FolderOpened, MoreFilled } from '@element-plus/icons-vue'
+import { ElMessage, ElMessageBox, ElLoading } from 'element-plus'
+import { Plus, Search, Download, Delete, Edit, Upload, Folder, FolderOpened, MoreFilled, Loading } from '@element-plus/icons-vue'
 import ResizableSplitPane from '@/components/ResizableSplitPane.vue'
 import AutomationCaseLinks from '@/components/AutomationCaseLinks.vue'
 import api from '@/utils/api'
+import { deleteTestCase as deleteTestCaseApi, bulkDeleteTestCases as bulkDeleteTestCasesApi, deleteTestCaseModule as deleteTestCaseModuleApi } from '@/api/testcases'
 import dayjs from 'dayjs'
 import * as XLSX from 'xlsx'
 import { getPreferredProjectId, rememberSelectedProject } from '@/utils/projectSelection'
@@ -356,6 +374,8 @@ const moveTargetModule = ref(null)
 const isMoving = ref(false)
 const movingModule = ref(null)
 const isReorderingModules = ref(false)
+// 列表滚动加载的 IntersectionObserver 实例（哨兵元素进入视口时加载下一页）
+let sentinelObserver = null
 const filteredModuleTree = computed(() => {
   const keyword = moduleSearch.value.trim().toLocaleLowerCase()
   if (!keyword) return moduleTree.value
@@ -372,13 +392,29 @@ const testcases = ref([])
 const projects = ref([])
 const maintainers = ref([])
 const currentPage = ref(1)
-const pageSize = ref(15)
 const total = ref(0)
+const tableRef = ref(null)
+const loadMoreSentinel = ref(null)
+const loadingMore = ref(false)
+// 表头全选后置为 true：表示"全部用例"（已加载 + 后续滚动加载的）都处于勾选状态
+const selectAllMode = ref(false)
+// 程序化勾选新加载行时，避免 selection-change 把 selectAllMode 误判为取消全选
+const syncingSelection = ref(false)
+const hasMore = computed(() => testcases.value.length < total.value)
+const LIST_PAGE_SIZE = 50
+const MAX_PAGE_SIZE = 100
+// 批量删除接口单次最多 5000 个 id（与后端 max_batch_size 保持一致），超出则分块提交
+const BULK_DELETE_CHUNK_SIZE = 5000
 const searchText = ref('')
+// 由左侧模块树选中的项目驱动，不再单独提供项目筛选器
 const projectFilter = ref('')
 const priorityFilter = ref('')
 const maintainerFilter = ref('')
+// 创建日期范围筛选：['YYYY-MM-DD', 'YYYY-MM-DD']
+const dateRange = ref(null)
 const selectedTestCases = ref([])
+// 实际已选条数：表头全选模式下代表"全部匹配用例"（含尚未滚动加载出来的），否则为已勾选行数
+const selectedCount = computed(() => (selectAllMode.value ? total.value : selectedTestCases.value.length))
 const isDeleting = ref(false)
 const importDialogVisible = ref(false)
 const isCreatingImport = ref(false)
@@ -387,45 +423,145 @@ const importUploadRef = ref(null)
 const importForm = ref({
   projectId: ''
 })
+// 统一的列表查询参数：滚动加载、全选取数、导出都复用，避免筛选条件不一致
+const buildListParams = (page, size) => {
+  const params = {
+    page,
+    page_size: size,
+    search: searchText.value,
+    project: projectFilter.value,
+    priority: priorityFilter.value,
+    maintainer: maintainerFilter.value
+  }
+  if (selectedModule.value) {
+    params.module = selectedModule.value
+    if (includeChildModules.value && selectedModule.value !== 'none') params.include_children = 'true'
+  }
+  if (Array.isArray(dateRange.value) && dateRange.value.length === 2) {
+    params.date_from = dateRange.value[0]
+    params.date_to = dateRange.value[1]
+  }
+  return params
+}
+
 const fetchTestCases = async () => {
   loading.value = true
   try {
-    const params = {
-      page: currentPage.value,
-      page_size: pageSize.value,
-      search: searchText.value,
-      project: projectFilter.value,
-      priority: priorityFilter.value,
-      maintainer: maintainerFilter.value
-    }
-    if (selectedModule.value) {
-      params.module = selectedModule.value
-      if (includeChildModules.value && selectedModule.value !== 'none') params.include_children = 'true'
-    }
-    const response = await api.get('/testcases/', { params })
+    const response = await api.get('/testcases/', { params: buildListParams(1, LIST_PAGE_SIZE) })
     testcases.value = response.data.results || []
     total.value = response.data.count || 0
+    currentPage.value = 1
+    selectAllMode.value = false
+    selectedTestCases.value = []
+    await nextTick()
+    observeLoadMoreSentinel()
   } catch (error) {
     ElMessage.error(t('testcase.fetchListFailed'))
   } finally {
     loading.value = false
   }
 }
-onActivated(fetchTestCases)
+
+// 滚动加载下一页，追加到现有列表（不重置已加载数据与勾选）
+const loadMore = async () => {
+  if (loading.value || loadingMore.value || !hasMore.value) return
+  loadingMore.value = true
+  const nextPage = currentPage.value + 1
+  const keepSelectAll = selectAllMode.value
+  try {
+    const response = await api.get('/testcases/', { params: buildListParams(nextPage, LIST_PAGE_SIZE) })
+    const results = response.data.results || []
+    if (!results.length) {
+      // 后端已无更多数据，收敛总数避免无限触发
+      total.value = testcases.value.length
+      return
+    }
+    if (keepSelectAll) syncingSelection.value = true
+    // 原地 push 而非整体替换数组：el-table 在 data 引用变化时会 clearSelection()，
+    // 保持同一数组实例才能让已勾选的行不被清空
+    testcases.value.push(...results)
+    currentPage.value = nextPage
+    if (typeof response.data.count === 'number') total.value = response.data.count
+    if (keepSelectAll) {
+      await nextTick()
+      results.forEach(row => tableRef.value?.toggleRowSelection(row, true))
+      await nextTick()
+      selectedTestCases.value = tableRef.value?.getSelectionRows() || selectedTestCases.value
+      selectAllMode.value = true
+    }
+  } catch (error) {
+    ElMessage.error(t('testcase.fetchListFailed'))
+  } finally {
+    loadingMore.value = false
+    syncingSelection.value = false
+    // 重新观察：若加载后哨兵仍在可视区域（视口未填满），继续加载下一页
+    resetLoadMoreSentinelObserver()
+  }
+}
+
+const observeLoadMoreSentinel = () => {
+  if (sentinelObserver) {
+    sentinelObserver.disconnect()
+    sentinelObserver = null
+  }
+  const element = loadMoreSentinel.value
+  if (!element || typeof IntersectionObserver === 'undefined') return
+  sentinelObserver = new IntersectionObserver((entries) => {
+    if (entries.some(entry => entry.isIntersecting)) loadMore()
+  })
+  sentinelObserver.observe(element)
+}
+
+const resetLoadMoreSentinelObserver = () => {
+  const element = loadMoreSentinel.value
+  if (!sentinelObserver || !element) return
+  sentinelObserver.unobserve(element)
+  sentinelObserver.observe(element)
+}
+
+// 按当前筛选条件拉取全部用例（用于"全选"后执行批量操作/导出）
+const fetchAllMatchingTestCases = async () => {
+  const allTestCases = []
+  let page = 1
+  while (true) {
+    const { data } = await api.get('/testcases/', { params: buildListParams(page, MAX_PAGE_SIZE) })
+    const results = data.results || []
+    allTestCases.push(...results)
+    if (!results.length || results.length < MAX_PAGE_SIZE || allTestCases.length >= (data.count || 0)) break
+    page += 1
+  }
+  return allTestCases
+}
+
+// 批量操作实际作用的对象：全选模式下取全部用例，否则取已勾选的行
+const resolveSelectedForAction = async () => {
+  if (selectAllMode.value && hasMore.value) return fetchAllMatchingTestCases()
+  return selectedTestCases.value
+}
+
+onActivated(() => {
+  // 已滚动加载多页或处于全选状态时不再自动刷新，避免丢失已加载数据与勾选
+  if (selectAllMode.value || selectedTestCases.value.length || testcases.value.length > LIST_PAGE_SIZE) return
+  fetchTestCases()
+})
 
 const refreshTestCasesOnFocus = () => {
-  if (document.visibilityState === 'visible') fetchTestCases()
+  if (document.visibilityState !== 'visible') return
+  if (selectAllMode.value || selectedTestCases.value.length || testcases.value.length > LIST_PAGE_SIZE) return
+  fetchTestCases()
 }
 onMounted(() => window.addEventListener('focus', refreshTestCasesOnFocus))
-onUnmounted(() => window.removeEventListener('focus', refreshTestCasesOnFocus))
+onUnmounted(() => {
+  window.removeEventListener('focus', refreshTestCasesOnFocus)
+  sentinelObserver?.disconnect()
+  sentinelObserver = null
+})
 
 const handleSearch = () => {
-  currentPage.value = 1
   fetchTestCases()
 }
 
 const handleFilter = () => {
-  currentPage.value = 1
   fetchTestCases()
 }
 
@@ -502,18 +638,6 @@ const handleModuleProjectChange = () => {
   loadModuleTree()
   handleFilter()
 }
-const handleProjectFilterChange = async () => {
-  if (projectFilter.value) {
-    rememberSelectedProject(projectFilter.value, projects.value)
-    if (moduleProjectId.value !== projectFilter.value) {
-      moduleProjectId.value = projectFilter.value
-      selectedModule.value = ''
-      moduleTreeRef.value?.setCurrentKey(null)
-      await loadModuleTree()
-    }
-  }
-  handleFilter()
-}
 const selectModule = (id) => {
   selectedModule.value = id
   moduleTreeRef.value?.setCurrentKey(id && id !== 'none' ? Number(id) : null)
@@ -530,7 +654,7 @@ const handleModuleCommand = async (command, module) => {
   if (command === 'rename') return openModuleDialog({ ...module, rename: true })
   if (command === 'move') { movingModule.value = module; moveTargetModule.value = module.parent_id || '__root__'; moveDialogVisible.value = true; return }
   if (command === 'delete') {
-    try { await ElMessageBox.confirm(t('testcase.deleteModuleConfirm'), t('common.warning')); await api.delete(`/testcases/modules/${module.id}/`); await loadModuleTree() }
+    try { await ElMessageBox.confirm(t('testcase.deleteModuleConfirm'), t('common.warning')); await deleteTestCaseModuleApi(module.id); await loadModuleTree() }
     catch (error) { if (error !== 'cancel') ElMessage.error(error.response?.data?.detail || t('testcase.moduleDeleteFailed')) }
   }
 }
@@ -555,18 +679,14 @@ const moveSelectedModule = async () => {
 }
 const moveSelectedCases = async () => {
   isMoving.value = true
-  try { await api.post('/testcases/move/', { testcase_ids: selectedTestCases.value.map(item => item.id), module_id: moveTargetModule.value === '__root__' ? null : moveTargetModule.value }); moveDialogVisible.value = false; selectedTestCases.value = []; await loadModuleTree(); await fetchTestCases(); ElMessage.success(t('testcase.casesMoved')) }
+  try {
+    // 全选模式下要移动的是"全部用例"，而不仅是已滚动加载出来的那部分
+    const targets = await resolveSelectedForAction()
+    await api.post('/testcases/move/', { testcase_ids: targets.map(item => item.id), module_id: moveTargetModule.value === '__root__' ? null : moveTargetModule.value })
+    moveDialogVisible.value = false; selectedTestCases.value = []; await loadModuleTree(); await fetchTestCases(); ElMessage.success(t('testcase.casesMoved'))
+  }
   catch (error) { ElMessage.error(error.response?.data?.detail || t('testcase.moveFailed')) }
   finally { isMoving.value = false }
-}
-
-const handlePageChange = () => {
-  fetchTestCases()
-}
-
-const handleSizeChange = () => {
-  currentPage.value = 1
-  fetchTestCases()
 }
 
 const goToTestCase = (id) => {
@@ -590,9 +710,13 @@ const deleteTestCase = async (testcase) => {
       type: 'warning'
     })
     
-    await api.delete(`/testcases/${testcase.id}/`)
+    await deleteTestCaseApi(testcase.id)
     ElMessage.success(t('testcase.deleteSuccess'))
-    fetchTestCases()
+    // 原地移除，保持已滚动加载的列表与其余勾选状态不被重置
+    const rowIndex = testcases.value.findIndex(item => item.id === testcase.id)
+    if (rowIndex > -1) testcases.value.splice(rowIndex, 1)
+    selectedTestCases.value = selectedTestCases.value.filter(item => item.id !== testcase.id)
+    total.value = Math.max(0, total.value - 1)
   } catch (error) {
     if (error !== 'cancel') {
       ElMessage.error(t('testcase.deleteFailed'))
@@ -603,18 +727,35 @@ const deleteTestCase = async (testcase) => {
 // 处理选择变化
 const handleSelectionChange = (selection) => {
   selectedTestCases.value = selection
+  // 程序化勾选新加载的行时跳过，避免把"全选"误判成"取消全选"
+  if (syncingSelection.value) return
+  // 取消掉任意一行即退出全选模式
+  if (selection.length < testcases.value.length) selectAllMode.value = false
 }
 
-// 批量删除
+// 表头全选：勾选当前已加载的全部用例，并标记为"全选"，后续滚动加载的行会自动勾选
+const handleSelectAll = (selection) => {
+  selectAllMode.value = selection.length > 0
+}
+
+// 批量删除：调用批量删除接口，一次请求删除多条（超过后端单次上限时按块提交）
 const batchDeleteTestCases = async () => {
   if (selectedTestCases.value.length === 0) {
     ElMessage.warning(t('testcase.selectFirst'))
     return
   }
 
+  let loadingInstance = null
   try {
+    // 全选模式下删除的是"全部用例"，先取回完整 id 列表再确认
+    const targets = await resolveSelectedForAction()
+    if (targets.length === 0) {
+      ElMessage.warning(t('testcase.selectFirst'))
+      return
+    }
+
     await ElMessageBox.confirm(
-      t('testcase.batchDeleteConfirm', { count: selectedTestCases.value.length }),
+      t('testcase.batchDeleteConfirm', { count: targets.length }),
       t('common.warning'),
       {
         confirmButtonText: t('common.confirm'),
@@ -627,14 +768,23 @@ const batchDeleteTestCases = async () => {
     let successCount = 0
     let failCount = 0
 
-    // 逐个删除选中的测试用例
-    for (const testcase of selectedTestCases.value) {
+    if (targets.length > 20) {
+      loadingInstance = ElLoading.service({
+        lock: true,
+        text: t('testcase.batchDeleting', { total: targets.length })
+      })
+    }
+
+    const ids = targets.map(item => item.id)
+    for (let start = 0; start < ids.length; start += BULK_DELETE_CHUNK_SIZE) {
+      const chunk = ids.slice(start, start + BULK_DELETE_CHUNK_SIZE)
       try {
-        await api.delete(`/testcases/${testcase.id}/`)
-        successCount++
+        const { data } = await bulkDeleteTestCasesApi(chunk)
+        successCount += data?.deleted ?? 0
+        failCount += data?.skipped ?? 0
       } catch (error) {
-        console.error(`Delete test case ${testcase.id} failed:`, error)
-        failCount++
+        console.error('Bulk delete chunk failed:', error)
+        failCount += chunk.length
       }
     }
 
@@ -650,8 +800,9 @@ const batchDeleteTestCases = async () => {
     }
 
     // 清空选择并重新加载列表
+    selectAllMode.value = false
     selectedTestCases.value = []
-    fetchTestCases()
+    await fetchTestCases()
 
   } catch (error) {
     if (error !== 'cancel') {
@@ -659,6 +810,7 @@ const batchDeleteTestCases = async () => {
       ElMessage.error(t('testcase.batchDeleteError') + ': ' + (error.message || t('common.error')))
     }
   } finally {
+    loadingInstance?.close()
     isDeleting.value = false
   }
 }
@@ -742,46 +894,11 @@ const exportToExcel = async () => {
   try {
     loading.value = true
 
-    // 确定要导出的数据
-    let testCasesToExport = []
-
-    if (selectedTestCases.value.length > 0) {
-      // 如果有勾选，导出勾选的数据
-      testCasesToExport = selectedTestCases.value
-    } else {
-      // 如果没有勾选，分页获取所有数据
-      const pageSize = 100  // 使用后端允许的最大值
-      let page = 1
-      let hasMore = true
-      let allData = []
-
-      while (hasMore) {
-        const response = await api.get('/testcases/', {
-          params: {
-            page: page,
-            page_size: pageSize,
-            search: searchText.value,
-            project: projectFilter.value,
-            priority: priorityFilter.value,
-            maintainer: maintainerFilter.value,
-            ...(selectedModule.value ? { module: selectedModule.value, ...(includeChildModules.value && selectedModule.value !== 'none' ? { include_children: 'true' } : {}) } : {})
-          }
-        })
-
-        const results = response.data.results || []
-        allData.push(...results)
-
-        // 检查是否还有更多数据
-        // 如果返回的数据少于pageSize，说明已经是最后一页
-        if (results.length < pageSize) {
-          hasMore = false
-        } else {
-          page++
-        }
-      }
-
-      testCasesToExport = allData
-    }
+    // 确定要导出的数据：全选模式或未勾选时，导出当前筛选条件下的全部用例
+    const useSelection = selectedTestCases.value.length > 0 && !selectAllMode.value
+    const testCasesToExport = useSelection
+      ? selectedTestCases.value
+      : await fetchAllMatchingTestCases()
 
     if (testCasesToExport.length === 0) {
       ElMessage.warning(t('testcase.noDataToExport'))
@@ -1079,15 +1196,37 @@ onMounted(async () => {
 .tree-entry-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tree-count { position: absolute; right: 8px; flex-shrink: 0; color: #909399; font-size: 12px; text-align: right; }
 .filter-bar {
-  padding: 20px;
+  padding: 0px 0px 10px 0px;
   border-bottom: 1px solid #ebeef5;
   flex-shrink: 0;
+}
+
+.filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+
+  // el-date-picker 根节点不携带 scoped 属性，需用 :deep 才能覆盖 Element 的 flex-grow
+  :deep(.filter-search) {
+    width: 200px;
+    flex: 0 0 200px;
+  }
+
+  :deep(.filter-select) {
+    width: 160px;
+    flex: 0 0 160px;
+  }
+
+  :deep(.filter-date) {
+    width: 230px;
+    flex: 0 0 230px;
+  }
 }
 
 .table-container {
   flex: 1;
   overflow: hidden;
-  padding: 0 20px;
   
   :deep(.el-table) {
     height: 100% !important;
@@ -1115,11 +1254,28 @@ onMounted(async () => {
   gap: 4px;
 }
 
-.pagination-container {
-  margin-top: 20px;
+.list-summary {
   display: flex;
-  justify-content: center;
   flex-shrink: 0;
+  align-items: center;
+  padding: 10px;
+  border-bottom: 1px solid #ebeef5;
+  font-size: 14px;
+  color: #303133;
+}
+
+.summary-text {
+  color: #303133;
+}
+
+.load-more-sentinel {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 40px;
+  font-size: 13px;
+  color: #909399;
 }
 
 .import-alert {
@@ -1164,7 +1320,7 @@ onMounted(async () => {
   }
   
   .filter-bar {
-    padding: 15px;
+    padding: 10px 15px;
   }
   
 }

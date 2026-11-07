@@ -1,4 +1,6 @@
 from django.http import FileResponse
+from django.utils.dateparse import parse_date
+from datetime import datetime, time, timedelta
 from rest_framework import generics, permissions, status, pagination
 from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
@@ -213,6 +215,49 @@ class TestCaseMoveView(APIView):
         return Response({'updated': len(case_list)})
 
 
+class TestCaseBulkDeleteView(APIView):
+    """批量删除测试用例。
+
+    一次请求可删除多条用例，避免前端逐条发起 DELETE 请求。仅删除当前用户有权访问的项目下的用例，
+    不存在或无权限的 id 会被跳过并在响应中返回数量，方便前端提示。
+    """
+
+    permission_classes = [permissions.IsAuthenticated]
+    # 单次请求允许删除的最大条数，防止超大 id 列表造成长时间锁表
+    max_batch_size = 5000
+
+    def post(self, request):
+        ids = request.data.get('testcase_ids', [])
+        if not isinstance(ids, list) or not ids:
+            return Response({'testcase_ids': '请选择至少一个用例'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            unique_ids = {int(case_id) for case_id in ids}
+        except (TypeError, ValueError):
+            return Response({'testcase_ids': '用例 ID 必须为整数'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if len(unique_ids) > self.max_batch_size:
+            return Response(
+                {'testcase_ids': f'单次最多删除 {self.max_batch_size} 条用例'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        deletable_ids = list(
+            TestCase.objects.filter(
+                pk__in=unique_ids,
+                project__in=get_user_accessible_projects(request.user),
+            ).values_list('pk', flat=True)
+        )
+        with transaction.atomic():
+            if deletable_ids:
+                TestCase.objects.filter(pk__in=deletable_ids).delete()
+
+        return Response({
+            'deleted': len(deletable_ids),
+            'skipped': len(unique_ids) - len(deletable_ids),
+        })
+
+
 def module_depth(module):
     depth = 1
     while module.parent_id:
@@ -280,6 +325,21 @@ class TestCaseListCreateView(generics.ListCreateAPIView):
         maintainer_param = self.request.query_params.get('maintainer')
         if maintainer_param and maintainer_param.isdigit():
             queryset = queryset.filter(author_id=int(maintainer_param))
+        # 按创建日期范围过滤（含首尾两天），格式 YYYY-MM-DD。
+        # 注意：不用 created_at__date，MySQL 未加载时区表时 CONVERT_TZ 会返回 NULL 导致查不到数据。
+        for param_name, lookup in (('date_from', 'gte'), ('date_to', 'lt')):
+            raw_value = self.request.query_params.get(param_name)
+            if not raw_value:
+                continue
+            try:
+                parsed_date = parse_date(raw_value)
+            except ValueError:
+                parsed_date = None
+            if not parsed_date:
+                raise serializers.ValidationError({param_name: '日期格式应为 YYYY-MM-DD'})
+            day_start = timezone.make_aware(datetime.combine(parsed_date, time.min))
+            boundary = day_start if lookup == 'gte' else day_start + timedelta(days=1)
+            queryset = queryset.filter(**{f'created_at__{lookup}': boundary})
         return queryset
 
     def list(self, request, *args, **kwargs):

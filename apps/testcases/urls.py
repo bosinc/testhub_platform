@@ -7,6 +7,7 @@ urlpatterns = [
     path('modules/reorder/', views.TestCaseModuleReorderView.as_view(), name='testcase-module-reorder'),
     path('modules/<int:pk>/', views.TestCaseModuleDetailView.as_view(), name='testcase-module-detail'),
     path('move/', views.TestCaseMoveView.as_view(), name='testcase-move'),
+    path('bulk-delete/', views.TestCaseBulkDeleteView.as_view(), name='testcase-bulk-delete'),
     path('', views.TestCaseListCreateView.as_view(), name='testcase-list'),
     path('<int:pk>/automation-options/', views.TestCaseAutomationOptionsView.as_view(), name='testcase-automation-options'),
     path('<int:pk>/automation-links/', views.TestCaseAutomationLinkView.as_view(), name='testcase-automation-links'),
