@@ -45,9 +45,13 @@
     </div>
 
     <div class="table-container">
-      <el-table :data="reviews" v-loading="loading" stripe>
+      <el-table :data="reviews" style="width: 100%" v-loading="loading" stripe>
+        <el-table-column
+          prop="id"
+          :label="$t('reviewList.id')"
+          width="60" />
         <el-table-column prop="title" :label="$t('reviewList.reviewTitle')" min-width="200" show-overflow-tooltip />
-        <el-table-column :label="$t('reviewList.reviewProject')" width="200">
+        <el-table-column :label="$t('reviewList.reviewProject')" width="140">
           <template #default="{ row }">
             <span v-if="row.projects && row.projects.length > 0">
               {{ row.projects.map(p => p.name).join(', ') }}
@@ -65,7 +69,21 @@
             <el-tag :class="`priority-tag ${row.priority}`">{{ getPriorityText(row.priority) }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="creator.username" :label="$t('reviewList.creator')" width="120" />
+        <el-table-column prop="creator.username" :label="$t('reviewList.creator')" width="100" />
+        <el-table-column :label="$t('reviewList.reviewers')" width="120">
+          <template #default="{ row }">
+            <div class="reviewer-cell">
+              <template v-if="getReviewerNames(row).length > 0">
+                <el-tag
+                  v-for="name in getReviewerNames(row)"
+                  :key="name"
+                  size="small"
+                  type="info">{{ name }}</el-tag>
+              </template>
+              <el-tag v-else size="small" type="danger">{{ $t('reviewList.noReviewer') }}</el-tag>
+            </div>
+          </template>
+        </el-table-column>
         <el-table-column :label="$t('reviewList.testcaseCount')" width="100">
           <template #default="{ row }">
             {{ row.testcases?.length || 0 }}
@@ -80,20 +98,28 @@
             />
           </template>
         </el-table-column>
-        <el-table-column prop="deadline" :label="$t('reviewList.deadline')" width="160">
+        <el-table-column prop="deadline" :label="$t('reviewList.deadline')" width="150">
           <template #default="{ row }">
             {{ row.deadline ? formatDate(row.deadline) : $t('reviewList.noDeadline') }}
           </template>
         </el-table-column>
-        <el-table-column prop="created_at" :label="$t('reviewList.createdAt')" width="160">
+        <el-table-column prop="created_at" :label="$t('reviewList.createdAt')" width="150">
           <template #default="{ row }">
             {{ formatDate(row.created_at) }}
           </template>
         </el-table-column>
-        <el-table-column :label="$t('reviewList.actions')" width="200" fixed="right">
+        <el-table-column :label="$t('reviewList.actions')" width="200" fixed="right" class-name="action-col">
           <template #default="{ row }">
             <el-button link type="primary" @click="viewReview(row.id)">{{ $t('reviewList.detail') }}</el-button>
             <el-button v-if="canReview(row)" link type="success" @click="submitReview(row)">{{ $t('reviewList.review') }}</el-button>
+            <el-tooltip
+              v-else-if="isReviewOpen(row)"
+              :content="reviewDisabledTip(row)"
+              placement="top">
+              <span class="review-disabled-trigger">
+                <el-button link type="success" disabled>{{ $t('reviewList.review') }}</el-button>
+              </span>
+            </el-tooltip>
             <el-button v-if="canEdit(row)" link type="warning" @click="editReview(row.id)">{{ $t('reviewList.edit') }}</el-button>
             <el-popconfirm
               v-if="canDelete(row)"
@@ -108,15 +134,16 @@
         </el-table-column>
       </el-table>
 
-      <div class="pagination-container">
+      <div class="pagination">
         <el-pagination
           v-model:current-page="pagination.page"
           v-model:page-size="pagination.size"
-          :total="pagination.total"
           :page-sizes="[10, 20, 50, 100]"
+          :small="false"
+          :total="pagination.total"
           layout="total, sizes, prev, pager, next, jumper"
-          @size-change="fetchReviews"
-          @current-change="fetchReviews"
+          @size-change="handleSizeChange"
+          @current-change="handleCurrentChange"
         />
       </div>
     </div>
@@ -203,6 +230,17 @@ const fetchReviews = async () => {
   } finally {
     loading.value = false
   }
+}
+
+const handleSizeChange = (val) => {
+  pagination.size = val
+  pagination.page = 1
+  fetchReviews()
+}
+
+const handleCurrentChange = (val) => {
+  pagination.page = val
+  fetchReviews()
 }
 
 const fetchProjects = async () => {
@@ -311,7 +349,25 @@ const getProgressColor = (review) => {
 }
 
 const canReview = (review) => {
-  return review.assignments?.some(a => a.reviewer.id === userStore.user?.id && a.status === 'pending')
+  return review.assignments?.some(a => a.reviewer?.id === userStore.user?.id && a.status === 'pending')
+}
+
+// 评审人用户名列表（兼容 reviewer 缺失的异常数据）
+const getReviewerNames = (review) => {
+  return (review.assignments || [])
+    .map(a => a.reviewer?.username)
+    .filter(Boolean)
+}
+
+// 评审是否还处于可提交阶段
+const isReviewOpen = (review) => ['pending', 'in_progress'].includes(review.status)
+
+// 当前用户不可评审时，说明原因
+const reviewDisabledTip = (review) => {
+  const names = getReviewerNames(review)
+  return names.length > 0
+    ? t('reviewList.reviewerOnlyTip', { names: names.join('、') })
+    : t('reviewList.noReviewerTip')
 }
 
 const canEdit = (review) => {
@@ -354,5 +410,35 @@ onMounted(() => {
   &.medium { color: #e6a23c; }
   &.high { color: #f56c6c; }
   &.urgent { color: #f56c6c; font-weight: bold; }
+}
+
+.pagination {
+  margin-top: 10px;
+  display: flex;
+  justify-content: center;
+}
+
+/* 评审人列：多个评审人换行排列 */
+.reviewer-cell {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+/* 禁用态「评审」按钮需要 span 包裹，tooltip 才能触发 */
+.review-disabled-trigger {
+  display: inline-flex;
+}
+
+/* 操作列：固定右列，按钮单行不换行且间距紧凑 */
+:deep(.action-col .cell) {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+
+  .el-button + .el-button {
+    margin-left: 0;
+  }
 }
 </style>

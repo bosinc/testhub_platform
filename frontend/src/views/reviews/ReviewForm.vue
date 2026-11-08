@@ -81,13 +81,13 @@
               </el-button>
               <span class="testcase-selection-tip">
                 {{
-                  selectedTestcases.length > 0
-                    ? $t('reviewForm.selectedTestcasesCount', { count: selectedTestcases.length })
+                  form.testcases.length > 0
+                    ? $t('reviewForm.selectedTestcasesCount', { count: form.testcases.length })
                     : $t('reviewForm.noTestcasesSelected')
                 }}
               </span>
               <el-button
-                v-if="selectedTestcases.length > 0"
+                v-if="form.testcases.length > 0"
                 link
                 type="primary"
                 @click="showTestcaseSelector"
@@ -127,72 +127,22 @@
       </el-form>
     </div>
 
-    <!-- 用例选择对话框 -->
-    <el-dialog v-model="testcaseSelectorVisible" :title="$t('reviewForm.testcaseSelectorTitle')" :close-on-click-modal="false" width="800px">
-      <div class="testcase-selector-content">
-        <el-input
-          v-model="testcaseSearchInDialog"
-          :placeholder="$t('reviewForm.searchTestcases')"
-          @input="onTestcaseSearch"
-          clearable
-        >
-          <template #prefix>
-            <el-icon><Search /></el-icon>
-          </template>
-        </el-input>
-
-        <el-table
-          ref="testcaseTableRef"
-          :data="testcases"
-          :row-key="row => row.id"
-          v-loading="testcaseLoading"
-          @select="onTestcaseSelect"
-          @select-all="onTestcaseSelectAll"
-          max-height="400"
-          class="testcase-table"
-        >
-          <el-table-column type="selection" width="55" reserve-selection />
-          <el-table-column prop="title" :label="$t('reviewForm.testcaseTitle')" min-width="200" show-overflow-tooltip />
-          <el-table-column prop="test_type" :label="$t('reviewForm.testType')" width="120" />
-          <el-table-column prop="priority" :label="$t('reviewForm.priority')" width="100">
-            <template #default="{ row }">
-              <el-tag :class="`priority-tag ${row.priority}`">{{ getPriorityText(row.priority) }}</el-tag>
-            </template>
-          </el-table-column>
-          <el-table-column :label="$t('reviewForm.author')" width="120">
-            <template #default="{ row }">
-              {{ row.author?.username }}
-            </template>
-          </el-table-column>
-        </el-table>
-
-        <div class="pagination-container">
-          <el-pagination
-            v-model:current-page="currentPage"
-            v-model:page-size="pageSize"
-            :page-sizes="[10, 20, 50, 100]"
-            :total="total"
-            layout="total, sizes, prev, pager, next, jumper"
-            @current-change="handlePageChange"
-            @size-change="handleSizeChange"
-          />
-        </div>
-      </div>
-      <template #footer>
-        <el-button @click="testcaseSelectorVisible = false">{{ $t('reviewForm.cancel') }}</el-button>
-        <el-button type="primary" @click="confirmTestcaseSelection">{{ $t('reviewForm.confirm') }}</el-button>
-      </template>
-    </el-dialog>
+    <!-- 用例选择对话框（公共组件） -->
+    <TestCaseSelectorDialog
+      v-model="testcaseSelectorVisible"
+      :projects="selectorProjects"
+      :selected-ids="form.testcases"
+      :selected-cases="selectedTestcases"
+      @confirm="onTestcaseSelected" />
   </div>
 </template>
 
 <script setup>
-import { ref, reactive, onMounted, computed, nextTick } from 'vue'
+import { ref, reactive, onMounted, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
-import { Search } from '@element-plus/icons-vue'
-import { debounce } from 'lodash-es'
+import TestCaseSelectorDialog from '@/components/TestCaseSelectorDialog.vue'
 import api from '@/utils/api'
 
 const route = useRoute()
@@ -203,23 +153,12 @@ const isEdit = computed(() => !!route.params.id)
 const formRef = ref()
 const saving = ref(false)
 const testcaseSelectorVisible = ref(false)
-const testcaseSearchInDialog = ref('')
 
 const projects = ref([])
 const projectUsers = ref([])
 const templates = ref([])
-const testcases = ref([])              // 当前页用例数据
-const selectedTestcases = ref([])      // 跨页累计选中的用例（完整对象）
-const testcaseTableRef = ref()
-
-// 用例弹框分页状态
-const currentPage = ref(1)
-const pageSize = ref(10)
-const total = ref(0)
-const testcaseLoading = ref(false)
-
-// 按 id 查已选用例，便于跨页判定与回填勾选
-const isSelected = (id) => selectedTestcases.value.some(tc => tc.id === id)
+// 已关联但可能不在候选用例列表中的用例（如已归档），透传给选择弹窗保留勾选
+const selectedTestcases = ref([])
 
 const form = reactive({
   title: '',
@@ -230,6 +169,14 @@ const form = reactive({
   testcases: [],
   reviewers: [],
   template: ''
+})
+
+// 用例选择弹窗的项目范围：[{ id, name }]
+const selectorProjects = computed(() => {
+  return (form.projects || [])
+    .map(id => projects.value.find(project => String(project.id) === String(id)))
+    .filter(Boolean)
+    .map(project => ({ id: project.id, name: project.name }))
 })
 
 const rules = computed(() => ({
@@ -259,87 +206,6 @@ const fetchProjectUsers = async () => {
     ElMessage.error(t('reviewForm.fetchUsersFailed'))
     projectUsers.value = []
   }
-}
-
-const fetchTestcases = async (projectIds) => {
-  // 未选项目则清空
-  if (!projectIds || projectIds.length === 0) {
-    testcases.value = []
-    total.value = 0
-    return
-  }
-
-  testcaseLoading.value = true
-  try {
-    const response = await api.get('/testcases/', {
-      params: {
-        project: projectIds.join(','),
-        page: currentPage.value,
-        page_size: pageSize.value,
-        search: testcaseSearchInDialog.value || undefined
-      }
-    })
-    testcases.value = response.data.results || []
-    total.value = response.data.count || 0
-    // 数据回来后回填本页中已勾选的行
-    await nextTick()
-    restoreTableSelection()
-  } catch (error) {
-    console.error('Fetch testcases failed:', error)
-  } finally {
-    testcaseLoading.value = false
-  }
-}
-
-// 回填当前页中已选中的行（跨页保留勾选状态）
-const restoreTableSelection = () => {
-  const table = testcaseTableRef.value
-  if (!table) return
-  testcases.value.forEach(tc => {
-    if (isSelected(tc.id)) {
-      table.toggleRowSelection(tc, true)
-    }
-  })
-}
-
-// 分页
-const handlePageChange = (val) => {
-  currentPage.value = val
-  fetchTestcases(form.projects)
-}
-
-const handleSizeChange = (val) => {
-  pageSize.value = val
-  currentPage.value = 1
-  fetchTestcases(form.projects)
-}
-
-// 搜索（防抖，回到第 1 页）
-const onTestcaseSearch = debounce(() => {
-  currentPage.value = 1
-  fetchTestcases(form.projects)
-}, 300)
-
-// 跨页勾选维护：单行勾选/取消
-const onTestcaseSelect = (selection, row) => {
-  if (selection.includes(row)) {
-    if (!isSelected(row.id)) selectedTestcases.value.push(row)
-  } else {
-    selectedTestcases.value = selectedTestcases.value.filter(tc => tc.id !== row.id)
-  }
-}
-
-// 跨页勾选维护：本页全选/全不选
-const onTestcaseSelectAll = (selection) => {
-  const selectedIds = new Set(selection.map(tc => tc.id))
-  // 先把本页里、但已不在 selection 的移除
-  selectedTestcases.value = selectedTestcases.value.filter(
-    tc => selectedIds.has(tc.id) || !testcases.value.some(t => t.id === tc.id)
-  )
-  // 再把本页里新选中的补上
-  selection.forEach(tc => {
-    if (!isSelected(tc.id)) selectedTestcases.value.push(tc)
-  })
 }
 
 const fetchTemplates = async (projectIds) => {
@@ -375,18 +241,12 @@ const fetchTemplates = async (projectIds) => {
 }
 
 const onProjectChange = (projectIds) => {
-  // 项目变化时重置分页与已选用例
-  currentPage.value = 1
-  testcaseSearchInDialog.value = ''
+  // 项目变化时清空已选用例（用例选择弹窗按项目范围重新加载）
   selectedTestcases.value = []
 
   if (projectIds && projectIds.length > 0) {
-    fetchTestcases(projectIds)
     fetchTemplates(projectIds)
   } else {
-    // 如果没有选择项目，清空相关数据
-    testcases.value = []
-    total.value = 0
     templates.value = []
   }
 
@@ -401,15 +261,15 @@ const showTestcaseSelector = () => {
     return
   }
   testcaseSelectorVisible.value = true
-  // 打开弹框时回到第 1 页并加载（保留已选中的用例，用于回填勾选）
-  currentPage.value = 1
-  fetchTestcases(form.projects)
 }
 
-const confirmTestcaseSelection = () => {
-  // selectedTestcases 在勾选时已实时维护，直接提交
-  form.testcases = selectedTestcases.value.map(tc => tc.id)
+// 公共选择弹窗回传已选用例 ID
+const onTestcaseSelected = (ids) => {
+  form.testcases = [...new Set(ids)]
+  // 已通过弹窗确认过一次，后续以 form.testcases 为准，避免回填的旧用例对象残留
+  selectedTestcases.value = []
   testcaseSelectorVisible.value = false
+  formRef.value?.clearValidate('testcases')
 }
 
 const onReviewersChange = () => {
@@ -475,16 +335,6 @@ const saveReview = async () => {
   }
 }
 
-const getPriorityText = (priority) => {
-  const textMap = {
-    low: t('reviewForm.priorityLow'),
-    medium: t('reviewForm.priorityMedium'),
-    high: t('reviewForm.priorityHigh'),
-    critical: t('reviewForm.priorityUrgent')
-  }
-  return textMap[priority] || priority
-}
-
 const findMatchingTemplate = (review, templateList) => {
   if (!templateList || templateList.length === 0) return null
 
@@ -542,7 +392,6 @@ const fetchReviewData = async (reviewId) => {
 
     // 加载项目相关数据
     if (form.projects.length > 0) {
-      await fetchTestcases(form.projects)
       await fetchTemplates(form.projects)
 
       // 在模板加载完成后，尝试找到匹配的模板
@@ -610,26 +459,5 @@ onMounted(async () => {
     color: #606266;
     font-size: 14px;
   }
-}
-
-.testcase-selector-content {
-  .el-input {
-    margin-bottom: 16px;
-  }
-
-  .pagination-container {
-    display: flex;
-    justify-content: flex-end;
-    align-items: center;
-    margin-top: 16px;
-    padding-top: 4px;
-  }
-}
-
-.priority-tag {
-  &.low { color: #67c23a; }
-  &.medium { color: #e6a23c; }
-  &.high { color: #f56c6c; }
-  &.critical { color: #f56c6c; font-weight: bold; }
 }
 </style>

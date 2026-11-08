@@ -124,7 +124,7 @@
         </template>
         <el-table :data="review.testcases" stripe>
           <el-table-column prop="title" :label="$t('reviewDetail.testcaseTitle')" min-width="200" show-overflow-tooltip />
-          <el-table-column :label="$t('reviewDetail.testType')" width="120">
+          <el-table-column :label="$t('reviewDetail.testType')" width="140">
             <template #default="{ row }">
               {{ getTypeText(row.test_type) }}
             </template>
@@ -135,7 +135,7 @@
             </template>
           </el-table-column>
           <el-table-column prop="author.username" :label="$t('reviewDetail.author')" width="120" />
-          <el-table-column :label="$t('reviewList.actions')" width="120">
+          <el-table-column :label="$t('reviewList.actions')" width="140" class-name="action-col">
             <template #default="{ row }">
               <el-button link type="primary" @click="viewTestcase(row.id)">{{ $t('reviewDetail.view') }}</el-button>
               <el-button link type="success" @click="addComment(row)">{{ $t('reviewDetail.comment') }}</el-button>
@@ -160,7 +160,9 @@
           >
             <div class="comment-header">
               <div class="comment-author">
-                <el-avatar :size="32" :src="comment.author.avatar" />
+                <el-avatar :size="32" :src="comment.author.avatar">
+                  <el-icon :size="18"><UserFilled /></el-icon>
+                </el-avatar>
                 <span class="author-name">{{ comment.author.username }}</span>
                 <el-tag size="small" :type="getCommentTypeColor(comment.comment_type)">
                   {{ getCommentTypeText(comment.comment_type) }}
@@ -277,7 +279,7 @@ import { ref, reactive, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
-import { Check, Close, QuestionFilled } from '@element-plus/icons-vue'
+import { Check, Close, QuestionFilled, UserFilled } from '@element-plus/icons-vue'
 import api from '@/utils/api'
 import dayjs from 'dayjs'
 import { useUserStore } from '@/stores/user'
@@ -634,7 +636,7 @@ onMounted(() => {
   &.urgent { color: #f56c6c; font-weight: bold; }
 }
 
-// 检查清单样式
+/* 检查清单样式 */
 .checklist-summary {
   .checklist-stats {
     font-size: 12px;
@@ -669,7 +671,7 @@ onMounted(() => {
   }
 }
 
-// 提交评审对话框中的检查清单样式
+/* 提交评审对话框中的检查清单样式 */
 .checklist-form-item {
   .checklist-container {
     border: 1px solid #dcdfe6;
@@ -722,6 +724,18 @@ onMounted(() => {
         }
       }
     }
+  }
+}
+
+/* 评审用例列表操作列：按钮间距紧凑、单行不换行 */
+:deep(.action-col .cell) {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+
+  .el-button + .el-button {
+    margin-left: 0;
   }
 }
 </style>

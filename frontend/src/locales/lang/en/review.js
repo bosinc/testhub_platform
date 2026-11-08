@@ -12,11 +12,14 @@ export default {
     reset: 'Reset',
 
     // Table columns
+    id: 'ID',
     reviewTitle: 'Review Title',
     reviewProject: 'Project',
     reviewStatus: 'Review Status',
     priority: 'Priority',
     creator: 'Creator',
+    reviewers: 'Reviewers',
+    noReviewer: 'Unassigned',
     testcaseCount: 'Test Cases',
     progress: 'Review Progress',
     deadline: 'Deadline',
@@ -41,6 +44,10 @@ export default {
     review: 'Review',
     edit: 'Edit',
     delete: 'Delete',
+
+    // Review permission
+    reviewerOnlyTip: 'Only assigned reviewers can review (current: {names})',
+    noReviewerTip: 'No reviewer assigned, this review cannot be submitted',
 
     // Review dialog
     submitReview: 'Submit Review',

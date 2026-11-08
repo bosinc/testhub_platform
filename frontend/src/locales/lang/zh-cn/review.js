@@ -12,11 +12,14 @@ export default {
     reset: '重置',
 
     // Table columns
+    id: 'ID',
     reviewTitle: '评审标题',
     reviewProject: '项目',
     reviewStatus: '评审状态',
     priority: '优先级',
     creator: '创建人',
+    reviewers: '评审人',
+    noReviewer: '未指派',
     testcaseCount: '用例数量',
     progress: '评审进度',
     deadline: '截止时间',
@@ -41,6 +44,10 @@ export default {
     review: '评审',
     edit: '编辑',
     delete: '删除',
+
+    // Review permission
+    reviewerOnlyTip: '仅被指派的评审人可评审（当前评审人：{names}）',
+    noReviewerTip: '该评审未指派评审人，无法提交评审',
 
     // Review dialog
     submitReview: '提交评审',
