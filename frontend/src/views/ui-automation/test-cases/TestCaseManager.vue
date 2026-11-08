@@ -1540,16 +1540,16 @@ const loadVariableFunctions = async () => {
 const useLocalVariableCategories = () => {
   variableCategories.value = [
     {
-      label: t('uiAutomation.testCase.variableCategory.randomNumber'),
+      label: t('uiAutomation.testCase.variableCategories.randomNumber'),
       variables: [
-        { name: 'random_int', syntax: '${random_int(min, max, count)}', desc: t('uiAutomation.testCase.variable.randomInt.desc'), example: '${random_int(100, 999, 1)}' },
-        { name: 'random_float', syntax: '${random_float(min, max, precision, count)}', desc: t('uiAutomation.testCase.variable.randomFloat.desc'), example: '${random_float(0, 1, 2, 1)}' }
+        { name: 'random_int', syntax: '${random_int(min, max, count)}', desc: t('uiAutomation.testCase.variables.randomIntDesc'), example: '${random_int(100, 999, 1)}' },
+        { name: 'random_float', syntax: '${random_float(min, max, precision, count)}', desc: t('uiAutomation.testCase.variables.randomFloatDesc'), example: '${random_float(0, 1, 2, 1)}' }
       ]
     },
     {
-      label: t('uiAutomation.testCase.variableCategory.randomString'),
+      label: t('uiAutomation.testCase.variableCategories.randomString'),
       variables: [
-        { name: 'random_string', syntax: '${random_string(length, char_type, count)}', desc: t('uiAutomation.testCase.variable.randomString.desc'), example: '${random_string(8, "all", 1)}' }
+        { name: 'random_string', syntax: '${random_string(length, char_type, count)}', desc: t('uiAutomation.testCase.variables.randomStringDesc'), example: '${random_string(8, "all", 1)}' }
       ]
     }
   ]
@@ -1559,7 +1559,7 @@ const useLocalVariableCategories = () => {
 const variableCategoriesComputed = computed(() => {
   return variableCategories.value.length > 0 ? variableCategories.value : [
     {
-      label: t('uiAutomation.testCase.variableCategory.randomNumber'),
+      label: t('uiAutomation.testCase.variableCategories.randomNumber'),
       variables: []
     }
   ]

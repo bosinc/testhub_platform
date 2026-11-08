@@ -239,7 +239,7 @@
           <template v-else-if="currentModule === 'configuration'">
             <el-menu-item index="/configuration/projects">
               <el-icon><FolderOpened /></el-icon>
-              <span>项目管理</span>
+              <span>{{ $t('menu.projectManagement') }}</span>
             </el-menu-item>
             <el-sub-menu index="ai-case-generation">
               <template #title>
@@ -265,7 +265,7 @@
             </el-menu-item>
             <el-menu-item index="/configuration/app-env">
               <el-icon><Cellphone /></el-icon>
-              <span>APP环境配置</span>
+              <span>{{ $t('menu.appEnvConfig') }}</span>
             </el-menu-item>
             <el-menu-item index="/configuration/ai-mode">
               <el-icon><MagicStick /></el-icon>
@@ -422,7 +422,9 @@
               <!-- 用户信息 -->
               <el-dropdown @command="handleCommand" class="user-dropdown">
                 <span class="user-info">
-                  <el-avatar :size="32" :src="userStore.user?.avatar" />
+                  <el-avatar :size="32" :src="userStore.user?.avatar">
+                    <el-icon :size="18"><UserFilled /></el-icon>
+                  </el-avatar>
                   <span class="username">{{ userStore.user?.username }}</span>
                   <el-icon><ArrowDown /></el-icon>
                 </span>
@@ -461,7 +463,7 @@ import {
   Monitor, Folder, Document, Flag, Check, Collection, VideoPlay,
   DataAnalysis, ChatDotRound, DocumentCopy, Link, MagicStick,
   Odometer, Timer, Setting, AlarmClock, Bell, Aim, Edit, Cpu, ArrowDown, Cellphone, Connection, FolderOpened, Tickets, Plus,
-  SetUp, TrendCharts, Files
+  SetUp, TrendCharts, Files, UserFilled
 } from '@element-plus/icons-vue'
 import logoSvg from '@/assets/images/logo.svg'
 import logoHomePng from '@/assets/images/logo_home.png'
@@ -693,6 +695,12 @@ const handleCommand = (command) => {
   }
 }
 
+.el-menu:not(.el-menu--collapse) :deep(.el-menu--inline .el-menu-item) {
+  padding-left: calc(
+    var(--el-menu-base-level-padding) + var(--el-menu-level) * var(--el-menu-level-padding)
+  );
+}
+
 .el-menu--collapse {
   width: 64px !important;
   
@@ -897,10 +905,11 @@ const handleCommand = (command) => {
   }
   
   .el-menu {
+    --el-menu-base-level-padding: 15px;
+
     :deep(.el-sub-menu__title),
     :deep(.el-menu-item) {
       font-size: 12px;
-      padding-left: 15px !important;
     }
   }
 }
@@ -923,10 +932,11 @@ const handleCommand = (command) => {
   }
   
   .el-menu {
+    --el-menu-base-level-padding: 12px;
+
     :deep(.el-sub-menu__title),
     :deep(.el-menu-item) {
       font-size: 12px;
-      padding-left: 12px !important;
     }
   }
   

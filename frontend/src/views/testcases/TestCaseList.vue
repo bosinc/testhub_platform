@@ -177,7 +177,7 @@
           @selection-change="handleSelectionChange"
           @select-all="handleSelectAll">
           <el-table-column type="selection" width="30" />
-          <el-table-column prop="id" :label="$t('testcase.serialNumber')" width="60" />
+          <el-table-column prop="id" :label="$t('testcase.caseId')" width="60" />
           <el-table-column prop="title" :label="$t('testcase.caseTitle')" min-width="360">
             <template #default="{ row }">
               <el-tooltip :content="row.title" placement="top" :show-after="500">
@@ -1175,7 +1175,7 @@ onMounted(async () => {
 
 .resizable-split-pane { flex: 1; min-height: 0; }
 .module-sidebar { width: 100%; height: 100%; display: flex; flex-direction: column; overflow: hidden; border-right: 1px solid #e4e7ed; background: #fff; box-shadow: 2px 0 6px rgba(0, 0, 0, 0.05); }
-.sidebar-header { display: flex; flex-direction: column; gap: 12px; padding: 16px; border-bottom: 1px solid #e4e7ed; background: #f8f9fa; }
+.sidebar-header { display: flex; flex-direction: column; gap: 12px; padding: 16px; border-bottom: 1px solid #e4e7ed; background: #fff; }
 .sidebar-title-row { display: flex; align-items: center; gap: 8px; }
 .sidebar-title-row .el-input { flex: 1; min-width: 0; }
 .sidebar-title-row .el-button { flex: 0 0 36px; width: 36px; }

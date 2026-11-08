@@ -181,6 +181,9 @@ export default {
     createSuccess: 'Project created',
     updateSuccess: 'Project updated',
     deleteSuccess: 'Project deleted',
+    loadFailed: 'Failed to load projects',
+    saveFailed: 'Failed to save',
+    deleteFailed: 'Failed to delete',
     deleteConfirm: 'Deleting a project also deletes all its scenarios, executions and artifacts. Continue?'
   },
 

@@ -146,7 +146,7 @@ import { Plus, Search } from '@element-plus/icons-vue'
 import { getAppProjects, createAppProject, updateAppProject, deleteAppProject } from '@/api/app-automation.js'
 import { useI18n } from 'vue-i18n'
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 
 const loading = ref(false)
 const submitting = ref(false)
@@ -259,7 +259,7 @@ function getStatusText(status) {
 
 function formatDateTime(dt) {
   if (!dt) return '-'
-  return new Date(dt).toLocaleString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+  return new Date(dt).toLocaleString(locale.value === 'zh-cn' ? 'zh-CN' : 'en-US', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
 }
 </script>
 

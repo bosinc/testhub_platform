@@ -73,6 +73,7 @@ export default {
     aiModelConfig: 'AI Test Case Model Config',
     generationConfig: 'Generation Behavior Config',
     uiEnvConfig: 'UI Environment Configuration',
+    appEnvConfig: 'APP Environment Configuration',
     aiModeConfig: 'AI Mode Configuration',
     scheduledTaskConfig: 'Scheduled Task Configuration',
     difyConfig: 'Dify Configuration',

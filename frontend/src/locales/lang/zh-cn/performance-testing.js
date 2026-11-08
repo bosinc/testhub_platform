@@ -181,6 +181,9 @@ export default {
     createSuccess: '项目创建成功',
     updateSuccess: '项目更新成功',
     deleteSuccess: '项目删除成功',
+    loadFailed: '加载项目列表失败',
+    saveFailed: '保存失败',
+    deleteFailed: '删除失败',
     deleteConfirm: '删除项目会同时删除其下所有场景、执行记录与产物，确定继续吗？'
   },
 

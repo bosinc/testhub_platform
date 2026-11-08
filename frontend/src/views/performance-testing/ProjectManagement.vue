@@ -120,7 +120,7 @@ async function load() {
     list.value = res.data.results || res.data || []
     total.value = res.data.count || list.value.length
   } catch (e) {
-    ElMessage.error('加载项目列表失败')
+    ElMessage.error(t('performanceTesting.project.loadFailed'))
   } finally {
     loading.value = false
   }
@@ -164,15 +164,15 @@ async function save() {
     const payload = { ...form.value }
     if (editingId.value) {
       await updatePerfProject(editingId.value, payload)
-      ElMessage.success(t('performanceTesting.project.updateSuccess') || '更新成功')
+      ElMessage.success(t('performanceTesting.project.updateSuccess'))
     } else {
       await createPerfProject(payload)
-      ElMessage.success(t('performanceTesting.project.createSuccess') || '创建成功')
+      ElMessage.success(t('performanceTesting.project.createSuccess'))
     }
     dialogVisible.value = false
     await load()
   } catch (e) {
-    const msg = e?.response?.data?.name?.[0] || e?.response?.data?.error || '保存失败'
+    const msg = e?.response?.data?.name?.[0] || e?.response?.data?.error || t('performanceTesting.project.saveFailed')
     ElMessage.error(msg)
   } finally {
     saving.value = false
@@ -185,10 +185,10 @@ function remove(row) {
   }).then(async () => {
     try {
       await deletePerfProject(row.id)
-      ElMessage.success(t('performanceTesting.project.deleteSuccess') || '删除成功')
+      ElMessage.success(t('performanceTesting.project.deleteSuccess'))
       await load()
     } catch (e) {
-      const msg = e?.response?.data?.error || '删除失败'
+      const msg = e?.response?.data?.error || t('performanceTesting.project.deleteFailed')
       ElMessage.error(msg)
     }
   }).catch(() => {})

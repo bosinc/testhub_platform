@@ -226,5 +226,66 @@ export default {
       saveFailedDetail: '保存失败: {error}',
       deleteFailedDetail: '删除失败: {error}'
     }
+  },
+
+  // 配置中心 - 项目管理
+  projectCenter: {
+    title: '项目列表',
+    subtitle: '统一管理项目和已关联的测试模块',
+    createProject: '创建项目',
+    panelTitle: '项目列表',
+    search: '搜索',
+    module: '模块',
+    members: '成员',
+    totalProjects: '项目总数',
+    modules: {
+      aiGeneration: 'AI用例生成',
+      aiTesting: 'AI智能测试',
+      api: 'API测试',
+      ui: 'UI自动化',
+      app: 'APP自动化',
+      perf: '性能测试'
+    },
+    status: {
+      active: '进行中',
+      paused: '暂停',
+      completed: '已完成',
+      archived: '已归档'
+    },
+    dialog: {
+      createTitle: '创建项目',
+      editTitle: '编辑项目',
+      basicInfo: '基本信息',
+      projectStatus: '项目状态',
+      projectMembers: '项目成员',
+      membersPlaceholder: '选择可共享项目资源的成员',
+      projectTypes: '项目类型',
+      projectTypesHint: '可多选，创建后将自动出现在对应模块的项目管理页面',
+      selected: '已选择',
+      select: '选择',
+      apiConfig: 'API测试配置',
+      uiConfig: 'UI自动化配置',
+      uiBaseUrlPlaceholder: '基础URL，例如 http://localhost',
+      perfConfig: '性能测试配置',
+      perfHint: '创建后可在性能测试模块继续配置默认环境',
+      saveChanges: '保存修改'
+    },
+    memberDialog: {
+      title: '项目成员',
+      addTitle: '添加成员',
+      remove: '移除',
+      owner: '负责人',
+      confirm: '确定'
+    },
+    messages: {
+      tip: '提示',
+      loadFailed: '项目加载失败',
+      membersLoadFailed: '项目成员加载失败',
+      memberRemoveConfirm: '确定移除成员“{name}”吗？',
+      memberRemoveSuccess: '成员已移除',
+      memberRemoveFailed: '成员移除失败',
+      saveFailed: '项目保存失败',
+      deleteConfirm: '确定删除项目“{name}”吗？删除后可通过恢复机制处理关联数据。'
+    }
   }
 }

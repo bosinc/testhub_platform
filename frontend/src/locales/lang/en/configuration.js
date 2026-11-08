@@ -226,5 +226,66 @@ export default {
       saveFailedDetail: 'Failed to save: {error}',
       deleteFailedDetail: 'Failed to delete: {error}'
     }
+  },
+
+  // Configuration Center - Project Management
+  projectCenter: {
+    title: 'Project List',
+    subtitle: 'Manage projects and their linked test modules in one place',
+    createProject: 'Create Project',
+    panelTitle: 'Project List',
+    search: 'Search',
+    module: 'Modules',
+    members: 'Members',
+    totalProjects: 'Total Projects',
+    modules: {
+      aiGeneration: 'AI Case Generation',
+      aiTesting: 'AI Intelligent Testing',
+      api: 'API Testing',
+      ui: 'UI Automation',
+      app: 'APP Automation',
+      perf: 'Performance Testing'
+    },
+    status: {
+      active: 'In Progress',
+      paused: 'Paused',
+      completed: 'Completed',
+      archived: 'Archived'
+    },
+    dialog: {
+      createTitle: 'Create Project',
+      editTitle: 'Edit Project',
+      basicInfo: 'Basic Information',
+      projectStatus: 'Project Status',
+      projectMembers: 'Project Members',
+      membersPlaceholder: 'Select members who can share project resources',
+      projectTypes: 'Project Types',
+      projectTypesHint: 'Multiple selections allowed; the project will appear in the corresponding module page after creation',
+      selected: 'Selected',
+      select: 'Select',
+      apiConfig: 'API Testing Config',
+      uiConfig: 'UI Automation Config',
+      uiBaseUrlPlaceholder: 'Base URL, e.g. http://localhost',
+      perfConfig: 'Performance Testing Config',
+      perfHint: 'Default environments can be configured in the Performance Testing module after creation',
+      saveChanges: 'Save Changes'
+    },
+    memberDialog: {
+      title: 'Project Members',
+      addTitle: 'Add Member',
+      remove: 'Remove',
+      owner: 'Owner',
+      confirm: 'Confirm'
+    },
+    messages: {
+      tip: 'Notice',
+      loadFailed: 'Failed to load projects',
+      membersLoadFailed: 'Failed to load project members',
+      memberRemoveConfirm: 'Remove member "{name}" from this project?',
+      memberRemoveSuccess: 'Member removed',
+      memberRemoveFailed: 'Failed to remove member',
+      saveFailed: 'Failed to save project',
+      deleteConfirm: 'Delete project "{name}"? Related data can be handled by the recovery mechanism after deletion.'
+    }
   }
 }

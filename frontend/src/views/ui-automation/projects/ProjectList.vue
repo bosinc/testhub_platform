@@ -100,20 +100,20 @@
             <el-option :label="$t('uiAutomation.status.completed')" value="COMPLETED" />
           </el-select>
         </el-form-item>
-        <el-form-item label="基础URL" prop="base_url">
+        <el-form-item :label="$t('uiAutomation.project.baseUrl')" prop="base_url">
           <el-input 
             v-model="createForm.base_url" 
-            placeholder="请输入基础URL（如：https://www.example.com）"
+            :placeholder="$t('uiAutomation.project.baseUrlPlaceholder')"
           >
             <template #prepend>
-              <el-select v-model="urlProtocol" placeholder="协议" style="width: 100px">
+              <el-select v-model="urlProtocol" :placeholder="$t('uiAutomation.project.protocol')" style="width: 100px">
                 <el-option label="https://" value="https://" />
                 <el-option label="http://" value="http://" />
               </el-select>
             </template>
           </el-input>
           <div style="color: #909399; font-size: 12px; margin-top: 4px;">
-            提示：请输入完整的URL地址，包含协议（http:// 或 https://）
+            {{ $t('uiAutomation.project.baseUrlHint') }}
           </div>
         </el-form-item>
         <el-form-item :label="$t('uiAutomation.project.startDate')" prop="start_date">
@@ -147,20 +147,20 @@
             <el-option :label="$t('uiAutomation.status.completed')" value="COMPLETED" />
           </el-select>
         </el-form-item>
-        <el-form-item label="基础URL" prop="base_url">
+        <el-form-item :label="$t('uiAutomation.project.baseUrl')" prop="base_url">
           <el-input 
             v-model="editForm.base_url" 
-            placeholder="请输入基础URL（如：https://www.example.com）"
+            :placeholder="$t('uiAutomation.project.baseUrlPlaceholder')"
           >
             <template #prepend>
-              <el-select v-model="editUrlProtocol" placeholder="协议" style="width: 100px">
+              <el-select v-model="editUrlProtocol" :placeholder="$t('uiAutomation.project.protocol')" style="width: 100px">
                 <el-option label="https://" value="https://" />
                 <el-option label="http://" value="http://" />
               </el-select>
             </template>
           </el-input>
           <div style="color: #909399; font-size: 12px; margin-top: 4px;">
-            提示：请输入完整的URL地址，包含协议（http:// 或 https://）
+            {{ $t('uiAutomation.project.baseUrlHint') }}
           </div>
         </el-form-item>
         <el-form-item :label="$t('uiAutomation.project.startDate')" prop="start_date">
@@ -216,7 +216,7 @@ import { Plus, Search, View, Edit, Delete } from '@element-plus/icons-vue'
 import { getUiProjects, createUiProject, updateUiProject, deleteUiProject } from '@/api/ui_automation'
 import { useI18n } from 'vue-i18n'
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 
 // 项目数据
 const projects = ref([])
@@ -268,20 +268,20 @@ const formRules = computed(() => ({
     { min: 2, max: 200, message: t('uiAutomation.project.rules.nameLength'), trigger: 'blur' }
   ],
   base_url: [
-    { required: true, message: '请输入基础URL', trigger: 'blur' },
+    { required: true, message: t('uiAutomation.project.rules.baseUrlRequired'), trigger: 'blur' },
     { 
       validator: (rule, value, callback) => {
         if (!value) {
-          callback(new Error('请输入基础URL'))
+          callback(new Error(t('uiAutomation.project.rules.baseUrlRequired')))
         } else if (!value.startsWith('http://') && !value.startsWith('https://')) {
-          callback(new Error('URL必须以 http:// 或 https:// 开头'))
+          callback(new Error(t('uiAutomation.project.rules.baseUrlProtocol')))
         } else {
           // 简单的URL格式验证
           try {
             new URL(value)
             callback()
           } catch (e) {
-            callback(new Error('请输入有效的URL格式'))
+            callback(new Error(t('uiAutomation.project.rules.baseUrlInvalid')))
           }
         }
       }, 
@@ -293,7 +293,7 @@ const formRules = computed(() => ({
 // 格式化日期
 const formatDate = (row, column, cellValue) => {
   if (!cellValue) return ''
-  return new Date(cellValue).toLocaleString('zh-CN', {
+  return new Date(cellValue).toLocaleString(locale.value === 'zh-cn' ? 'zh-CN' : 'en-US', {
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
@@ -479,7 +479,7 @@ const handleCreate = async () => {
     
     loadProjects()
   } catch (error) {
-    ElMessage.error(error.response?.data?.base_url?.[0] || error.response?.data?.detail || '项目创建失败')
+    ElMessage.error(error.response?.data?.base_url?.[0] || error.response?.data?.detail || t('uiAutomation.project.messages.createFailed'))
     console.error('创建项目失败:', error)
   }
 }
@@ -510,7 +510,7 @@ const handleEdit = async () => {
     showEditDialog.value = false
     loadProjects()
   } catch (error) {
-    ElMessage.error(error.response?.data?.base_url?.[0] || error.response?.data?.detail || '项目更新失败')
+    ElMessage.error(error.response?.data?.base_url?.[0] || error.response?.data?.detail || t('uiAutomation.project.messages.updateFailed'))
     console.error('更新项目失败:', error)
   }
 }

@@ -72,6 +72,7 @@ export default {
     aiModelConfig: 'AI用例模型配置',
     generationConfig: '生成行为配置',
     uiEnvConfig: 'UI环境配置',
+    appEnvConfig: 'APP环境配置',
     aiModeConfig: 'AI智能模式配置',
     scheduledTaskConfig: '定时任务配置',
     difyConfig: 'AI评测师配置',
