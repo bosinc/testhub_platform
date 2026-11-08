@@ -1,4 +1,7 @@
+from collections import Counter
+
 from django.db import models
+from django.db.models import Count
 from django.utils import timezone
 from apps.users.models import User
 from apps.projects.models import Project
@@ -56,17 +59,22 @@ class TestRun(models.Model):
     @property
     def progress_stats(self):
         """执行进度统计"""
-        total = self.run_cases.count()
-        if total == 0:
-            return {'total': 0, 'untested': 0, 'passed': 0, 'failed': 0, 'blocked': 0, 'retest': 0, 'progress': 0}
-        
+        prefetched = getattr(self, '_prefetched_objects_cache', {}).get('run_cases')
+        if prefetched is not None:
+            counts = Counter(run_case.status for run_case in prefetched)
+            total = len(prefetched)
+        else:
+            rows = self.run_cases.values('status').annotate(count=Count('id'))
+            counts = {row['status']: row['count'] for row in rows}
+            total = sum(counts.values())
+
         stats = {
             'total': total,
-            'untested': self.run_cases.filter(status='untested').count(),
-            'passed': self.run_cases.filter(status='passed').count(),
-            'failed': self.run_cases.filter(status='failed').count(),
-            'blocked': self.run_cases.filter(status='blocked').count(),
-            'retest': self.run_cases.filter(status='retest').count(),
+            'untested': counts.get('untested', 0),
+            'passed': counts.get('passed', 0),
+            'failed': counts.get('failed', 0),
+            'blocked': counts.get('blocked', 0),
+            'retest': counts.get('retest', 0),
         }
         stats['tested'] = stats['passed'] + stats['failed'] + stats['blocked'] + stats['retest']
         stats['progress'] = round((stats['tested'] / total) * 100, 1) if total > 0 else 0

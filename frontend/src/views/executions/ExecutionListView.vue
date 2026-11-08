@@ -20,15 +20,15 @@
 
     <div class="filter-bar">
       <el-form :inline="true">
-        <el-form-item :label="$t('execution.project')">
+        <el-form-item :label="$t('execution.projects')">
           <el-select v-model="filters.project" :placeholder="$t('execution.selectProject')" clearable style="width: 200px">
             <el-option v-for="item in projects" :key="item.id" :label="item.name" :value="item.id"></el-option>
           </el-select>
         </el-form-item>
         <el-form-item :label="$t('execution.status')">
           <el-select v-model="filters.is_active" :placeholder="$t('execution.selectStatus')" clearable style="width: 120px">
-            <el-option :label="$t('execution.filterActive')" :value="true"></el-option>
-            <el-option :label="$t('execution.filterClosed')" :value="false"></el-option>
+            <el-option :label="$t('execution.active')" :value="true"></el-option>
+            <el-option :label="$t('execution.closed')" :value="false"></el-option>
           </el-select>
         </el-form-item>
         <el-form-item>
@@ -235,11 +235,11 @@
             <el-option v-for="item in users" :key="item.id" :label="item.username" :value="item.id"></el-option>
           </el-select>
         </el-form-item>
-        <el-form-item :label="$t('execution.planStatus')">
+        <el-form-item :label="$t('execution.status')">
           <el-switch
             v-model="editPlanForm.is_active"
-            :active-text="$t('execution.activeText')"
-            :inactive-text="$t('execution.inactiveText')">
+            :active-text="$t('execution.active')"
+            :inactive-text="$t('execution.closed')">
           </el-switch>
         </el-form-item>
       </el-form>
@@ -251,117 +251,11 @@
       </template>
     </el-dialog>
 
-    <el-dialog
+    <TestCaseSelectorDialog
       v-model="testcaseSelectorVisible"
-      :title="$t('execution.testcaseSelectorTitle')"
-      width="min(1200px, 96vw)"
-      class="testcase-selector-dialog"
-      :close-on-click-modal="false"
-    >
-      <ResizableSplitPane v-model="testcaseSelectorSidebarWidth" :min-size="200" :max-size="380" :second-min-size="520" storage-key="execution-testcase-selector-sidebar-width" class="testcase-selector-container">
-        <template #first>
-        <aside class="testcase-library-panel">
-          <div class="testcase-library-header">
-            <strong>{{ $t('execution.testcaseLibrary') }}</strong>
-            <el-input v-model="testcaseLibrarySearch" size="small" clearable :placeholder="$t('testcase.searchModules')">
-              <template #prefix><el-icon><Search /></el-icon></template>
-            </el-input>
-          </div>
-          <div class="testcase-library-tree">
-            <div class="testcase-library-node tree-root" :class="{ active: testcaseLibrarySelection.id === '__all__' }" @click="selectTestcaseLibraryNode({ id: '__all__', type: 'all' })">
-              <el-icon><FolderOpened /></el-icon>
-              <span class="testcase-library-node-name">{{ $t('testcase.allCases') }}</span>
-              <span class="testcase-library-count">{{ filteredTestcases.length }}</span>
-            </div>
-          <el-tree
-            ref="testcaseLibraryTreeRef"
-            :data="filteredTestcaseLibraryTree"
-            :props="{ label: 'label', children: 'children' }"
-            node-key="id"
-            default-expand-all
-            highlight-current
-            :expand-on-click-node="false"
-            :current-node-key="testcaseLibrarySelection.id"
-            @node-click="selectTestcaseLibraryNode"
-          >
-            <template #default="{ node, data }">
-              <div class="testcase-library-node" :class="{ active: testcaseLibrarySelection.id === data.id }">
-                <el-icon><component :is="data.type === 'all' || data.type === 'project' ? FolderOpened : Folder" /></el-icon>
-                <span class="testcase-library-node-name" :title="node.label">{{ node.label }}</span>
-                <span class="testcase-library-count">{{ data.count }}</span>
-              </div>
-            </template>
-          </el-tree>
-          <el-empty v-if="testcaseLibrarySearch.trim() && !filteredTestcaseLibraryTree.length" :description="$t('testcase.noModulesFound')" :image-size="60" />
-          </div>
-        </aside>
-        </template>
-        <template #second>
-        <section class="testcase-library-list">
-          <div class="testcase-search-bar">
-            <el-form :inline="true">
-              <el-form-item :label="$t('execution.testcaseKeyword')">
-                <el-input v-model="testcaseSelectorFilters.keyword" :placeholder="$t('execution.testcaseKeywordPlaceholder')" clearable style="width: 200px" />
-              </el-form-item>
-              <el-form-item :label="$t('execution.testcasePriority')">
-                <el-select v-model="testcaseSelectorFilters.priority" clearable style="width: 130px">
-                  <el-option :label="$t('execution.allPriorities')" value="" />
-                  <el-option :label="$t('testcase.low')" value="low" />
-                  <el-option :label="$t('testcase.medium')" value="medium" />
-                  <el-option :label="$t('testcase.high')" value="high" />
-                  <el-option :label="$t('testcase.critical')" value="critical" />
-                </el-select>
-              </el-form-item>
-              <el-form-item :label="$t('execution.testcaseType')">
-                <el-select v-model="testcaseSelectorFilters.test_type" clearable style="width: 150px">
-                  <el-option :label="$t('execution.allTypes')" value="" />
-                  <el-option :label="$t('testcase.functional')" value="functional" />
-                  <el-option :label="$t('testcase.integration')" value="integration" />
-                  <el-option :label="$t('testcase.api')" value="api" />
-                  <el-option :label="$t('testcase.ui')" value="ui" />
-                  <el-option :label="$t('testcase.performance')" value="performance" />
-                  <el-option :label="$t('testcase.security')" value="security" />
-                </el-select>
-              </el-form-item>
-              <el-form-item>
-                <el-button @click="resetTestcaseSelectorFilters">{{ $t('execution.resetSearch') }}</el-button>
-              </el-form-item>
-            </el-form>
-          </div>
-          <div class="testcase-selector-table">
-            <el-table
-              ref="testcaseSelectorTableRef"
-              :data="testcaseSelectorList"
-              v-loading="loadingTestcases"
-              @selection-change="handleTestcaseSelectorSelectionChange"
-              row-key="id"
-              height="100%"
-            >
-              <el-table-column type="selection" width="55" :reserve-selection="true" />
-              <el-table-column :label="$t('execution.testcaseCode')" width="90">
-                <template #default="{ row }">{{ row.id }}</template>
-              </el-table-column>
-              <el-table-column prop="title" :label="$t('execution.testcaseTitle')" min-width="260" show-overflow-tooltip />
-              <el-table-column prop="priority" :label="$t('execution.testcasePriority')" width="120">
-                <template #default="{ row }"><el-tag :class="`priority-tag ${row.priority}`">{{ getTestcasePriorityText(row.priority) }}</el-tag></template>
-              </el-table-column>
-              <el-table-column prop="test_type" :label="$t('execution.testcaseType')" width="140">
-                <template #default="{ row }">{{ getTestcaseTypeText(row.test_type) }}</template>
-              </el-table-column>
-            </el-table>
-          </div>
-        </section>
-        </template>
-      </ResizableSplitPane>
-      <template #footer>
-        <span class="dialog-footer">
-          <el-button @click="testcaseSelectorVisible = false">{{ $t('common.cancel') }}</el-button>
-          <el-button type="primary" @click="confirmTestcaseSelection">
-            {{ $t('execution.confirmSelectTestcases', { count: testcaseTempSelectedIds.length }) }}
-          </el-button>
-        </span>
-      </template>
-    </el-dialog>
+      :projects="testcaseSelectorProjects"
+      :selected-ids="testcaseTempSelectedIds"
+      @confirm="handleTestcaseSelectorConfirm" />
   </div>
 </template>
 
@@ -370,8 +264,8 @@ import { ref, reactive, onMounted, watch, computed, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Delete, Folder, FolderOpened, Search } from '@element-plus/icons-vue'
-import ResizableSplitPane from '@/components/ResizableSplitPane.vue'
+import { Plus, Delete } from '@element-plus/icons-vue'
+import TestCaseSelectorDialog from '@/components/TestCaseSelectorDialog.vue'
 import api from '@/utils/api'
 
 const { t } = useI18n()
@@ -383,28 +277,14 @@ const updating = ref(false)
 const testPlans = ref([])
 const projects = ref([])
 const versions = ref([])
-const testcases = ref([])
-const filteredTestcases = ref([])
-const loadingTestcases = ref(false)
 const users = ref([])
 const selectedPlans = ref([])
 const isDeleting = ref(false)
 const testcaseSelectorVisible = ref(false)
 const testcaseSelectorMode = ref('create')
-const testcaseSelectorTableRef = ref()
-const testcaseSelectorSidebarWidth = ref(250)
-const testcaseSelectorModuleTrees = ref([])
-const testcaseLibraryTreeRef = ref()
-const testcaseLibrarySearch = ref('')
-const testcaseLibrarySelection = ref({ id: '', type: 'all' })
 const testcaseTempSelectedIds = ref([])
-const isSyncingTestcaseSelectorSelection = ref(false)
-const testcaseSelectorFilters = reactive({
-  keyword: '',
-  priority: '',
-  test_type: ''
-})
-
+// 回填编辑表单时屏蔽“项目变更清空已选用例”的监听
+const suppressProjectWatch = ref(false)
 // 分页
 const currentPage = ref(1)
 const pageSize = ref(20)
@@ -511,250 +391,44 @@ const fetchBasicData = async () => {
   }
 }
 
-// 根据选中的项目加载测试用例
-const loadTestcasesByProjects = async (projectIds) => {
-  if (!projectIds || projectIds.length === 0) {
-    filteredTestcases.value = []
-    return
-  }
-
-  loadingTestcases.value = true
-
-  try {
-    const params = new URLSearchParams()
-    projectIds.forEach(id => params.append('project_ids', id))
-
-    console.log('API URL:', `/executions/plans/testcases_by_projects/?${params.toString()}`)
-
-    const response = await api.get(`/executions/plans/testcases_by_projects/?${params.toString()}`)
-    console.log('API Response:', response.data)
-
-    filteredTestcases.value = response.data.results || []
-    console.log('Filtered testcases:', filteredTestcases.value)
-  } catch (error) {
-    console.error('Load testcases error:', error)
-    if (error.response?.status === 400) {
-      ElMessage.warning(error.response.data.detail || t('execution.selectProjectFirst'))
-    } else if (error.response?.status === 401) {
-      ElMessage.error(t('auth.loginFailed'))
-    } else {
-      ElMessage.error(t('execution.fetchTestcasesFailed') + ': ' + (error.response?.data?.detail || error.message))
-    }
-    filteredTestcases.value = []
-  } finally {
-    loadingTestcases.value = false
-  }
-}
-
 // 处理项目选择变化
-const handleProjectChange = (selectedProjects) => {
+const handleProjectChange = () => {
   // 清空已选择的测试用例
   newPlanForm.testcases = []
-  
-  // 加载新项目的测试用例
-  if (selectedProjects && selectedProjects.length > 0) {
-    loadTestcasesByProjects(selectedProjects)
-  } else {
-    filteredTestcases.value = []
-  }
-}
-
-const testcaseSelectorList = computed(() => {
-  let scopedTestcases = filteredTestcases.value
-  const selection = testcaseLibrarySelection.value
-  if (selection.type === 'project') {
-    scopedTestcases = scopedTestcases.filter(item => String(item.project_id) === String(selection.projectId))
-  } else if (selection.type === 'module') {
-    const moduleIds = new Set(selection.moduleIds.map(String))
-    scopedTestcases = scopedTestcases.filter(item => moduleIds.has(String(item.module_id)))
-  } else if (selection.type === 'unassigned') {
-    scopedTestcases = scopedTestcases.filter(item => !item.module_id)
-  }
-
-  return scopedTestcases.filter(item => {
-    const keyword = testcaseSelectorFilters.keyword.trim().toLowerCase()
-    const matchKeyword = !keyword || item.title?.toLowerCase().includes(keyword)
-    const matchPriority = !testcaseSelectorFilters.priority || item.priority === testcaseSelectorFilters.priority
-    const matchType = !testcaseSelectorFilters.test_type || item.test_type === testcaseSelectorFilters.test_type
-    return matchKeyword && matchPriority && matchType
-  })
-})
-
-const filteredTestcaseLibraryTree = computed(() => {
-  const keyword = testcaseLibrarySearch.value.trim().toLowerCase()
-  if (!keyword) return testcaseSelectorModuleTrees.value
-
-  const filterModules = (nodes) => nodes.reduce((matches, item) => {
-    const children = filterModules(item.children || [])
-    if (item.label.toLowerCase().includes(keyword) || children.length) {
-      matches.push({ ...item, children })
-    }
-    return matches
-  }, [])
-
-  return testcaseSelectorModuleTrees.value.map(project => ({
-    ...project,
-    children: filterModules(project.children)
-  })).filter(project => project.children.length)
-})
-
-const buildTestcaseLibraryTree = (projectsList, modulesByProject, testcaseList) => {
-  const buildModuleNodes = (nodes, projectId) => nodes.map(module => {
-    const children = buildModuleNodes(module.children || [], projectId)
-    const descendantIds = [module.id, ...children.flatMap(child => child.moduleIds)]
-    return {
-      id: `module-${projectId}-${module.id}`,
-      type: 'module',
-      label: module.name,
-      count: testcaseList.filter(item => String(item.project_id) === String(projectId) && descendantIds.includes(item.module_id)).length,
-      moduleIds: descendantIds,
-      children
-    }
-  })
-
-  return projectsList.map(project => {
-    const projectCases = testcaseList.filter(item => String(item.project_id) === String(project.id))
-    const moduleNodes = buildModuleNodes(modulesByProject[project.id] || [], project.id)
-    const projectNode = {
-      id: `project-${project.id}`,
-      type: 'project',
-      projectId: project.id,
-      label: project.name,
-      count: projectCases.length,
-      children: [
-        ...moduleNodes,
-        {
-          id: `unassigned-${project.id}`,
-          type: 'unassigned',
-          projectId: project.id,
-          label: t('testcase.noModule'),
-          count: projectCases.filter(item => !item.module_id).length,
-          children: []
-        }
-      ]
-    }
-    return projectNode
-  })
-}
-
-const selectTestcaseLibraryNode = (data) => {
-  const selectedNode = data.type === 'module'
-    ? findTestcaseModuleNode(testcaseSelectorModuleTrees.value, data.id)
-    : null
-  testcaseLibrarySelection.value = {
-    id: data.type === 'all' ? '__all__' : data.id,
-    type: data.type,
-    projectId: data.projectId,
-    moduleIds: selectedNode?.moduleIds || []
-  }
-}
-
-const findTestcaseModuleNode = (nodes, id) => {
-  for (const node of nodes) {
-    if (node.id === id) return node
-    const found = findTestcaseModuleNode(node.children || [], id)
-    if (found) return found
-  }
-  return null
 }
 
 const getCurrentPlanForm = () => (
   testcaseSelectorMode.value === 'edit' ? editPlanForm : newPlanForm
 )
 
-const syncDialogTableSelection = async () => {
-  await nextTick()
-  if (!testcaseSelectorTableRef.value) return
-  isSyncingTestcaseSelectorSelection.value = true
-  try {
-    testcaseSelectorTableRef.value.clearSelection()
-    testcaseSelectorList.value.forEach(item => {
-      if (testcaseTempSelectedIds.value.includes(item.id)) {
-        testcaseSelectorTableRef.value.toggleRowSelection(item, true)
-      }
-    })
-    await nextTick()
-  } finally {
-    isSyncingTestcaseSelectorSelection.value = false
-  }
-}
+// 用例选择弹窗的项目范围
+const testcaseSelectorProjects = computed(() => {
+  const currentForm = getCurrentPlanForm()
+  return (currentForm.projects || [])
+    .map(id => projects.value.find(project => String(project.id) === String(id)))
+    .filter(Boolean)
+    .map(project => ({ id: project.id, name: project.name }))
+})
 
-const openTestcaseSelector = async (mode) => {
+const openTestcaseSelector = (mode) => {
   testcaseSelectorMode.value = mode
   const currentForm = getCurrentPlanForm()
   if (!currentForm.projects || currentForm.projects.length === 0) {
     ElMessage.warning(t('execution.selectProjectBeforeOpenTestcases'))
     return
   }
-
-  await loadTestcasesByProjects(currentForm.projects)
-  const selectedProjects = projects.value.filter(project => currentForm.projects.map(String).includes(String(project.id)))
-  let moduleResponses
-  try {
-    moduleResponses = await Promise.all(selectedProjects.map(project => api.get('/testcases/modules/', { params: { project: project.id } })))
-  } catch (error) {
-    ElMessage.error(t('testcase.fetchModulesFailed'))
-    return
-  }
-  const modulesByProject = Object.fromEntries(selectedProjects.map((project, index) => [project.id, moduleResponses[index].data || []]))
-  testcaseSelectorModuleTrees.value = buildTestcaseLibraryTree(selectedProjects, modulesByProject, filteredTestcases.value)
-  testcaseLibrarySelection.value = { id: '__all__', type: 'all' }
-  testcaseLibrarySearch.value = ''
-
   testcaseTempSelectedIds.value = [...currentForm.testcases]
   testcaseSelectorVisible.value = true
-  await syncDialogTableSelection()
 }
 
-const handleTestcaseSelectorSelectionChange = (selection) => {
-  if (isSyncingTestcaseSelectorSelection.value) {
-    return
-  }
-  const visibleIds = testcaseSelectorList.value.map(item => item.id)
-  const hiddenSelectedIds = testcaseTempSelectedIds.value.filter(id => !visibleIds.includes(id))
-  testcaseTempSelectedIds.value = [
-    ...hiddenSelectedIds,
-    ...selection.map(item => item.id)
-  ]
-}
-
-const confirmTestcaseSelection = () => {
+const handleTestcaseSelectorConfirm = (testcaseIds) => {
   const currentForm = getCurrentPlanForm()
-  currentForm.testcases = [...new Set(testcaseTempSelectedIds.value)]
+  currentForm.testcases = [...new Set(testcaseIds)]
   testcaseSelectorVisible.value = false
   nextTick(() => {
     const formRef = testcaseSelectorMode.value === 'edit' ? editPlanFormRef.value : planFormRef.value
     formRef?.clearValidate('testcases')
   })
-}
-
-const resetTestcaseSelectorFilters = async () => {
-  testcaseSelectorFilters.keyword = ''
-  testcaseSelectorFilters.priority = ''
-  testcaseSelectorFilters.test_type = ''
-  await syncDialogTableSelection()
-}
-
-const getTestcasePriorityText = (priority) => {
-  const textMap = {
-    low: t('testcase.low'),
-    medium: t('testcase.medium'),
-    high: t('testcase.high'),
-    critical: t('testcase.critical')
-  }
-  return textMap[priority] || priority
-}
-
-const getTestcaseTypeText = (type) => {
-  const textMap = {
-    functional: t('testcase.functional'),
-    integration: t('testcase.integration'),
-    api: t('testcase.api'),
-    ui: t('testcase.ui'),
-    performance: t('testcase.performance'),
-    security: t('testcase.security')
-  }
-  return textMap[type] || type
 }
 
 const createPlan = async () => {
@@ -789,28 +463,28 @@ const editPlan = async (plan) => {
     // 设置当前编辑的计划
     currentEditingPlan.value = planDetail
 
+    // 回填表单时会改动 projects，需临时屏蔽“项目变更清空用例”的监听
+    suppressProjectWatch.value = true
+
     // 填充编辑表单数据
     Object.assign(editPlanForm, {
       id: planDetail.id,
       name: planDetail.name,
       description: planDetail.description || '',
-      projects: planDetail.projects?.map(p => {
-        // 如果是字符串，需要找到对应的项目ID
-        const project = projects.value.find(proj => proj.name === p)
-        return project ? project.id : p
-      }) || [],
+      // 详情接口给的是 [{ id, name }] 和 run_cases，直接取 id
+      projects: (planDetail.projects || []).map(project => project.id),
       version: planDetail.version ? versions.value.find(v => v.name === planDetail.version)?.id : null,
-      testcases: planDetail.testcases?.map(tc => tc.id) || [],
+      testcases: (planDetail.test_runs || [])
+        .flatMap(run => (run.run_cases || []).map(runCase => runCase.testcase?.id))
+        .filter(Boolean),
       assignees: planDetail.assignees || [],
       is_active: planDetail.is_active
     })
 
-    if (editPlanForm.projects.length > 0) {
-      await loadTestcasesByProjects(editPlanForm.projects)
-    }
-
     isEditPlanDialogOpen.value = true
+    nextTick(() => { suppressProjectWatch.value = false })
   } catch (error) {
+    suppressProjectWatch.value = false
     ElMessage.error(t('execution.fetchDetailFailed'))
   }
 }
@@ -893,8 +567,6 @@ const resetPlanForm = () => {
     testcases: [],
     assignees: []
   })
-  filteredTestcases.value = [] // 清空过滤后的测试用例
-  loadingTestcases.value = false // 重置加载状态
   planFormRef.value?.resetFields()
 }
 
@@ -996,16 +668,9 @@ const batchDeletePlans = async () => {
 // 监听项目选择变化
 watch(
   () => newPlanForm.projects,
-  (newProjects) => {
-    // 清空已选择的测试用例
+  () => {
+    // 项目变更后已选用例失效
     newPlanForm.testcases = []
-    
-    // 加载新项目的测试用例
-    if (newProjects && newProjects.length > 0) {
-      loadTestcasesByProjects(newProjects)
-    } else {
-      filteredTestcases.value = []
-    }
   },
   { deep: true }
 )
@@ -1013,24 +678,13 @@ watch(
 watch(
   () => editPlanForm.projects,
   (newProjects, oldProjects) => {
-    if (!isEditPlanDialogOpen.value) return
+    if (!isEditPlanDialogOpen.value || suppressProjectWatch.value) return
     if (JSON.stringify(newProjects || []) === JSON.stringify(oldProjects || [])) return
 
     editPlanForm.testcases = []
-    if (newProjects && newProjects.length > 0) {
-      loadTestcasesByProjects(newProjects)
-    } else {
-      filteredTestcases.value = []
-    }
   },
   { deep: true }
 )
-
-watch(testcaseSelectorList, () => {
-  if (testcaseSelectorVisible.value) {
-    syncDialogTableSelection()
-  }
-})
 
 onMounted(() => {
   fetchTestPlans()
@@ -1039,15 +693,11 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.execution-list {
-  padding: 20px;
-}
 
 .header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 20px;
 }
 
 .header-actions {
@@ -1056,14 +706,12 @@ onMounted(() => {
 }
 
 .filter-bar {
-  margin-bottom: 20px;
-  padding: 16px;
   background: #f8f9fa;
   border-radius: 4px;
 }
 
 .pagination {
-  margin-top: 20px;
+  margin-top: 10px;
   display: flex;
   justify-content: center;
 }
@@ -1078,145 +726,6 @@ onMounted(() => {
 .testcase-selection-tip {
   color: #606266;
   font-size: 14px;
-}
-
-.testcase-selector-container {
-  height: min(68vh, 620px);
-  min-height: 420px;
-  border: 1px solid #e4e7ed;
-  overflow: hidden;
-}
-
-.testcase-library-panel {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  min-width: 0;
-}
-
-.testcase-library-header {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding: 14px;
-  border-bottom: 1px solid #e4e7ed;
-}
-
-.testcase-library-tree {
-  flex: 1;
-  min-height: 0;
-  overflow: auto;
-  padding: 8px;
-}
-
-.testcase-library-node {
-  display: flex;
-  align-items: center;
-  width: 100%;
-  min-width: 0;
-  height: 32px;
-  gap: 8px;
-  padding: 0 8px;
-  border-radius: 4px;
-  color: #606266;
-  cursor: pointer;
-}
-
-.testcase-library-node.active {
-  color: var(--el-color-primary);
-  background: var(--el-color-primary-light-9);
-}
-
-.testcase-library-node-name {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.testcase-library-count {
-  flex: 0 0 auto;
-  min-width: 24px;
-  text-align: right;
-  color: #909399;
-  font-size: 12px;
-}
-
-.testcase-library-list {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  min-width: 0;
-  padding: 12px;
-}
-
-.testcase-search-bar {
-  flex: 0 0 auto;
-  min-width: max-content;
-  padding: 10px 12px 0;
-  background: #f8f9fa;
-  border-radius: 4px;
-}
-
-.testcase-search-bar :deep(.el-form--inline) {
-  display: flex;
-  flex-wrap: nowrap;
-  align-items: center;
-  gap: 8px;
-}
-
-.testcase-search-bar :deep(.el-form-item) {
-  flex: 0 0 auto;
-  margin-right: 0;
-  margin-bottom: 10px;
-}
-
-.testcase-search-bar :deep(.el-form-item__content) {
-  flex-wrap: nowrap;
-}
-
-.testcase-selector-table {
-  flex: 1;
-  min-height: 0;
-  padding-top: 12px;
-}
-
-.testcase-selector-table :deep(.el-table) {
-  height: 100%;
-}
-
-.testcase-selector-dialog :deep(.el-dialog__body) {
-  padding-top: 12px;
-  padding-bottom: 12px;
-}
-
-@media (max-width: 760px) {
-  .testcase-selector-container {
-    height: 70vh;
-    min-height: 0;
-  }
-
-  .testcase-library-tree {
-    min-height: 0;
-  }
-
-  .testcase-library-list {
-    overflow-x: auto;
-  }
-}
-
-.priority-tag.low {
-  color: #67c23a;
-}
-
-.priority-tag.medium {
-  color: #e6a23c;
-}
-
-.priority-tag.high,
-.priority-tag.critical {
-  color: #f56c6c;
 }
 
 .dialog-footer {

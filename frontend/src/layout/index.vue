@@ -391,7 +391,12 @@
               <el-breadcrumb separator="/">
                 <el-breadcrumb-item :to="{ path: '/home' }">{{ $t('nav.home') }}</el-breadcrumb-item>
                 <el-breadcrumb-item v-if="moduleName">{{ moduleName }}</el-breadcrumb-item>
-                <el-breadcrumb-item>{{ breadcrumbTitle }}</el-breadcrumb-item>
+                <el-breadcrumb-item
+                  v-for="(item, index) in breadcrumbItems"
+                  :key="index"
+                  :to="item.to ? { path: item.to } : undefined">
+                  {{ item.label }}
+                </el-breadcrumb-item>
               </el-breadcrumb>
             </div>
             <div class="header-right">
@@ -528,7 +533,7 @@ const breadcrumbTitle = computed(() => {
     '/ai-generation/reviews': t('menu.reviewList'),
     '/ai-generation/review-templates': t('menu.reviewTemplates'),
     '/ai-generation/testsuites': t('menu.suiteManagement'),
-    '/ai-generation/executions': t('menu.executionRecords'),
+    '/ai-generation/executions': t('menu.testPlan'),
     '/ai-generation/reports': t('menu.testReport'),
 
     // 接口测试
@@ -602,6 +607,22 @@ const breadcrumbTitle = computed(() => {
     '/profile': t('nav.profile')
   }
   return routeMap[route.path] || route.meta.title || ''
+})
+
+// 无法从路由表推断的页面（详情页等）：固定文案
+const detailBreadcrumbs = {
+  ExecutionDetail: { parent: 'menu.testPlan', parentPath: '/ai-generation/executions', leaf: 'execution.planDetail' }
+}
+
+const breadcrumbItems = computed(() => {
+  const detail = detailBreadcrumbs[route.name]
+  if (detail) {
+    return [
+      { label: t(detail.parent), to: detail.parentPath },
+      { label: t(detail.leaf) }
+    ]
+  }
+  return breadcrumbTitle.value ? [{ label: breadcrumbTitle.value }] : []
 })
 
 const handleCommand = (command) => {
@@ -711,7 +732,7 @@ const handleCommand = (command) => {
   .header-left {
     flex: 1;
     overflow: hidden;
-    
+
     :deep(.el-breadcrumb) {
       font-size: 14px;
     }
