@@ -177,11 +177,14 @@
             </el-button>
           </el-form-item>
 
+          <!-- 自助注册已关闭：注册入口下线，恢复时取消注释 -->
+          <!--
           <div class="form-footer">
             <router-link to="/register" class="register-link">
               {{ $t('auth.noAccount') }}<span>{{ $t('auth.signUpNow') }}</span>
             </router-link>
           </div>
+          -->
         </el-form>
 
         <!-- 底部信息 -->

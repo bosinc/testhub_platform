@@ -4,7 +4,8 @@ import { trackPageView } from '@/utils/tracker'
 
 // 静态导入常用组件来避免动态导入问题
 import Login from '@/views/auth/Login.vue'
-import Register from '@/views/auth/Register.vue'
+// 自助注册已关闭：注册页组件保留（views/auth/Register.vue），路由已注释，恢复时取消注释
+// import Register from '@/views/auth/Register.vue'
 import Layout from '@/layout/index.vue'
 import ProjectList from '@/views/projects/ProjectList.vue'
 import Home from '@/views/Home.vue'
@@ -68,12 +69,13 @@ const routes = [
         component: Login,
         meta: { requiresGuest: true }
     },
-    {
-        path: '/register',
-        name: 'Register',
-        component: Register,
-        meta: { requiresGuest: true }
-    },
+    // 自助注册已关闭：/register 路由下线，恢复时取消下面注释
+    // {
+    //     path: '/register',
+    //     name: 'Register',
+    //     component: Register,
+    //     meta: { requiresGuest: true }
+    // },
     {
         path: '/ai-generation/assistant',
         name: 'Assistant',
@@ -87,7 +89,7 @@ const routes = [
         children: [
             {
                 path: '',
-                redirect: 'requirement-analysis'
+                redirect: '/ai-generation/requirement-analysis'
             },
             {
                 path: 'requirement-analysis',
@@ -203,7 +205,7 @@ const routes = [
         children: [
             {
                 path: '',
-                redirect: 'dashboard'
+                redirect: '/api-testing/dashboard'
             },
             {
                 path: 'dashboard',
@@ -269,7 +271,7 @@ const routes = [
         children: [
             {
                 path: '',
-                redirect: 'dashboard'
+                redirect: '/ui-automation/dashboard'
             },
             {
                 path: 'dashboard',
@@ -340,7 +342,7 @@ const routes = [
         children: [
             {
                 path: '',
-                redirect: 'testing'
+                redirect: '/ai-intelligent-mode/testing'
             },
             {
                 path: 'testing',
@@ -366,7 +368,7 @@ const routes = [
         children: [
             {
                 path: '',
-                redirect: 'dashboard'
+                redirect: '/defects/dashboard'
             },
             {
                 path: 'dashboard',
@@ -417,7 +419,7 @@ const routes = [
                 children: [
                     {
                         path: '',
-                        redirect: 'projects'
+                        redirect: '/configuration/projects'
                     },
                     {
                         path: 'ai-model',
@@ -476,7 +478,7 @@ const routes = [
         children: [
             {
                 path: '',
-                redirect: 'dashboard'
+                redirect: '/llm-judge/dashboard'
             },
             {
                 path: 'dashboard',
@@ -519,7 +521,7 @@ const routes = [
         children: [
             {
                 path: '',
-                redirect: 'dashboard'
+                redirect: '/app-automation/dashboard'
             },
             {
                 path: 'dashboard',
@@ -591,7 +593,7 @@ const routes = [
         children: [
             {
                 path: '',
-                redirect: 'dashboard'
+                redirect: '/monitor/dashboard'
             },
             {
                 path: 'dashboard',
@@ -627,7 +629,7 @@ const routes = [
         children: [
             {
                 path: '',
-                redirect: 'dashboard'
+                redirect: '/performance-testing/dashboard'
             },
             {
                 path: 'dashboard',
@@ -688,7 +690,7 @@ const routes = [
         children: [
             {
                 path: '',
-                redirect: 'console'
+                redirect: '/mcp/console'
             },
             {
                 path: 'console',
@@ -757,7 +759,11 @@ router.beforeEach(async (to, _from, next) => {
         }
     }
 
-    if (to.meta.requiresAuth && !userStore.isAuthenticated) {
+    // 默认所有页面都要求登录：只有显式声明 meta.public 或 meta.requiresGuest 的页面例外。
+    // 这样新增路由即使漏写 meta.requiresAuth，也不会出现未登录可访问的「裸奔」页面。
+    const isPublicPage = to.meta.public === true || to.meta.requiresGuest === true
+
+    if (!isPublicPage && !userStore.isAuthenticated) {
         next('/login')
     } else if (to.meta.requiresGuest && userStore.isAuthenticated) {
         next('/home')

@@ -8,6 +8,38 @@
       <el-tabs v-model="activeTab">
         <el-tab-pane :label="$t('profile.basicInfo')" name="basic">
           <el-form v-if="userStore.user" :model="profileForm" label-width="100px">
+            <el-form-item :label="$t('profile.avatar')">
+              <div class="avatar-field">
+                <el-avatar :size="72" :src="userStore.user?.avatar" class="avatar-preview">
+                  <el-icon :size="28"><UserFilled /></el-icon>
+                </el-avatar>
+                <div class="avatar-actions">
+                  <div class="avatar-buttons">
+                    <el-button size="small" :loading="avatarUploading" @click="triggerAvatarPick">
+                      {{ userStore.user?.avatar ? $t('profile.changeAvatar') : $t('profile.uploadAvatar') }}
+                    </el-button>
+                    <el-button
+                      v-if="userStore.user?.avatar"
+                      size="small"
+                      text
+                      type="danger"
+                      :loading="avatarRemoving"
+                      @click="removeAvatar"
+                    >
+                      {{ $t('profile.removeAvatar') }}
+                    </el-button>
+                  </div>
+                  <div class="avatar-tip">{{ $t('profile.avatarTip') }}</div>
+                </div>
+                <input
+                  ref="avatarInputRef"
+                  class="avatar-input"
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp,image/gif"
+                  @change="onAvatarSelected"
+                />
+              </div>
+            </el-form-item>
             <el-form-item :label="$t('profile.username')" prop="username">
               <el-input v-model="profileForm.username" maxlength="20" />
             </el-form-item>
@@ -55,14 +87,22 @@
 <script setup>
 import { reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
+import { UserFilled } from '@element-plus/icons-vue'
+import { useI18n } from 'vue-i18n'
 import { useUserStore } from '@/stores/user'
 import api from '@/utils/api'
 
+const AVATAR_MAX_SIZE = 2 * 1024 * 1024
+
 const userStore = useUserStore()
+const { t } = useI18n()
 const activeTab = ref('basic')
 const passwordFormRef = ref()
 const passwordSubmitting = ref(false)
 const profileSubmitting = ref(false)
+const avatarInputRef = ref()
+const avatarUploading = ref(false)
+const avatarRemoving = ref(false)
 const profileForm = reactive({ username: '', first_name: '', department: '', position: '' })
 const passwordForm = reactive({ current_password: '', new_password: '', confirm_password: '' })
 watch(() => userStore.user, (user) => {
@@ -83,12 +123,74 @@ const passwordRules = {
   ]
 }
 
+function applyUser(data) {
+  userStore.user = data
+  localStorage.setItem('user', JSON.stringify(data))
+}
+
+function pickError(error, fallback) {
+  const data = error.response?.data || {}
+  const value = data.avatar || data.detail || data.error
+  if (Array.isArray(value)) return value[0] || fallback
+  if (typeof value === 'string' && value) return value
+  return fallback
+}
+
+function triggerAvatarPick() {
+  avatarInputRef.value?.click()
+}
+
+async function onAvatarSelected(event) {
+  const input = event.target
+  const file = input.files?.[0]
+  if (!file) return
+
+  if (!file.type.startsWith('image/')) {
+    ElMessage.error(t('profile.avatarTypeError'))
+    input.value = ''
+    return
+  }
+  if (file.size > AVATAR_MAX_SIZE) {
+    ElMessage.error(t('profile.avatarSizeError'))
+    input.value = ''
+    return
+  }
+
+  const formData = new FormData()
+  formData.append('avatar', file)
+  avatarUploading.value = true
+  try {
+    const response = await api.post('/auth/avatar/', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' }
+    })
+    applyUser(response.data)
+    ElMessage.success(t('profile.avatarUploadSuccess'))
+  } catch (error) {
+    ElMessage.error(pickError(error, t('profile.avatarUploadFailed')))
+  } finally {
+    avatarUploading.value = false
+    input.value = ''
+  }
+}
+
+async function removeAvatar() {
+  avatarRemoving.value = true
+  try {
+    const response = await api.delete('/auth/avatar/')
+    applyUser(response.data)
+    ElMessage.success(t('profile.avatarRemoved'))
+  } catch (error) {
+    ElMessage.error(pickError(error, t('profile.avatarRemoveFailed')))
+  } finally {
+    avatarRemoving.value = false
+  }
+}
+
 async function submitProfile() {
   profileSubmitting.value = true
   try {
     const response = await api.patch('/auth/profile/', profileForm)
-    userStore.user = response.data
-    localStorage.setItem('user', JSON.stringify(response.data))
+    applyUser(response.data)
     ElMessage.success('个人信息已保存')
   } catch (error) {
     const data = error.response?.data || {}
@@ -117,3 +219,39 @@ async function submitPasswordChange() {
   }
 }
 </script>
+
+<style scoped>
+.avatar-field {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.avatar-preview {
+  flex: none;
+  background: var(--el-fill-color-light);
+  color: var(--el-text-color-placeholder);
+}
+
+.avatar-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.avatar-buttons {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.avatar-tip {
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--el-text-color-secondary);
+}
+
+.avatar-input {
+  display: none;
+}
+</style>

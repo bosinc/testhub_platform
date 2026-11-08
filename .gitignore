@@ -25,6 +25,9 @@ logs/*/*
 static_files/img/
 .bak
 
+# 忽略用户头像文件
+media/avatars/*
+
 # 忽略 allure-static 下的所有文件（运行时生成）
 media/allure-static/*
 !media/allure-static/.gitkeep

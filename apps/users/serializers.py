@@ -1,6 +1,7 @@
 import re
 from rest_framework import serializers
 from django.contrib.auth import authenticate
+from .avatar import AVATAR_ALLOWED_CONTENT_TYPES, AVATAR_MAX_SIZE
 from .models import User, UserProfile
 
 class UserSimpleSerializer(serializers.ModelSerializer):
@@ -65,6 +66,26 @@ class UserProfileUpdateSerializer(serializers.ModelSerializer):
         if User.objects.filter(username=value).exclude(pk=self.instance.pk).exists():
             raise serializers.ValidationError('该用户名已被使用')
         return value
+
+class AvatarUploadSerializer(serializers.Serializer):
+    """头像上传校验：格式、大小。
+
+    DRF 的 ImageField 已经用 Pillow 校验过「是不是合法图片」，
+    这里再补充大小与 content-type 限制。
+    """
+
+    avatar = serializers.ImageField()
+
+    def validate_avatar(self, value):
+        if value.size > AVATAR_MAX_SIZE:
+            raise serializers.ValidationError('头像大小不能超过 2MB')
+
+        content_type = (getattr(value, 'content_type', '') or '').lower()
+        if content_type and content_type not in AVATAR_ALLOWED_CONTENT_TYPES:
+            raise serializers.ValidationError('头像仅支持 JPG、PNG、WebP、GIF 格式的图片')
+
+        return value
+
 
 class LoginSerializer(serializers.Serializer):
     # 使用自定义校验文案，避免 DRF 的默认英文字段错误落到“登录失败”兜底提示。

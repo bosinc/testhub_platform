@@ -7,11 +7,12 @@ urlpatterns = [
     # 列表原位于 users/ 子路径，导致 /api/users/ 返回 404，故补充根路由别名
     path('', views.UserListView.as_view()),
     path('me/', views.get_current_user, name='get_current_user'),
-    path('register/', views.RegisterView.as_view(), name='register'),
-    path('test-register/', views.RegisterView.as_view(), name='test-register'),
+    # 自助注册已关闭：路由下线，RegisterView 与 UserCreateSerializer 均保留，恢复时取消下面注释即可。
+    # path('register/', views.RegisterView.as_view(), name='register'),
     path('login/', views.login_view, name='login'),
     path('logout/', views.logout_view, name='logout'),
     path('profile/', views.profile_view, name='profile'),
+    path('avatar/', views.avatar_view, name='avatar'),
     path('change-password/', views.change_password_view, name='change-password'),
     path('users/', views.UserListView.as_view(), name='user-list'),
     path('users/<int:pk>/', views.UserDetailView.as_view(), name='user-detail'),

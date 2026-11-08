@@ -127,6 +127,19 @@ export default {
     basicInfo: '基本信息',
     changePassword: '修改密码',
 
+    // Avatar
+    avatar: '头像',
+    uploadAvatar: '上传头像',
+    changeAvatar: '更换头像',
+    removeAvatar: '移除',
+    avatarTip: '支持 JPG / PNG / WebP / GIF，大小不超过 2MB',
+    avatarUploadSuccess: '头像已更新',
+    avatarUploadFailed: '头像上传失败',
+    avatarRemoved: '头像已移除',
+    avatarRemoveFailed: '头像移除失败',
+    avatarTypeError: '请选择图片文件',
+    avatarSizeError: '图片大小不能超过 2MB',
+
     // Basic Info
     username: '用户名',
     email: '邮箱',

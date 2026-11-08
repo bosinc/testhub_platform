@@ -1,9 +1,11 @@
 from rest_framework import generics, status, permissions
-from rest_framework.decorators import api_view, permission_classes
+from rest_framework.decorators import api_view, permission_classes, parser_classes
+from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
 from django.contrib.auth import login, logout
 from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
+from .avatar import delete_user_avatar, save_user_avatar
 from .models import User
 from .serializers import (
     UserSerializer,
@@ -11,6 +13,7 @@ from .serializers import (
     LoginSerializer,
     ChangePasswordSerializer,
     UserProfileUpdateSerializer,
+    AvatarUploadSerializer,
 )
 
 # JWT 相关导入
@@ -29,6 +32,8 @@ def get_current_user(request):
     serializer = UserSerializer(request.user)
     return Response(serializer.data)
 
+# 自助注册已关闭：对应的 /api/auth/register/ 路由已在 urls.py 中注释，
+# 视图与序列化器保留，恢复注册时把 urls.py 里那一行取消注释即可。
 @method_decorator(csrf_exempt, name='dispatch')
 class RegisterView(generics.CreateAPIView):
     queryset = User.objects.all().order_by('username')
@@ -121,6 +126,21 @@ def profile_view(request):
     return Response(serializer.data)
 
 
+@api_view(['POST', 'DELETE'])
+@permission_classes([permissions.IsAuthenticated])
+@parser_classes([MultiPartParser, FormParser])
+def avatar_view(request):
+    """当前登录用户的头像：POST 上传/替换，DELETE 移除。"""
+    if request.method == 'DELETE':
+        delete_user_avatar(request.user)
+        return Response(UserSerializer(request.user).data)
+
+    serializer = AvatarUploadSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+    save_user_avatar(request.user, serializer.validated_data['avatar'])
+    return Response(UserSerializer(request.user).data)
+
+
 @api_view(['POST'])
 @permission_classes([permissions.IsAuthenticated])
 def change_password_view(request):
@@ -135,15 +155,33 @@ def change_password_view(request):
     request.user.save(update_fields=['password', 'updated_at'])
     return Response({'message': '密码修改成功'})
 
+class IsAdminOrReadOnly(permissions.BasePermission):
+    """用户资源的权限：读接口对所有登录用户开放，写接口仅管理员。
+
+    - GET/HEAD/OPTIONS：任意已登录用户（前端大量页面需要拉用户列表做「指派/负责人」下拉）
+    - POST/PUT/PATCH/DELETE：仅 is_staff / is_superuser，用于「只能管理员建号」
+    """
+
+    message = '仅管理员可执行该操作'
+
+    def has_permission(self, request, view):
+        user = getattr(request, 'user', None)
+        if not (user and user.is_authenticated):
+            return False
+        if request.method in permissions.SAFE_METHODS:
+            return True
+        return bool(user.is_staff or user.is_superuser)
+
+
 class UserListView(generics.ListCreateAPIView):
     queryset = User.objects.all().order_by('username')
     serializer_class = UserSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsAdminOrReadOnly]
 
 class UserDetailView(generics.RetrieveUpdateDestroyAPIView):
     queryset = User.objects.all().order_by('username')
     serializer_class = UserSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsAdminOrReadOnly]
 
 
 # 短信注册/登录接口暂时停用，避免短信逻辑参与当前邮箱注册和密码登录流程。

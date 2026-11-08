@@ -127,6 +127,19 @@ export default {
     basicInfo: 'Basic Information',
     changePassword: 'Change Password',
 
+    // Avatar
+    avatar: 'Avatar',
+    uploadAvatar: 'Upload Avatar',
+    changeAvatar: 'Change Avatar',
+    removeAvatar: 'Remove',
+    avatarTip: 'JPG / PNG / WebP / GIF, up to 2MB',
+    avatarUploadSuccess: 'Avatar updated',
+    avatarUploadFailed: 'Failed to upload avatar',
+    avatarRemoved: 'Avatar removed',
+    avatarRemoveFailed: 'Failed to remove avatar',
+    avatarTypeError: 'Please choose an image file',
+    avatarSizeError: 'Image size cannot exceed 2MB',
+
     // Basic Info
     username: 'Username',
     email: 'Email',
