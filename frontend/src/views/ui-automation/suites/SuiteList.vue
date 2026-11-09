@@ -64,20 +64,29 @@
         </el-table-column>
         <el-table-column prop="created_at" :label="$t('uiAutomation.common.createTime')" width="180" :formatter="formatDate" />
         <el-table-column prop="updated_at" :label="$t('uiAutomation.common.updateTime')" width="180" :formatter="formatDate" />
-        <el-table-column :label="$t('uiAutomation.common.operation')" width="240" fixed="right">
+        <el-table-column :label="$t('uiAutomation.common.operation')" width="140" fixed="right">
           <template #default="{ row }">
-            <el-button size="small" type="primary" @click="editSuite(row.id)">
-              <el-icon><Edit /></el-icon>
-              {{ $t('uiAutomation.common.edit') }}
-            </el-button>
-            <el-button size="small" type="success" @click="runSuite(row)">
-              <el-icon><RefreshRight /></el-icon>
-              {{ $t('uiAutomation.common.run') }}
-            </el-button>
-            <el-button size="small" type="danger" @click="deleteSuite(row.id)">
-              <el-icon><Delete /></el-icon>
-              {{ $t('uiAutomation.common.delete') }}
-            </el-button>
+            <div class="row-actions">
+              <el-button size="small" text type="primary" @click="editSuite(row.id)">
+                <el-icon><Edit /></el-icon>
+                {{ $t('uiAutomation.common.edit') }}
+              </el-button>
+              <el-button size="small" text type="success" @click="runSuite(row)">
+                <el-icon><VideoPlay /></el-icon>
+                {{ $t('uiAutomation.common.run') }}
+              </el-button>
+              <el-tooltip :content="$t('uiAutomation.common.delete')">
+                <el-button
+                  size="small"
+                  text
+                  type="danger"
+                  :aria-label="$t('uiAutomation.common.delete')"
+                  @click="deleteSuite(row.id)"
+                >
+                  <el-icon><Delete /></el-icon>
+                </el-button>
+              </el-tooltip>
+            </div>
           </template>
         </el-table-column>
       </el-table>
@@ -285,7 +294,7 @@
 import { ref, reactive, computed, nextTick, onMounted, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
-  Plus, Search, Edit, Delete, RefreshRight, Folder, Document,
+  Plus, Search, Edit, Delete, VideoPlay, Folder, Document,
   Top, Bottom, Minus
 } from '@element-plus/icons-vue'
 import {
@@ -920,6 +929,20 @@ const handleNewSuite = async () => {
 
 .filter-bar {
   margin-bottom: 20px;
+}
+
+// 与脚本列表一致：文字按钮 + 紧凑间距，避免每行三个实心按钮挤占宽度。
+.row-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 2px;
+  white-space: nowrap;
+}
+
+.row-actions :deep(.el-button) {
+  margin: 0;
+  padding: 0 4px;
 }
 
 .pagination-container {

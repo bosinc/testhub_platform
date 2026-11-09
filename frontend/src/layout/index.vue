@@ -1,8 +1,8 @@
 <template>
   <div class="layout">
     <el-container>
-      <!-- 侧边栏 -->
-      <el-aside width="240px">
+      <!-- 侧边栏（宽度由菜单内容自适应，见 .el-aside 样式） -->
+      <el-aside>
         <div class="logo" @click="router.push('/home')" style="cursor: pointer;">
           <img :src="logoImage" alt="TestHub" class="logo-img" />
         </div>
@@ -663,6 +663,7 @@ const handleCommand = (command) => {
 		.logo-img {
 			width: 100%;
 			height: 100%;
+			/* 侧边栏宽度不再固定，改为 contain 保证 logo 不被拉伸变形 */
 			object-fit: fill;
 		}
 	}
@@ -674,7 +675,15 @@ const handleCommand = (command) => {
   flex-direction: column;
   overflow: hidden;
   transition: width 0.3s ease;
-  width: 240px !important;
+
+  /* 宽度随菜单文案自适应：
+     max-content —— 取最长一项的固有宽度，中英文/多语言都不用手工调数值
+     min-width  —— 兜底下限，避免中文等短文案时侧边栏过窄
+     max-width  —— 上限，防止超长文案把主体区域挤没（超出部分省略号截断） */
+  width: max-content;
+  min-width: 180px;
+  max-width: 300px;
+  flex: 0 0 auto;
 
   .el-menu {
     flex: 1;
@@ -685,6 +694,16 @@ const handleCommand = (command) => {
     &::-webkit-scrollbar {
       width: 0;
     }
+  }
+}
+
+/* 文案超出 max-width 时以省略号收尾，而不是硬截断 */
+.el-menu {
+  :deep(.el-menu-item > span),
+  :deep(.el-sub-menu__title > span) {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 }
 
@@ -720,6 +739,8 @@ const handleCommand = (command) => {
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  /* 侧边栏变宽时允许主体收缩，避免把布局撑出横向滚动条 */
+  min-width: 0;
 }
 
 .el-header {
@@ -823,20 +844,12 @@ const handleCommand = (command) => {
 }
 
 @media screen and (max-width: 1920px) {
-  .el-aside {
-    width: 220px !important;
-  }
-  
   .el-main {
     padding: 18px;
   }
 }
 
 @media screen and (max-width: 1600px) {
-  .el-aside {
-    width: 200px !important;
-  }
-  
   .el-main {
     padding: 16px;
   }
@@ -850,10 +863,6 @@ const handleCommand = (command) => {
 }
 
 @media screen and (max-width: 1440px) {
-  .el-aside {
-    width: 180px !important;
-  }
-  
   .el-main {
     padding: 14px;
   }
@@ -867,10 +876,6 @@ const handleCommand = (command) => {
 }
 
 @media screen and (max-width: 1366px) {
-  .el-aside {
-    width: 180px !important;
-  }
-  
   .el-main {
     padding: 12px;
   }
@@ -888,10 +893,6 @@ const handleCommand = (command) => {
 }
 
 @media screen and (max-width: 1280px) {
-  .el-aside {
-    width: 160px !important;
-  }
-  
   .el-main {
     padding: 12px;
   }
@@ -915,10 +916,6 @@ const handleCommand = (command) => {
 }
 
 @media screen and (max-width: 1024px) {
-  .el-aside {
-    width: 140px !important;
-  }
-  
   .el-main {
     padding: 10px;
   }
@@ -951,7 +948,8 @@ const handleCommand = (command) => {
     left: 0;
     top: 0;
     z-index: 1000;
-    width: 240px !important;
+    /* 抽屉式侧边栏：宽度仍随文案自适应，只收紧上限，避免遮挡整屏 */
+    max-width: 260px;
     transform: translateX(-100%);
     transition: transform 0.3s ease;
     
@@ -983,7 +981,7 @@ const handleCommand = (command) => {
 
 @media screen and (max-width: 480px) {
   .el-aside {
-    width: 220px !important;
+    max-width: 240px;
   }
   
   .el-main {

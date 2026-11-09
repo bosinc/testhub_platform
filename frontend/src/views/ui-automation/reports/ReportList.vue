@@ -34,24 +34,32 @@
             {{ getBrowserText(row.browser) }}
           </template>
         </el-table-column>
-        <el-table-column prop="total_cases" :label="$t('uiAutomation.report.totalCases')" width="100" />
-        <el-table-column prop="passed_cases" :label="$t('uiAutomation.report.passedCases')" width="100">
+        <el-table-column :label="$t('uiAutomation.report.resultDistribution')" min-width="150">
           <template #default="{ row }">
-            <span style="color: #67c23a; font-weight: bold;">{{ row.passed_cases }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column prop="failed_cases" :label="$t('uiAutomation.report.failedCases')" width="100">
-          <template #default="{ row }">
-            <span style="color: #f56c6c; font-weight: bold;">{{ row.failed_cases }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column :label="$t('uiAutomation.report.passRate')" width="100">
-          <template #default="{ row }">
-            <el-progress
-              :percentage="row.pass_rate"
-              :color="getProgressColor(row.pass_rate)"
-              :stroke-width="16"
-            />
+            <div v-if="getResultSegments(row).length" class="result-distribution">
+              <div class="result-dist-bar">
+                <el-tooltip
+                  v-for="segment in getResultSegments(row)"
+                  :key="segment.key"
+                  placement="top"
+                  effect="dark"
+                  popper-class="result-dist-tooltip"
+                >
+                  <template #content>
+                    <div class="result-dist-tip">
+                      <span class="result-dist-tip__dot" :style="{ background: segment.color }"></span>
+                      <span>{{ segment.label }}: {{ segment.count }} ({{ segment.percent }}%)</span>
+                    </div>
+                  </template>
+                  <div
+                    class="result-dist-segment"
+                    :style="{ flexGrow: segment.count, background: segment.color }"
+                  ></div>
+                </el-tooltip>
+              </div>
+              <span class="result-dist-total">{{ getResultTotal(row) }}</span>
+            </div>
+            <span v-else class="result-dist-empty">-</span>
           </template>
         </el-table-column>
         <el-table-column :label="$t('uiAutomation.report.duration')" width="120">
@@ -65,16 +73,25 @@
             {{ formatDate(row.created_at) }}
           </template>
         </el-table-column>
-        <el-table-column :label="$t('uiAutomation.common.operation')" width="200" fixed="right">
+        <el-table-column :label="$t('uiAutomation.common.operation')" width="120" fixed="right">
           <template #default="{ row }">
-            <el-button link type="primary" size="small" @click="viewReportDetail(row)">
-              <el-icon><Document /></el-icon>
-              {{ $t('uiAutomation.report.viewDetail') }}
-            </el-button>
-            <el-button link type="danger" size="small" @click="deleteReport(row)">
-              <el-icon><Delete /></el-icon>
-              {{ $t('uiAutomation.common.delete') }}
-            </el-button>
+            <div class="row-actions">
+              <el-button size="small" text type="primary" @click="viewReportDetail(row)">
+                <el-icon><Document /></el-icon>
+                {{ $t('uiAutomation.report.viewDetail') }}
+              </el-button>
+              <el-tooltip :content="$t('uiAutomation.common.delete')">
+                <el-button
+                  size="small"
+                  text
+                  type="danger"
+                  :aria-label="$t('uiAutomation.common.delete')"
+                  @click="deleteReport(row)"
+                >
+                  <el-icon><Delete /></el-icon>
+                </el-button>
+              </el-tooltip>
+            </div>
           </template>
         </el-table-column>
       </el-table>
@@ -497,6 +514,57 @@ const getProgressColor = (percentage) => {
   return '#f56c6c'
 }
 
+// 结果分布：通过 / 失败 / 跳过 的配色
+const RESULT_COLORS = {
+  passed: '#009e5a',
+  failed: '#f56c6c',
+  skipped: '#87888a',
+  other: '#c0c4cc'
+}
+
+// 总用例数（后端未返回时用各状态之和兜底）
+const getResultTotal = (row) => {
+  if (!row) return 0
+  const passed = Number(row.passed_cases) || 0
+  const failed = Number(row.failed_cases) || 0
+  const skipped = Number(row.skipped_cases) || 0
+  return Number(row.total_cases) || passed + failed + skipped
+}
+
+// 构造结果分布分段数据（数量为 0 的分段不展示）
+const getResultSegments = (row) => {
+  const total = getResultTotal(row)
+  if (!total) return []
+
+  const passed = Number(row?.passed_cases) || 0
+  const failed = Number(row?.failed_cases) || 0
+  const skipped = Number(row?.skipped_cases) || 0
+
+  const segments = [
+    { key: 'passed', count: passed, label: t('uiAutomation.report.passedCases') },
+    { key: 'failed', count: failed, label: t('uiAutomation.report.failedCases') },
+    { key: 'skipped', count: skipped, label: t('uiAutomation.report.skippedCases') }
+  ]
+
+  // 总数与各状态之和不一致时，剩余部分归入“其他”
+  const accounted = passed + failed + skipped
+  if (total > accounted) {
+    segments.push({
+      key: 'other',
+      count: total - accounted,
+      label: t('uiAutomation.report.otherCases')
+    })
+  }
+
+  return segments
+    .filter((segment) => segment.count > 0)
+    .map((segment) => ({
+      ...segment,
+      color: RESULT_COLORS[segment.key],
+      percent: Math.round((segment.count / total) * 100)
+    }))
+}
+
 const formatDate = (dateString) => {
   if (!dateString) return '-'
   return new Date(dateString).toLocaleString()
@@ -555,6 +623,71 @@ onMounted(async () => {
   background: white;
   padding: 20px;
   border-radius: 4px;
+}
+
+// 与脚本/套件/执行记录列表一致：文字按钮 + 紧凑间距，禁止换行。
+.row-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 2px;
+  white-space: nowrap;
+}
+
+.row-actions :deep(.el-button) {
+  margin: 0;
+  padding: 0 4px;
+}
+
+// 结果分布：分段堆叠条形图 + 尾部总数
+.result-distribution {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  max-width: 200px;
+}
+
+.result-dist-bar {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  flex: 1;
+  min-width: 0;
+  height: 10px;
+}
+
+.result-dist-segment {
+  flex-basis: 0;
+  min-width: 3px;
+  height: 100%;
+  border-radius: 2px;
+  cursor: pointer;
+  transition: opacity 0.15s;
+
+  &:first-child {
+    border-top-left-radius: 5px;
+    border-bottom-left-radius: 5px;
+  }
+
+  &:last-child {
+    border-top-right-radius: 5px;
+    border-bottom-right-radius: 5px;
+  }
+
+  &:hover {
+    opacity: 0.85;
+  }
+}
+
+.result-dist-total {
+  flex: none;
+  font-size: 13px;
+  color: #606266;
+}
+
+.result-dist-empty {
+  color: #c0c4cc;
 }
 
 .pagination-container {
@@ -792,6 +925,36 @@ onMounted(async () => {
         font-size: 12px;
       }
     }
+  }
+}
+</style>
+
+<!-- 结果分布提示框挂载在 body 上，需使用非 scoped 样式 -->
+<style lang="scss">
+.result-dist-tooltip.el-popper {
+  background: #535354 !important;
+  border-color: #535354 !important;
+  padding: 8px 12px;
+  font-size: 13px;
+
+  .el-popper__arrow::before {
+    background: #535354 !important;
+    border-color: #535354 !important;
+  }
+}
+
+.result-dist-tip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  line-height: 1.5;
+  color: #ffffff;
+
+  &__dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex: none;
   }
 }
 </style>

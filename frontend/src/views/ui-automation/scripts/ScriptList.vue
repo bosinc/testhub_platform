@@ -47,12 +47,12 @@
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="created_at" :label="$t('uiAutomation.script.createTimeColumn')" min-width="200">
+        <el-table-column prop="created_at" :label="$t('uiAutomation.script.createTimeColumn')" min-width="160">
           <template #default="{ row }">
             {{ formatTime(row.created_at) }}
           </template>
         </el-table-column>
-        <el-table-column :label="$t('uiAutomation.script.operationColumn')" width="420">
+        <el-table-column :label="$t('uiAutomation.script.operationColumn')" :width="operationColumnWidth">
           <template #default="{ row }">
             <div class="row-actions">
               <el-button size="small" text type="primary" @click="replayScript(row)">
@@ -72,7 +72,7 @@
                 {{ $t('uiAutomation.script.edit') }}
               </el-button>
               <el-button size="small" text type="success" @click="openConvertDialog(row)">
-                转为测试用例
+                {{ $t('uiAutomation.script.convertToTestCase') }}
               </el-button>
               <el-tooltip :content="$t('uiAutomation.script.delete')">
                 <el-button size="small" text type="danger" :aria-label="$t('uiAutomation.script.delete')" @click="deleteScript(row)">
@@ -149,7 +149,7 @@
       </template>
     </el-dialog>
 
-    <el-dialog v-model="showConvertDialog" title="转为测试用例" width="78%" :close-on-click-modal="false">
+    <el-dialog v-model="showConvertDialog" :title="$t('uiAutomation.script.convertToTestCase')" width="78%" :close-on-click-modal="false">
       <el-form label-width="90px" class="convert-form">
         <el-row :gutter="16">
           <el-col :span="12"><el-form-item label="用例名称" required><el-input v-model="convertForm.name" maxlength="200" /></el-form-item></el-col>
@@ -207,7 +207,10 @@ import ScriptReplayDialog from './ScriptReplayDialog.vue'
 import ScriptHistoryDialog from './ScriptHistoryDialog.vue'
 
 const router = useRouter()
-const { t } = useI18n()
+const { t, locale } = useI18n()
+
+// 操作列宽度按语言取：中文文案更短，用 340px 更紧凑；英文最长，取上限 420px。
+const operationColumnWidth = computed(() => (String(locale.value).startsWith('zh') ? 340 : 380))
 
 // 响应式数据
 const projects = ref([])

@@ -54,8 +54,8 @@
       </div>
 
       <el-table :data="executions" v-loading="loading" style="width: 100%" @selection-change="handleSelectionChange">
-        <el-table-column type="selection" width="55" align="center" />
-        <el-table-column prop="id" label="ID" width="80" align="center" />
+        <el-table-column type="selection" width="40" align="center" />
+        <el-table-column prop="id" label="ID" width="60" align="center" />
         <el-table-column prop="test_case_name" :label="$t('uiAutomation.execution.caseName')" min-width="200">
           <template #default="{ row }">
             <el-link @click="viewExecutionDetail(row)" type="primary">
@@ -84,51 +84,56 @@
             {{ row.headless ? $t('uiAutomation.execution.headlessMode') : $t('uiAutomation.execution.headedMode') }}
           </template>
         </el-table-column>
-        <el-table-column prop="browser" :label="$t('uiAutomation.execution.browserFilter')" width="100" align="center">
+        <el-table-column prop="browser" :label="$t('uiAutomation.execution.browserFilter')" width="80" align="center">
           <template #default="{ row }">
             {{ getBrowserText(row.browser) }}
           </template>
         </el-table-column>
         <el-table-column prop="created_by_name" :label="$t('uiAutomation.execution.executor')" width="120" align="center" />
-        <el-table-column prop="started_at" :label="$t('uiAutomation.execution.startTime')" width="180" align="center">
+        <el-table-column prop="started_at" :label="$t('uiAutomation.execution.startTime')" width="160" align="center">
           <template #default="{ row }">
             {{ formatDateTime(row.started_at) }}
           </template>
         </el-table-column>
-        <el-table-column prop="finished_at" :label="$t('uiAutomation.execution.endTime')" width="180" align="center">
+        <el-table-column prop="finished_at" :label="$t('uiAutomation.execution.endTime')" width="160" align="center">
           <template #default="{ row }">
             {{ formatDateTime(row.finished_at) }}
           </template>
         </el-table-column>
-        <el-table-column :label="$t('uiAutomation.execution.duration')" width="120" align="center">
+        <el-table-column :label="$t('uiAutomation.execution.duration')" width="90" align="center">
           <template #default="{ row }">
             {{ formatDuration(row.execution_time) }}
           </template>
         </el-table-column>
-        <el-table-column :label="$t('uiAutomation.common.operation')" width="180" fixed="right" align="center" class-name="action-col">
+        <el-table-column :label="$t('uiAutomation.common.operation')" width="150" fixed="right" align="center" class-name="action-col">
           <template #default="{ row }">
-            <el-button size="small" type="primary" link @click="viewExecutionDetail(row)">
-              <el-icon><View /></el-icon>
-              {{ $t('uiAutomation.common.details') }}
-            </el-button>
-            <el-button
-              v-if="row.status === 'failed' || row.status === 'error'"
-              size="small"
-              type="warning"
-              link
-              @click="showRerunDialog(row)"
-            >
-              <el-icon><Refresh /></el-icon>
-              {{ $t('uiAutomation.common.rerun') }}
-            </el-button>
-            <el-button
-              size="small"
-              link
-              type="danger"
-              @click="handleDelete(row)"
-            >
-              {{ $t('uiAutomation.common.delete') }}
-            </el-button>
+            <div class="row-actions">
+              <el-button size="small" text type="primary" @click="viewExecutionDetail(row)">
+                <el-icon><View /></el-icon>
+                {{ $t('uiAutomation.common.details') }}
+              </el-button>
+              <el-button
+                v-if="row.status === 'failed' || row.status === 'error'"
+                size="small"
+                text
+                type="warning"
+                @click="showRerunDialog(row)"
+              >
+                <el-icon><Refresh /></el-icon>
+                {{ $t('uiAutomation.common.rerun') }}
+              </el-button>
+              <el-tooltip :content="$t('uiAutomation.common.delete')">
+                <el-button
+                  size="small"
+                  text
+                  type="danger"
+                  :aria-label="$t('uiAutomation.common.delete')"
+                  @click="handleDelete(row)"
+                >
+                  <el-icon><Delete /></el-icon>
+                </el-button>
+              </el-tooltip>
+            </div>
           </template>
         </el-table-column>
       </el-table>
@@ -265,7 +270,7 @@
 <script setup>
 import { ref, reactive, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Search, View, WarningFilled, Refresh } from '@element-plus/icons-vue'
+import { Search, View, WarningFilled, Refresh, Delete } from '@element-plus/icons-vue'
 import { useI18n } from 'vue-i18n'
 import { getPreferredProjectId, useRememberedProject } from '@/utils/projectSelection'
 import {
@@ -667,6 +672,21 @@ onMounted(async () => {
 /* 固定操作列宽度并禁止按钮换行，确保三项操作保持在同一行。 */
 :deep(.action-col .cell) {
   white-space: nowrap;
+}
+
+// 与脚本/套件列表一致：文字按钮 + 紧凑间距，操作列居中。
+.row-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: nowrap;
+  gap: 2px;
+  white-space: nowrap;
+}
+
+.row-actions :deep(.el-button) {
+  margin: 0;
+  padding: 0 4px;
 }
 
 .execution-detail {

@@ -6,13 +6,16 @@
         <el-select v-model="projectId" :placeholder="t('uiAutomation.project.selectProject')" class="project-selector" @change="onProjectChange">
           <el-option v-for="project in projects" :key="project.id" :label="project.name" :value="project.id" />
         </el-select>
-        <el-button :disabled="!projectId" @click="openStorageStateManager">登录态管理</el-button>
+        <el-button :disabled="!projectId" @click="openStorageStateManager">
+          登录态管理
+          <span v-if="storageStateTotal" class="header-count">{{ storageStateTotal }}</span>
+        </el-button>
         <el-tooltip :content="t('uiAutomation.variables.selectProject')" :disabled="!!projectId">
           <span>
             <el-button :disabled="!projectId" @click="openVariablesDialog">
               <el-icon><Setting /></el-icon>
               {{ t('uiAutomation.variables.title') }}
-              <span v-if="currentVariables.length" class="variable-count">{{ currentVariables.length }}</span>
+              <span v-if="currentVariables.length" class="header-count">{{ currentVariables.length }}</span>
             </el-button>
           </span>
         </el-tooltip>
@@ -69,7 +72,7 @@
             ref="testCaseTreeRef"
             :data="testCaseTree"
             :props="{ label: 'name', children: 'children' }"
-            :default-expanded-keys="treeDefaultExpandedKeys"
+            :default-expand-all="false"
             node-key="id"
             @node-expand="onFolderNodeExpand"
             @node-collapse="onFolderNodeCollapse"
@@ -581,6 +584,8 @@ const selectedTestCase = ref(null)
 const currentSteps = ref([])
 const currentVariables = ref([])
 const storageStates = ref([])
+// 登录态总数取自分页响应的 count，列表只取前 200 条也能显示真实数量。
+const storageStateTotal = ref(0)
 const selectedStorageStateId = ref(null)
 const loadingStorageStates = ref(false)
 const showStorageStateDialog = ref(false)
@@ -695,19 +700,49 @@ const testCaseTree = computed(() => {
   return root
 })
 
-const treeDefaultExpandedKeys = computed(() => testCaseTree.value.filter(node => node.type === 'folder').map(node => node.id))
+// 目录树的展开状态统一由 expandedFolderKeys 维护，默认全部折叠。
+const folderNodeKeys = computed(() => testCaseFolders.value.map(folder => `f-${folder.id}`))
 
-watch(testCaseFolders, (folders, previousFolders = []) => {
-  const folderKeys = new Set(folders.map(folder => `f-${folder.id}`))
-  const previousKeys = new Set(previousFolders.map(folder => `f-${folder.id}`))
-  const nextExpandedKeys = new Set([...expandedFolderKeys.value].filter(key => folderKeys.has(key)))
+// 同步过程中树组件回抛的 expand/collapse 事件不再反向更新状态，避免相互覆盖。
+let isSyncingFolderExpansion = false
 
-  folders.forEach(folder => {
-    const key = `f-${folder.id}`
-    if (!folder.parent && !previousKeys.has(key)) nextExpandedKeys.add(key)
+// 把 expandedFolderKeys 的期望状态写回树，保证按钮状态与树的实际折叠状态一致。
+const syncFolderExpansion = () => {
+  const tree = testCaseTreeRef.value
+  if (!tree) return
+  isSyncingFolderExpansion = true
+  folderNodeKeys.value.forEach(key => {
+    const node = tree.getNode(key)
+    if (!node) return
+    const shouldExpand = expandedFolderKeys.value.has(key)
+    if (shouldExpand && !node.expanded) node.expand()
+    else if (!shouldExpand && node.expanded) node.collapse()
   })
-  expandedFolderKeys.value = nextExpandedKeys
+  isSyncingFolderExpansion = false
+}
+
+// 树数据重建（加载目录、增删目录、搜索过滤）后节点会回到折叠状态，需重新应用展开状态。
+watch(testCaseTree, () => {
+  nextTick(syncFolderExpansion)
 })
+
+watch(testCaseFolders, folders => {
+  const folderKeys = new Set(folders.map(folder => `f-${folder.id}`))
+  // 只清理已被删除目录的残留 key，不做任何自动展开：默认状态始终是全部折叠。
+  const nextExpandedKeys = new Set([...expandedFolderKeys.value].filter(key => folderKeys.has(key)))
+  if (nextExpandedKeys.size !== expandedFolderKeys.value.size) {
+    expandedFolderKeys.value = nextExpandedKeys
+  }
+})
+
+// 新建目录后只展开它的父目录，让新目录直接可见（不影响其他目录的折叠状态）。
+const revealFolderParent = folder => {
+  if (!folder?.parent) return
+  const parentKey = `f-${folder.parent}`
+  if (!testCaseFolders.value.some(item => `f-${item.id}` === parentKey)) return
+  expandedFolderKeys.value = new Set([...expandedFolderKeys.value, parentKey])
+  nextTick(syncFolderExpansion)
+}
 
 const allFoldersExpanded = computed(() => (
   testCaseFolders.value.length > 0 &&
@@ -715,30 +750,22 @@ const allFoldersExpanded = computed(() => (
 ))
 
 const expandAllFolders = () => {
-  const expandedKeys = new Set()
-  testCaseFolders.value.forEach(folder => {
-    const node = testCaseTreeRef.value?.getNode(`f-${folder.id}`)
-    if (!node) return
-    node.expand()
-    expandedKeys.add(node.data.id)
-  })
-  expandedFolderKeys.value = expandedKeys
+  expandedFolderKeys.value = new Set(folderNodeKeys.value)
+  syncFolderExpansion()
 }
 
 const collapseAllFolders = () => {
-  testCaseFolders.value.forEach(folder => {
-    testCaseTreeRef.value?.getNode(`f-${folder.id}`)?.collapse()
-  })
   expandedFolderKeys.value = new Set()
+  syncFolderExpansion()
 }
 
 const onFolderNodeExpand = data => {
-  if (data.type !== 'folder') return
+  if (isSyncingFolderExpansion || data.type !== 'folder') return
   expandedFolderKeys.value = new Set([...expandedFolderKeys.value, data.id])
 }
 
 const onFolderNodeCollapse = data => {
-  if (data.type !== 'folder') return
+  if (isSyncingFolderExpansion || data.type !== 'folder') return
   const keys = new Set(expandedFolderKeys.value)
   keys.delete(data.id)
   expandedFolderKeys.value = keys
@@ -850,6 +877,7 @@ const createFolder = async (parentFolder = null) => {
     )
     const response = await createTestCaseFolder({ project: projectId.value, name: name.trim(), parent: parentFolder?.folderId || null })
     testCaseFolders.value = [...testCaseFolders.value, response.data]
+    revealFolderParent(response.data)
     ElMessage.success(t('uiAutomation.testCase.folder.created'))
   } catch (error) {
     if (error !== 'cancel') ElMessage.error(error.response?.data?.name?.[0] || t('uiAutomation.testCase.folder.createFailed'))
@@ -1077,12 +1105,13 @@ const onProjectChange = async () => {
 
 const loadStorageStates = async () => {
   // 项目切换后刷新可用登录态，保证选择器和管理列表使用同一数据源。
-  if (!projectId.value) { storageStates.value = []; return }
+  if (!projectId.value) { storageStates.value = []; storageStateTotal.value = 0; return }
   loadingStorageStates.value = true
   try {
     const response = await getStorageStates({ project: projectId.value, page_size: 200 })
     storageStates.value = response.data.results || response.data
-  } catch { storageStates.value = [] } finally { loadingStorageStates.value = false }
+    storageStateTotal.value = response.data.count ?? storageStates.value.length
+  } catch { storageStates.value = []; storageStateTotal.value = 0 } finally { loadingStorageStates.value = false }
 }
 const openStorageStateManager = async () => { await loadStorageStates(); showStorageStateDialog.value = true }
 const formatStorageSize = size => size < 1024 ? `${size} B` : `${(size / 1024).toFixed(1)} KB`
@@ -1863,7 +1892,7 @@ onMounted(async () => {
 
 .project-selector { width: 200px; }
 .header-actions :deep(.el-button + .el-button) { margin-left: 0; }
-.variable-count { margin-left: 6px; color: var(--el-color-primary); }
+.header-count { margin-left: 6px; color: var(--el-color-primary); }
 .variables-case-heading { display: flex; align-items: center; gap: 10px; margin-bottom: 18px; }
 .variables-case-heading > span { color: var(--el-text-color-secondary); flex-shrink: 0; }
 .variables-case-heading strong { overflow-wrap: anywhere; }
