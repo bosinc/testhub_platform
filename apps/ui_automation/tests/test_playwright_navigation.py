@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, patch
 from django.test import SimpleTestCase
 from playwright.async_api import TimeoutError as PlaywrightTimeout
 
-from .playwright_engine import PlaywrightTestEngine
+from ..playwright_engine import PlaywrightTestEngine
 
 
 class PlaywrightNavigationWaitTests(SimpleTestCase):

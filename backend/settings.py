@@ -382,6 +382,10 @@ EMAIL_TIMEOUT = 30
 log_dir = os.path.join(BASE_DIR, 'logs')
 os.makedirs(log_dir, exist_ok=True)
 
+# 日志保留天数：按天轮转，只保留最近 N 天，超期文件自动删除
+# 可通过 .env 中 LOG_RETENTION_DAYS 覆盖
+LOG_RETENTION_DAYS = config('LOG_RETENTION_DAYS', default=7, cast=int)
+
 # Logging
 LOGGING = {
     'version': 1,
@@ -397,16 +401,27 @@ LOGGING = {
         },
     },
     'handlers': {
+        # 按天轮转：每天 0 点切分为 app.log.YYYY-MM-DD，超过 LOG_RETENTION_DAYS 天的文件自动删除
         'file': {
             'level': 'INFO',
-            'class': 'logging.FileHandler',
+            'class': 'logging.handlers.TimedRotatingFileHandler',
             'filename': os.path.join(BASE_DIR, 'logs', 'app.log'),
+            'when': 'midnight',
+            'interval': 1,
+            'backupCount': LOG_RETENTION_DAYS,
+            'encoding': 'utf-8',
+            'delay': True,
             'formatter': 'verbose',
         },
         'error_file': {
             'level': 'ERROR',
-            'class': 'logging.FileHandler',
+            'class': 'logging.handlers.TimedRotatingFileHandler',
             'filename': os.path.join(BASE_DIR, 'logs', 'error.log'),
+            'when': 'midnight',
+            'interval': 1,
+            'backupCount': LOG_RETENTION_DAYS,
+            'encoding': 'utf-8',
+            'delay': True,
             'formatter': 'verbose',
         },
         'console': {

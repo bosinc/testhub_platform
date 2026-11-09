@@ -6,7 +6,7 @@ from rest_framework.test import APIClient, APITestCase
 from apps.projects.models import Project, ProjectMember
 from apps.users.models import User
 from apps.versions.models import Version
-from .models import Defect, DefectTransition
+from ..models import Defect, DefectTransition
 
 
 class DefectApiTests(APITestCase):

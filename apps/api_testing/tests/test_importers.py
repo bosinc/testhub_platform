@@ -6,10 +6,10 @@ from django.contrib.auth import get_user_model
 from django.test import SimpleTestCase, TestCase
 from rest_framework.test import APIRequestFactory, force_authenticate
 
-from .models import ApiCollection, ApiProject, ApiRequest
-from .importers import parse_collection
-from .views import ApiRequestViewSet
-from .views import ApiCollectionViewSet
+from ..models import ApiCollection, ApiProject, ApiRequest
+from ..importers import parse_collection
+from ..views import ApiRequestViewSet
+from ..views import ApiCollectionViewSet
 
 
 class CollectionImportParserTests(SimpleTestCase):

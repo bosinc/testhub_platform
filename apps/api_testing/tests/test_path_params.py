@@ -1,6 +1,6 @@
 import unittest
 
-from .path_params import resolve_path_parameters
+from ..path_params import resolve_path_parameters
 
 
 class ResolvePathParametersTests(unittest.TestCase):

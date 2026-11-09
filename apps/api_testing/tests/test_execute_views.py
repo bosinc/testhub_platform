@@ -14,7 +14,7 @@ from django.test import TestCase
 from django.utils import timezone
 from rest_framework.test import APIClient
 
-from .models import (
+from ..models import (
     ApiProject, ScenarioCase, TestExecution, TestSuite, TestSuiteItem,
 )
 

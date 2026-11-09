@@ -17,11 +17,11 @@ from django.test import TestCase as DjangoTestCase
 from django.utils import timezone
 from rest_framework.test import APIClient
 
-from .models import (
+from ..models import (
     TestCase, TestCaseExecution, TestCaseStep, UiProject,
 )
-from .test_executor import TestExecutor, run_single_case
-from .variable_context import UiVariableContext
+from ..test_executor import TestExecutor, run_single_case
+from ..variable_context import UiVariableContext
 
 User = get_user_model()
 

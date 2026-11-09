@@ -3,8 +3,8 @@ from unittest.mock import Mock, patch
 from django.test import SimpleTestCase
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
-from .test_executor import TestExecutor
-from .variable_context import UiVariableContext
+from ..test_executor import TestExecutor
+from ..variable_context import UiVariableContext
 
 
 class TestSuiteExecutorFixes(SimpleTestCase):

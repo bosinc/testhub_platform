@@ -1,6 +1,6 @@
 import unittest
 
-from .recording_sync import UnsupportedRecordingCode, generate_code, parse_recording
+from ..recording_sync import UnsupportedRecordingCode, generate_code, parse_recording
 
 
 class RecordingSyncTests(unittest.TestCase):
