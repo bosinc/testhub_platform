@@ -172,10 +172,10 @@ export default {
     statusActive: 'Active',
 
     // Actions
-    batchDelete: '🗑️ Batch Delete({count})',
-    deleting: '🗑️ Deleting...',
-    refresh: '🔄 Refresh',
-    loading: '🔄 Loading...',
+    batchDelete: 'Batch Delete({count})',
+    deleting: 'Deleting...',
+    refresh: 'Refresh',
+    loading: 'Loading...',
 
     // Stats
     totalTasks: 'Total',
@@ -215,7 +215,7 @@ export default {
     createTask: 'page to create one!',
 
     // Loading
-    loadingTasks: '🔄 Loading task list...',
+    loadingTasks: 'Loading task list...',
     generatingWait: 'Task is generating, please wait...',
 
     // Pagination
@@ -507,11 +507,11 @@ export default {
     // Page Header
     title: 'Task Detail',
     taskId: 'Task ID',
-    exportBtn: '💾 Export Excel',
-    exporting: '💾 Exporting...',
+    exportBtn: 'Export Excel',
+    exporting: 'Exporting...',
 
     // Requirement Collapse Card
-    requirementTitle: '📋 Requirement Description',
+    requirementTitle: 'Requirement Description',
     requirementHint: '(Click to expand for full content)',
     copyRequirement: 'Copy Requirement',
 
@@ -525,8 +525,8 @@ export default {
     // Batch Operations
     selectAll: 'Select All',
     selectedCount: '{count} test cases selected',
-    batchAdopt: '✅ Batch Adopt ({count})',
-    batchDiscard: '❌ Batch Discard ({count})',
+    batchAdopt: 'Batch Adopt ({count})',
+    batchDiscard: 'Batch Discard ({count})',
 
     // Table Headers
     tableSelect: 'Select',
@@ -539,9 +539,9 @@ export default {
     tableActions: 'Actions',
 
     // Table Action Buttons
-    viewDetail: '📖 View Detail',
-    adopt: '✅ Adopt',
-    discard: '❌ Discard',
+    viewDetail: 'View Detail',
+    adopt: 'Adopt',
+    discard: 'Discard',
 
     // Empty State
     emptyTitle: 'No Test Case Data',
@@ -593,6 +593,10 @@ export default {
     confirmAdoptSingle: 'Are you sure to adopt test case "{scenario}"?',
     confirmDiscardSingle: 'Are you sure to discard test case "{scenario}"? This cannot be undone.',
     adoptSuccess: 'Successfully adopted {count} test cases!',
+    adoptSuccessToProject: 'Adopted {count} test cases to project "{project}"',
+    adoptTargetProject: 'Import to project:',
+    adoptTargetProjectPlaceholder: 'Select project',
+    adoptProjectRequired: 'This task has no linked project. Please select a target project first',
     discardSuccess: 'Successfully discarded {count} test cases',
     allDiscardedSuccess: 'All test cases discarded, task deleted',
     caseDiscardedSuccess: 'Test case discarded',

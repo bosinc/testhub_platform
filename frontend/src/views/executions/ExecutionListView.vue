@@ -708,6 +708,7 @@ onMounted(() => {
 .filter-bar {
   background: #f8f9fa;
   border-radius: 4px;
+  padding: 20px 20px 0;
 }
 
 .pagination {

@@ -70,6 +70,21 @@
           </span>
         </div>
         <div class="batch-buttons">
+          <!-- 任务没关联项目时必须显式选目标项目：否则用例会被写进别的项目，正式用例列表里看不到 -->
+          <div class="adopt-target" v-if="!task.project">
+            <span class="adopt-target-label">{{ $t('taskDetail.adoptTargetProject') }}</span>
+            <el-select
+              v-model="adoptProjectId"
+              clearable
+              :placeholder="$t('taskDetail.adoptTargetProjectPlaceholder')"
+              style="width: 180px">
+              <el-option
+                v-for="project in projects"
+                :key="project.id"
+                :label="project.name"
+                :value="project.id" />
+            </el-select>
+          </div>
           <button
             class="batch-adopt-btn"
             :disabled="selectedCases.length === 0"
@@ -110,7 +125,7 @@
                 v-model="selectedCases"
                 @change="updateSelectAll">
             </div>
-            <div class="body-cell">{{ testCase.caseId || `TC${String(index + 1).padStart(3, '0')}` }}</div>
+            <div class="body-cell case-id-cell" :title="testCase.caseId">{{ testCase.caseId || `TC${String(index + 1).padStart(3, '0')}` }}</div>
             <div class="body-cell">{{ testCase.scenario }}</div>
             <div class="body-cell text-truncate">
               {{ formatTextForList(testCase.precondition) }}
@@ -255,6 +270,7 @@
 
 <script>
 import api from '@/utils/api'
+import { parseTestCases as parseGeneratedTestCases } from '@/utils/testCaseParser'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { DocumentCopy } from '@element-plus/icons-vue'
 import * as XLSX from 'xlsx'
@@ -267,6 +283,8 @@ export default {
       task: {},
       testCases: [],
       selectedCases: [],
+      projects: [],
+      adoptProjectId: '',
       isLoading: true,
       showCaseDetail: false,
       selectedCase: {},
@@ -314,6 +332,7 @@ export default {
 
   mounted() {
     this.taskId = this.$route.params.taskId
+    this.loadProjects()
     this.loadTaskDetail()
   },
 
@@ -360,119 +379,8 @@ export default {
     },
 
     parseTestCases(content) {
-      // 复用RequirementAnalysisView中的解析逻辑
-      if (!content) return []
-
-      // 去除markdown加粗标记，保留纯净文本
-      let cleanContent = content.replace(/\*\*([^*]+)\*\*/g, '$1')
-
-      const lines = cleanContent.split('\n').filter(line => line.trim())
-      const testCases = []
-
-      // 尝试解析表格格式
-      let isTableFormat = false
-      const tableData = []
-
-      for (let line of lines) {
-        const trimmedLine = line.trim()
-        if (trimmedLine.includes('|') && !trimmedLine.includes('--------')) {
-          const cells = trimmedLine.split('|').map(cell => cell.trim()).filter(cell => cell)
-          if (cells.length > 1) {
-            tableData.push(cells)
-            isTableFormat = true
-          }
-        }
-      }
-      
-      if (isTableFormat && tableData.length > 1) {
-        // 表格格式解析
-        const headers = tableData[0]
-        for (let i = 1; i < tableData.length; i++) {
-          const row = tableData[i]
-          const testCase = {}
-
-          // 清理<br>标签的辅助函数
-          const cleanBrTags = (text) => {
-            if (!text) return ''
-            return text.replace(/<br\s*\/?>/gi, '\n')
-          }
-
-          headers.forEach((header, index) => {
-            const value = cleanBrTags(row[index] || '')
-
-            // 使用更精确的匹配逻辑，避免误判
-            const cleanHeader = header.trim().toLowerCase()
-
-            // 优先级匹配，避免误判
-            if (cleanHeader === '优先级' || cleanHeader === 'priority' || cleanHeader === 'priority（优先级）' || cleanHeader === '优先级（priority）') {
-              testCase.priority = value
-            } else if (cleanHeader === '用例id' || cleanHeader === '编号' || cleanHeader === 'id' || cleanHeader.includes('用例id')) {
-              testCase.caseId = value
-            } else if (cleanHeader === '测试目标' || cleanHeader === '测试场景' || cleanHeader === '场景' || cleanHeader === '标题' || cleanHeader.includes('测试目标')) {
-              testCase.scenario = value
-            } else if (cleanHeader === '前置条件' || cleanHeader === '前置' || cleanHeader === '前提条件') {
-              testCase.precondition = value
-            } else if (cleanHeader === '测试步骤' || cleanHeader === '操作步骤' || cleanHeader === '步骤') {
-              // 确保不要误匹配"预期结果"中包含的"步骤"字样
-              if (!cleanHeader.includes('预期') && !cleanHeader.includes('结果')) {
-                testCase.steps = value
-              }
-            } else if (cleanHeader === '预期结果' || cleanHeader === '预期' || cleanHeader === '结果' || cleanHeader.includes('预期结果')) {
-              testCase.expected = value
-            }
-          })
-
-          if (testCase.scenario || testCase.caseId) {
-            // If steps field is empty, use scenario as default
-            if (!testCase.steps && testCase.scenario) {
-              testCase.steps = testCase.scenario
-            }
-            // 如果没有priority，设置默认值
-            if (!testCase.priority) {
-              testCase.priority = 'P2'
-            }
-            testCases.push(testCase)
-          }
-        }
-      } else {
-        // 结构化文本格式解析
-        let currentTestCase = {}
-        let caseNumber = 1
-        
-        for (const line of lines) {
-          if (line.includes('测试用例') || line.includes('Test Case') || 
-              line.match(/^(\d+\.|\*|\-|\d+、)/)) {
-            
-            if (Object.keys(currentTestCase).length > 0) {
-              testCases.push(currentTestCase)
-              caseNumber++
-            }
-            
-            currentTestCase = {
-              caseId: `TC${String(caseNumber).padStart(3, '0')}`,
-              scenario: line.replace(/^(\d+\.|\*|\-|\d+、)\s*/, '').replace(/测试用例\d*[:：]?\s*/, '').replace(/Test Case\s*\d*[:：]?\s*/i, ''),
-              precondition: '',
-              steps: '',
-              expected: '',
-              priority: 'P2'
-            }
-          } else if (line.includes('前置条件') || line.includes('前提')) {
-            currentTestCase.precondition = line.replace(/.*?[:：]\s*/, '')
-          } else if (line.includes('测试步骤') || line.includes('操作步骤') || line.includes('步骤')) {
-            currentTestCase.steps = line.replace(/.*?[:：]\s*/, '')
-          } else if (line.includes('预期结果') || line.includes('Expected')) {
-            currentTestCase.expected = line.replace(/.*?[:：]\s*/, '')
-          } else if (line.includes('优先级')) {
-            currentTestCase.priority = line.replace(/.*?[:：]\s*/, '')
-          }
-        }
-        
-        if (Object.keys(currentTestCase).length > 0) {
-          testCases.push(currentTestCase)
-        }
-      }
-      
-      return testCases
+      // 统一使用共享解析器，保证与生成记录列表页的“用例条数”口径一致
+      return parseGeneratedTestCases(content)
     },
 
     getStatusText(status) {
@@ -519,11 +427,31 @@ export default {
       // Vue的v-model会自动处理selectedCases数组的更新
     },
 
+    async loadProjects() {
+      try {
+        const response = await api.get('/projects/')
+        this.projects = response.data.results || response.data || []
+      } catch (error) {
+        console.error('加载项目列表失败:', error)
+      }
+    },
+
+    // 采纳目标项目：任务关联项目优先；任务没关联项目时必须由用户显式选择
+    resolveAdoptProjectId() {
+      if (this.task.project) return this.task.project
+      if (this.adoptProjectId) return this.adoptProjectId
+      ElMessage.warning(this.$t('taskDetail.adoptProjectRequired'))
+      return null
+    },
+
     async batchAdopt() {
       if (this.selectedCases.length === 0) {
         ElMessage.warning(this.$t('taskDetail.pleaseSelectFirst', { action: this.$t('taskDetail.adopt') }))
         return
       }
+
+      const projectId = this.resolveAdoptProjectId()
+      if (!projectId) return
 
       try {
         await ElMessageBox.confirm(
@@ -551,11 +479,17 @@ export default {
           status: 'draft'
         }))
 
-        await api.post(`/requirement-analysis/testcase-generation/${this.taskId}/batch-adopt-selected/`, {
-          test_cases: casesData
+        const response = await api.post(`/requirement-analysis/testcase-generation/${this.taskId}/batch-adopt-selected/`, {
+          test_cases: casesData,
+          project_id: projectId
         })
 
-        ElMessage.success(this.$t('taskDetail.adoptSuccess', { count: this.selectedCases.length }))
+        const projectName = response.data?.project_name
+        ElMessage.success(
+          projectName
+            ? this.$t('taskDetail.adoptSuccessToProject', { count: this.selectedCases.length, project: projectName })
+            : this.$t('taskDetail.adoptSuccess', { count: this.selectedCases.length })
+        )
         this.selectedCases = []
 
         // Keep adopted cases in the list for multiple adoptions
@@ -768,6 +702,9 @@ export default {
     },
 
     async adoptSingleCase(testCase, index) {
+      const projectId = this.resolveAdoptProjectId()
+      if (!projectId) return
+
       try {
         await ElMessageBox.confirm(
           this.$t('taskDetail.confirmAdoptSingle', { scenario: testCase.scenario }),
@@ -791,11 +728,17 @@ export default {
           expected_result: testCase.expected || '',
           priority: this.mapPriority(testCase.priority),
           test_type: 'functional',
-          status: 'draft'
+          status: 'draft',
+          project_id: projectId
         }
 
         await api.post('/testcases/', caseData)
-        ElMessage.success(this.$t('taskDetail.adoptSuccess', { count: 1 }))
+        const projectName = this.projects.find(p => String(p.id) === String(projectId))?.name
+        ElMessage.success(
+          projectName
+            ? this.$t('taskDetail.adoptSuccessToProject', { count: 1, project: projectName })
+            : this.$t('taskDetail.adoptSuccess', { count: 1 })
+        )
 
         // 不再移除已采纳的用例，保留在列表中供多次采纳
         // this.testCases.splice(this.testCases.indexOf(testCase), 1)
@@ -972,7 +915,6 @@ export default {
 <style scoped>
 .task-detail {
   padding: 20px;
-  max-width: 1400px;
   margin: 0 auto;
 }
 
@@ -980,8 +922,8 @@ export default {
 .requirement-description-card {
   margin-bottom: 20px;
   background: white;
-  border-radius: 8px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  border-radius: 4px;
+  box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.1);
   overflow: hidden;
 }
 
@@ -1021,7 +963,7 @@ export default {
 
 .requirement-text {
   background: #f5f7fa;
-  border-radius: 6px;
+  border-radius: 4px;
   padding: 16px;
   line-height: 1.8;
   color: #606266;
@@ -1046,7 +988,7 @@ export default {
 }
 
 .requirement-description-card :deep(.el-collapse-item__header) {
-  background: #fafafa;
+  background: #f5f7fa;
   border-bottom: 1px solid #e4e7ed;
   padding: 16px 20px;
   font-size: 15px;
@@ -1072,7 +1014,7 @@ export default {
 .page-header {
   margin-bottom: 20px;
   padding-bottom: 15px;
-  border-bottom: 1px solid #eee;
+  border-bottom: 1px solid #ebeef5;
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
@@ -1083,7 +1025,7 @@ export default {
 }
 
 .page-header h2 {
-  color: #2c3e50;
+  color: #303133;
   margin: 0 0 10px 0;
 }
 
@@ -1094,20 +1036,49 @@ export default {
 }
 
 .task-id {
-  color: #666;
+  color: #606266;
   font-family: monospace;
 }
 
 .task-status {
-  padding: 4px 12px;
+  padding: 3px 10px;
+  border: 1px solid transparent;
   border-radius: 4px;
   font-size: 0.9rem;
   font-weight: bold;
+  line-height: 1.4;
+}
+
+.task-status.pending {
+  background: #fdf6ec;
+  border-color: #faecd8;
+  color: #e6a23c;
+}
+
+.task-status.generating,
+.task-status.reviewing,
+.task-status.revising {
+  background: #ecf5ff;
+  border-color: #d9ecff;
+  color: #409eff;
 }
 
 .task-status.completed {
-  background: #e8f5e8;
-  color: #388e3c;
+  background: #f0f9eb;
+  border-color: #e1f3d8;
+  color: #67c23a;
+}
+
+.task-status.failed {
+  background: #fef0f0;
+  border-color: #fde2e2;
+  color: #f56c6c;
+}
+
+.task-status.cancelled {
+  background: #f4f4f5;
+  border-color: #e9e9eb;
+  color: #909399;
 }
 
 .header-actions {
@@ -1116,11 +1087,11 @@ export default {
 }
 
 .export-btn {
-  background: #27ae60;
+  background: #67c23a;
   color: white;
   border: none;
   padding: 10px 20px;
-  border-radius: 6px;
+  border-radius: 4px;
   cursor: pointer;
   font-size: 0.9rem;
   transition: background 0.3s ease;
@@ -1128,20 +1099,20 @@ export default {
 }
 
 .export-btn:hover:not(:disabled) {
-  background: #229954;
+  background: #85ce61;
 }
 
 .export-btn:disabled {
-  background: #bdc3c7;
+  background: #c0c4cc;
   cursor: not-allowed;
 }
 
 .batch-actions {
   background: white;
-  border-radius: 8px;
+  border-radius: 4px;
   padding: 20px;
   margin-bottom: 20px;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.1);
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -1161,80 +1132,108 @@ export default {
 }
 
 .selected-count {
-  color: #3498db;
+  color: #409eff;
   font-weight: bold;
 }
 
 .batch-buttons {
   display: flex;
   gap: 10px;
+  align-items: center;
+}
+
+/* 任务未关联项目时的"导入到项目"选择器 */
+.adopt-target {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.adopt-target-label {
+  font-size: 0.85rem;
+  color: #606266;
+  white-space: nowrap;
 }
 
 .batch-adopt-btn, .batch-discard-btn {
   padding: 8px 16px;
   border: none;
-  border-radius: 6px;
+  border-radius: 4px;
   cursor: pointer;
   font-size: 0.9rem;
   transition: all 0.2s ease;
 }
 
 .batch-adopt-btn {
-  background: #27ae60;
+  background: #67c23a;
   color: white;
 }
 
 .batch-adopt-btn:hover:not(:disabled) {
-  background: #229954;
+  background: #85ce61;
 }
 
 .batch-discard-btn {
-  background: #e74c3c;
+  background: #f56c6c;
   color: white;
 }
 
 .batch-discard-btn:hover:not(:disabled) {
-  background: #c0392b;
+  background: #f78989;
 }
 
 .batch-adopt-btn:disabled, .batch-discard-btn:disabled {
-  background: #bdc3c7;
+  background: #c0c4cc;
   cursor: not-allowed;
 }
 
 .testcases-table {
   background: white;
-  border-radius: 8px;
-  overflow: hidden;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  border-radius: 4px;
+  /* 窄屏时横向滚动，避免各列被压缩导致文字断词 */
+  overflow: auto;
+  box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.1);
 }
 
+/* 用例ID 150px（容纳 CAROUSEL_001 这类编号），优先级 100px、操作 180px
+   （查看详情/采纳/弃用 三个按钮实测 160.4px + 左右 padding 16px = 176.4px，刚好一行放下） */
 .table-header {
   display: grid;
-  grid-template-columns: 60px 120px 1fr 1fr 1fr 1fr 80px 150px;
-  background: #f8f9fa;
+  grid-template-columns: 60px 150px 1fr 1fr 1fr 1fr 100px 180px;
+  min-width: 1190px;
+  background: #f5f7fa;
   font-weight: bold;
-  color: #2c3e50;
+  color: #909399;
 }
 
 .table-body .table-row {
   display: grid;
-  grid-template-columns: 60px 120px 1fr 1fr 1fr 1fr 80px 150px;
-  border-bottom: 1px solid #eee;
+  grid-template-columns: 60px 150px 1fr 1fr 1fr 1fr 100px 180px;
+  min-width: 1190px;
+  border-bottom: 1px solid #ebeef5;
   transition: background 0.2s ease;
 }
 
 .table-row:hover {
-  background: #f8f9fa;
+  background: #f5f7fa;
 }
 
 .header-cell, .body-cell {
   padding: 16px 8px;
   display: flex;
   align-items: flex-start; /* 改为顶部对齐，避免内容被裁剪 */
-  border-right: 1px solid #eee;
+  border-right: 1px solid #ebeef5;
   word-break: break-word;
   min-height: 60px;
+}
+
+/* 用例编号不按字符断行：超长时整体省略，避免出现 "CAROUSEL_00 / 2" 这种断词 */
+.body-cell.case-id-cell {
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.6;
 }
 
 /* 文本截断样式 */
@@ -1258,50 +1257,60 @@ export default {
 }
 
 .priority-tag {
-  padding: 4px 8px;
+  padding: 3px 8px;
+  border: 1px solid transparent;
   border-radius: 4px;
   font-size: 0.8rem;
   font-weight: bold;
+  line-height: 1.4;
 }
 
 .priority-tag.low {
-  background: #e8f5e8;
-  color: #388e3c;
+  background: #f0f9eb;
+  border-color: #e1f3d8;
+  color: #67c23a;
 }
 
 .priority-tag.p3 {
-  background: #e8f5e8;
-  color: #388e3c;
+  background: #f0f9eb;
+  border-color: #e1f3d8;
+  color: #67c23a;
 }
 
 .priority-tag.medium {
-  background: #e3f2fd;
-  color: #1976d2;
+  background: #ecf5ff;
+  border-color: #d9ecff;
+  color: #409eff;
 }
 
 .priority-tag.p2 {
-  background: #e3f2fd;
-  color: #1976d2;
+  background: #ecf5ff;
+  border-color: #d9ecff;
+  color: #409eff;
 }
 
 .priority-tag.high {
-  background: #fff3e0;
-  color: #f57c00;
+  background: #fdf6ec;
+  border-color: #faecd8;
+  color: #e6a23c;
 }
 
 .priority-tag.p1 {
-  background: #fff3e0;
-  color: #f57c00;
+  background: #fdf6ec;
+  border-color: #faecd8;
+  color: #e6a23c;
 }
 
 .priority-tag.critical {
-  background: #ffebee;
-  color: #d32f2f;
+  background: #fef0f0;
+  border-color: #fde2e2;
+  color: #f56c6c;
 }
 
 .priority-tag.p0 {
-  background: #ffebee;
-  color: #d32f2f;
+  background: #fef0f0;
+  border-color: #fde2e2;
+  color: #f56c6c;
 }
 
 .action-buttons {
@@ -1320,30 +1329,30 @@ export default {
 }
 
 .view-btn {
-  background: #3498db;
+  background: #409eff;
   color: white;
 }
 
 .view-btn:hover {
-  background: #2980b9;
+  background: #66b1ff;
 }
 
 .adopt-btn {
-  background: #27ae60;
+  background: #67c23a;
   color: white;
 }
 
 .adopt-btn:hover {
-  background: #229954;
+  background: #85ce61;
 }
 
 .discard-btn {
-  background: #e74c3c;
+  background: #f56c6c;
   color: white;
 }
 
 .discard-btn:hover {
-  background: #c0392b;
+  background: #f78989;
 }
 
 .pagination-section {
@@ -1353,8 +1362,8 @@ export default {
   align-items: center;
   background: white;
   padding: 15px;
-  border-radius: 8px;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  border-radius: 4px;
+  box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.1);
 }
 
 .pagination-controls {
@@ -1377,20 +1386,33 @@ export default {
 
 .pagination-buttons button {
   padding: 6px 12px;
-  border: 1px solid #ddd;
+  border: 1px solid #dcdfe6;
   background: white;
+  color: #606266;
   cursor: pointer;
   border-radius: 4px;
   transition: all 0.2s ease;
 }
 
 .pagination-buttons button:hover:not(:disabled) {
-  background: #f0f0f0;
+  background: #ecf5ff;
+  border-color: #c6e2ff;
+  color: #409eff;
 }
 
 .pagination-buttons button:disabled {
-  color: #ccc;
+  color: #a8abb2;
+  background: #f5f7fa;
   cursor: not-allowed;
+}
+
+.page-size-selector select {
+  padding: 6px 10px;
+  border: 1px solid #dcdfe6;
+  border-radius: 4px;
+  color: #606266;
+  background: #fff;
+  cursor: pointer;
 }
 
 .case-detail-modal {
@@ -1408,7 +1430,7 @@ export default {
 
 .modal-content {
   background: white;
-  border-radius: 12px;
+  border-radius: 4px;
   max-width: 800px;
   width: 90%;
   max-height: 80vh;
@@ -1420,12 +1442,12 @@ export default {
   justify-content: space-between;
   align-items: center;
   padding: 20px 30px;
-  border-bottom: 1px solid #eee;
+  border-bottom: 1px solid #ebeef5;
 }
 
 .modal-header h3 {
   margin: 0;
-  color: #2c3e50;
+  color: #303133;
 }
 
 .close-btn {
@@ -1433,7 +1455,7 @@ export default {
   border: none;
   font-size: 1.5rem;
   cursor: pointer;
-  color: #666;
+  color: #606266;
 }
 
 .modal-body {
@@ -1446,37 +1468,37 @@ export default {
 
 .detail-item label {
   font-weight: bold;
-  color: #2c3e50;
+  color: #303133;
   display: block;
   margin-bottom: 8px;
 }
 
 .detail-item span, .detail-item p {
-  color: #666;
+  color: #606266;
   line-height: 1.6;
 }
 
 .test-steps {
   white-space: pre-line;
-  background: #f8f9fa;
+  background: #f5f7fa;
   padding: 15px;
-  border-radius: 6px;
-  border-left: 4px solid #3498db;
+  border-radius: 4px;
+  border-left: 4px solid #409eff;
 }
 
 .loading-state, .error-state, .empty-state {
   text-align: center;
   padding: 60px 20px;
-  color: #666;
+  color: #606266;
 }
 
 .error-state h3, .empty-state h3 {
-  color: #2c3e50;
+  color: #303133;
   margin-bottom: 10px;
 }
 
 .error-state a {
-  color: #3498db;
+  color: #409eff;
   text-decoration: none;
 }
 
@@ -1492,15 +1514,15 @@ export default {
 
   .form-item label {
     font-weight: bold;
-    color: #2c3e50;
+    color: #303133;
     display: block;
     margin-bottom: 8px;
   }
 
   .readonly-field {
-    color: #666;
+    color: #606266;
     padding: 8px 12px;
-    background: #f5f5f5;
+    background: #f5f7fa;
     border-radius: 4px;
     display: inline-block;
   }
@@ -1512,15 +1534,15 @@ export default {
   justify-content: flex-end;
   gap: 12px;
   padding: 20px 30px;
-  border-top: 1px solid #eee;
-  background: #f9f9f9;
-  border-radius: 0 0 12px 12px;
+  border-top: 1px solid #ebeef5;
+  background: #f5f7fa;
+  border-radius: 0 0 4px 4px;
 }
 
 .action-btn {
   padding: 10px 20px;
-  border: none;
-  border-radius: 6px;
+  border: 1px solid transparent;
+  border-radius: 4px;
   cursor: pointer;
   font-size: 14px;
   font-weight: 500;
@@ -1554,21 +1576,27 @@ export default {
 }
 
 .cancel-btn {
-  background: #909399;
-  color: white;
+  background: #fff;
+  color: #606266;
+  border: 1px solid #dcdfe6;
 }
 
 .cancel-btn:hover:not(:disabled) {
-  background: #a6a9ad;
+  background: #ecf5ff;
+  border-color: #c6e2ff;
+  color: #409eff;
 }
 
 .close-btn-footer {
-  background: #e4e7ed;
+  background: #fff;
   color: #606266;
+  border: 1px solid #dcdfe6;
 }
 
 .close-btn-footer:hover {
   background: #ecf5ff;
+  border-color: #c6e2ff;
+  color: #409eff;
 }
 </style>
 

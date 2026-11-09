@@ -343,6 +343,7 @@ import api from '@/utils/api'
 import { ElMessage } from 'element-plus'
 import * as XLSX from 'xlsx'
 import { useUserStore } from '@/stores/user'
+import { getPreferredProjectId } from '@/utils/projectSelection'
 
 export default {
   name: 'RequirementAnalysisView',
@@ -482,6 +483,12 @@ export default {
       try {
         const response = await api.get('/projects/')
         this.projects = response.data.results || response.data
+        // 默认选中最近使用的项目：生成任务带上项目，采纳时用例才会落到用户正在看的项目里
+        const preferredProjectId = getPreferredProjectId(this.projects)
+        if (preferredProjectId) {
+          if (!this.selectedProject) this.selectedProject = preferredProjectId
+          if (!this.manualInput.selectedProject) this.manualInput.selectedProject = preferredProjectId
+        }
       } catch (error) {
         console.error(this.$t('requirementAnalysis.loadProjectsFailed'), error)
       }
@@ -1503,7 +1510,6 @@ export default {
 <style scoped>
 .requirement-analysis {
   padding: 20px;
-  max-width: 1200px;
   margin: 0 auto;
   position: relative;
 }

@@ -41,6 +41,7 @@ from .serializers import (
     BusinessRequirementSerializer, GeneratedTestCaseSerializer,
     AnalysisTaskSerializer, DocumentUploadSerializer,
     TestCaseGenerationRequestSerializer, TestCaseReviewRequestSerializer,
+    BusinessRequirementTestCaseGenerationSerializer,
     AIModelConfigSerializer, PromptConfigSerializer, TestCaseGenerationTaskSerializer,
     GenerationConfigSerializer
 )
@@ -349,7 +350,7 @@ class BusinessRequirementViewSet(viewsets.ReadOnlyModelViewSet):
     @action(detail=False, methods=['post'])
     def generate_test_cases(self, request):
         """为选中的需求生成测试用例"""
-        serializer = TestCaseGenerationRequestSerializer(data=request.data)
+        serializer = BusinessRequirementTestCaseGenerationSerializer(data=request.data, context={'request': request})
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -1463,11 +1464,54 @@ class TestCaseGenerationTaskViewSet(viewsets.ModelViewSet):
 
         return queryset.order_by('-created_at')
 
+    @staticmethod
+    def _finalize_test_cases(content):
+        """统一收口最终用例内容：剔除末尾残缺行 → 按编号排序 → 补齐连续编号。
+
+        生成、评审、改进任一环节被截断（命中 max_tokens、流式中断、超时）时，
+        都在这里兜底，避免把残缺用例写进 final_test_cases。
+        """
+        if not content:
+            return content
+
+        fixed = AIModelService.fix_incomplete_last_case(content)
+        sorted_cases = AIModelService.sort_test_cases_by_id(fixed)
+        return AIModelService.renumber_test_cases(sorted_cases)
+
+    @staticmethod
+    def _resolve_adopt_project(task, request):
+        """确定采纳/导入时测试用例要落到哪个项目。
+
+        优先级：任务关联项目 → 请求里显式传入的 project_id。
+        两者都拿不到时抛 ValueError，由调用方转成 400。
+
+        以前这里是「静默取用户第一个可访问项目」，任务没关联项目时用例会被写进
+        用户根本没在看的项目里，表现就是「采纳成功但正式用例列表看不到」。
+        """
+        from apps.projects.models import Project
+        from django.db import models
+
+        if task.project_id:
+            return task.project
+
+        project_id = request.data.get('project_id')
+        if not project_id:
+            raise ValueError('该生成任务没有关联项目，请在任务详情页选择导入项目后再采纳')
+
+        user = request.user if getattr(request, 'user', None) and request.user.is_authenticated else task.created_by
+        accessible_projects = Project.objects.filter(
+            models.Q(owner=user) | models.Q(members=user)
+        ).distinct()
+        project = accessible_projects.filter(id=project_id).first()
+        if not project:
+            raise ValueError('目标项目不存在或你没有访问权限')
+        return project
+
     @action(detail=False, methods=['post'])
     def generate(self, request):
         """创建新的测试用例生成任务"""
         try:
-            serializer = TestCaseGenerationRequestSerializer(data=request.data)
+            serializer = TestCaseGenerationRequestSerializer(data=request.data, context={'request': request})
             if not serializer.is_valid():
                 return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -1523,9 +1567,9 @@ class TestCaseGenerationTaskViewSet(viewsets.ModelViewSet):
                 'reviewer_prompt_config': reviewer_prompt.id if reviewer_prompt else None,
             }
 
-            # 如果请求中包含项目ID，添加到任务数据中
-            if 'project' in validated_data and validated_data['project']:
-                task_data['project'] = validated_data['project']
+            # 如果请求中包含项目ID，添加到任务数据中（validated_data 里是 Project 实例，取 pk）
+            if validated_data.get('project'):
+                task_data['project'] = validated_data['project'].pk
 
             # 处理输出模式：优先使用用户指定的，否则使用生成行为配置的默认值
             output_mode = request.data.get('output_mode')
@@ -1744,23 +1788,18 @@ class TestCaseGenerationTaskViewSet(viewsets.ModelViewSet):
                                                         # 始终使用返回的完整内容，避免流式输出被截断导致数据丢失
                                                         # revised_cases 是完整的返回值，task.final_test_cases 只是流式回调的中间状态
                                                         if revised_cases and len(revised_cases) > 0:
-                                                            # 检测并修复不完整的最后一条用例
-                                                            revised_cases = AIModelService.fix_incomplete_last_case(
-                                                                revised_cases)
-
-                                                            # 按用例编号排序后再保存
-                                                            sorted_cases = AIModelService.sort_test_cases_by_id(
-                                                                revised_cases)
-                                                            # 重新编号使编号连续
-                                                            renumbered_cases = AIModelService.renumber_test_cases(
-                                                                sorted_cases)
-                                                            task.final_test_cases = renumbered_cases
+                                                            # 收口：剔除末尾残缺行 → 按编号排序 → 连续编号
+                                                            revised_cases = self._finalize_test_cases(revised_cases)
+                                                            task.final_test_cases = revised_cases
                                                             logger.info(
                                                                 f"任务 {task.task_id} 测试用例改进完成 (revised_cases长度: {len(revised_cases)}, 最终保存长度: {len(task.final_test_cases)})")
                                                         else:
                                                             # 如果返回为空，保留流式回调保存的内容
                                                             logger.warning(
                                                                 f"任务 {task.task_id} 改进返回为空，使用流式回调保存的内容 (长度: {len(task.final_test_cases) if task.final_test_cases else 0})")
+                                                            # 流式中间态同样可能是截断的，这里再收口一次
+                                                            task.final_test_cases = self._finalize_test_cases(
+                                                                task.final_test_cases)
                                                         # 显式落库最终用例：
                                                         # 1) 弥补节流写库可能遗漏的尾部内容；
                                                         # 2) 关闭自动改进(enable_auto_revise=False)时不会触发流式回调，这里保证最终结果不为空。
@@ -1768,37 +1807,23 @@ class TestCaseGenerationTaskViewSet(viewsets.ModelViewSet):
                                                     except Exception as revise_error:
                                                         logger.warning(
                                                             f"任务 {task.task_id} 改进测试用例失败: {revise_error}，使用原始用例")
-                                                        # 按用例编号排序后再保存
-                                                        sorted_cases = AIModelService.sort_test_cases_by_id(
-                                                            generated_cases)
-                                                        # 重新编号使编号连续
-                                                        task.final_test_cases = AIModelService.renumber_test_cases(
-                                                            sorted_cases)
+                                                        task.final_test_cases = self._finalize_test_cases(generated_cases)
                                                         task.save()
 
                                                 except Exception as inner_error:
                                                     logger.warning(
                                                         f"任务 {task.task_id} 流式评审过程异常: {inner_error}")
                                                     task.review_feedback = f"评审过程出现异常: {str(inner_error)}\n\n建议：测试用例结构完整，可以使用。"
-                                                    # 按用例编号排序后再保存
-                                                    sorted_cases = AIModelService.sort_test_cases_by_id(generated_cases)
-                                                    # 重新编号使编号连续
-                                                    task.final_test_cases = AIModelService.renumber_test_cases(
-                                                        sorted_cases)
+                                                    task.final_test_cases = self._finalize_test_cases(generated_cases)
                                                     task.save()
 
                                             except Exception as review_error:
                                                 logger.error(f"流式评审任务 {task.task_id} 失败: {review_error}")
-                                                # 按用例编号排序后再保存
-                                                sorted_cases = AIModelService.sort_test_cases_by_id(generated_cases)
-                                                task.final_test_cases = AIModelService.renumber_test_cases(sorted_cases)
+                                                task.final_test_cases = self._finalize_test_cases(generated_cases)
                                                 task.review_feedback = f"评审失败: {str(review_error)}\n\n建议：测试用例结构完整，可以使用。"
                                                 task.save()
                                         else:
-                                            # 按用例编号排序后再保存
-                                            sorted_cases = AIModelService.sort_test_cases_by_id(generated_cases)
-                                            # 重新编号使编号连续
-                                            task.final_test_cases = AIModelService.renumber_test_cases(sorted_cases)
+                                            task.final_test_cases = self._finalize_test_cases(generated_cases)
                                             logger.info(f"任务 {task.task_id} 跳过评审，直接使用生成的测试用例")
                                             task.save()
 
@@ -1892,23 +1917,18 @@ class TestCaseGenerationTaskViewSet(viewsets.ModelViewSet):
                                                         # 始终使用返回的完整内容，避免流式输出被截断导致数据丢失
                                                         # revised_cases 是完整的返回值，task.final_test_cases 只是流式回调的中间状态
                                                         if revised_cases and len(revised_cases) > 0:
-                                                            # 检测并修复不完整的最后一条用例
-                                                            revised_cases = AIModelService.fix_incomplete_last_case(
-                                                                revised_cases)
-
-                                                            # 按用例编号排序后再保存
-                                                            sorted_cases = AIModelService.sort_test_cases_by_id(
-                                                                revised_cases)
-                                                            # 重新编号使编号连续
-                                                            renumbered_cases = AIModelService.renumber_test_cases(
-                                                                sorted_cases)
-                                                            task.final_test_cases = renumbered_cases
+                                                            # 收口：剔除末尾残缺行 → 按编号排序 → 连续编号
+                                                            revised_cases = self._finalize_test_cases(revised_cases)
+                                                            task.final_test_cases = revised_cases
                                                             logger.info(
                                                                 f"任务 {task.task_id} 测试用例改进完成 (revised_cases长度: {len(revised_cases)}, 最终保存长度: {len(task.final_test_cases)})")
                                                         else:
                                                             # 如果返回为空，保留流式回调保存的内容
                                                             logger.warning(
                                                                 f"任务 {task.task_id} 改进返回为空，使用流式回调保存的内容 (长度: {len(task.final_test_cases) if task.final_test_cases else 0})")
+                                                            # 流式中间态同样可能是截断的，这里再收口一次
+                                                            task.final_test_cases = self._finalize_test_cases(
+                                                                task.final_test_cases)
                                                         # 显式落库最终用例：
                                                         # 1) 弥补节流写库可能遗漏的尾部内容；
                                                         # 2) 关闭自动改进(enable_auto_revise=False)时不会触发流式回调，这里保证最终结果不为空。
@@ -1916,37 +1936,23 @@ class TestCaseGenerationTaskViewSet(viewsets.ModelViewSet):
                                                     except Exception as revise_error:
                                                         logger.warning(
                                                             f"任务 {task.task_id} 改进测试用例失败: {revise_error}，使用原始用例")
-                                                        # 按用例编号排序后再保存
-                                                        sorted_cases = AIModelService.sort_test_cases_by_id(
-                                                            generated_cases)
-                                                        # 重新编号使编号连续
-                                                        task.final_test_cases = AIModelService.renumber_test_cases(
-                                                            sorted_cases)
+                                                        task.final_test_cases = self._finalize_test_cases(generated_cases)
                                                         task.save()
 
                                                 except Exception as inner_error:
                                                     logger.warning(f"任务 {task.task_id} 评审过程异常: {inner_error}")
                                                     task.review_feedback = f"评审过程出现异常: {str(inner_error)}\n\n建议：测试用例结构完整，可以使用。"
-                                                    # 按用例编号排序后再保存
-                                                    sorted_cases = AIModelService.sort_test_cases_by_id(generated_cases)
-                                                    # 重新编号使编号连续
-                                                    task.final_test_cases = AIModelService.renumber_test_cases(
-                                                        sorted_cases)
+                                                    task.final_test_cases = self._finalize_test_cases(generated_cases)
                                                     task.save()
 
                                             except Exception as review_error:
                                                 logger.error(f"评审任务 {task.task_id} 失败: {review_error}")
                                                 # 评审失败时，仍然使用生成的测试用例作为最终结果
-                                                # 按用例编号排序后再保存
-                                                sorted_cases = AIModelService.sort_test_cases_by_id(generated_cases)
-                                                task.final_test_cases = AIModelService.renumber_test_cases(sorted_cases)
+                                                task.final_test_cases = self._finalize_test_cases(generated_cases)
                                                 task.review_feedback = f"评审失败: {str(review_error)}\n\n建议：测试用例结构完整，可以使用。"
                                                 task.save()
                                         else:
-                                            # 按用例编号排序后再保存
-                                            sorted_cases = AIModelService.sort_test_cases_by_id(generated_cases)
-                                            # 重新编号使编号连续
-                                            task.final_test_cases = AIModelService.renumber_test_cases(sorted_cases)
+                                            task.final_test_cases = self._finalize_test_cases(generated_cases)
                                             logger.info(f"任务 {task.task_id} 跳过评审，直接使用生成的测试用例")
                                             task.save()
 
@@ -2402,43 +2408,11 @@ class TestCaseGenerationTaskViewSet(viewsets.ModelViewSet):
                     from apps.projects.models import Project
                     from django.db import models
 
-                    # 优先使用任务关联的项目
-                    if task.project:
-                        project = task.project
-                        logger.info(f"使用任务关联的项目: {project.name}")
-                    else:
-                        # 回退到项目选择逻辑
-                        user = task.created_by
-                        accessible_projects = Project.objects.filter(
-                            models.Q(owner=user) | models.Q(members=user)
-                        ).distinct()
-
-                        # 尝试从前端获取项目ID
-                        project_id = request.data.get('project_id')
-
-                        if project_id:
-                            try:
-                                project = accessible_projects.get(id=project_id)
-                            except Project.DoesNotExist:
-                                # 如果指定项目不存在或无权限，使用第一个可访问的项目
-                                project = accessible_projects.first()
-                                if not project:
-                                    # 如果用户没有任何项目，创建默认项目
-                                    project = Project.objects.create(
-                                        name="默认项目",
-                                        owner=user,
-                                        description='系统自动创建的默认项目'
-                                    )
-                        else:
-                            # 没有指定项目，使用第一个可访问的项目
-                            project = accessible_projects.first()
-                            if not project:
-                                # 如果用户没有任何项目，创建默认项目
-                                project = Project.objects.create(
-                                    name="默认项目",
-                                    owner=user,
-                                    description='系统自动创建的默认项目'
-                                )
+                    # 统一收口：任务关联项目 → 请求里的 project_id，都没有则报错（不再静默挑项目）
+                    try:
+                        project = self._resolve_adopt_project(task, request)
+                    except ValueError as exc:
+                        return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
                     adopted_count = 0
                     for test_case in test_cases:
@@ -2539,43 +2513,11 @@ class TestCaseGenerationTaskViewSet(viewsets.ModelViewSet):
                 from apps.projects.models import Project
                 from django.db import models
 
-                # 优先使用任务关联的项目
-                if task.project:
-                    project = task.project
-                    logger.info(f"使用任务关联的项目: {project.name}")
-                else:
-                    # 回退到项目选择逻辑
-                    user = task.created_by
-                    accessible_projects = Project.objects.filter(
-                        models.Q(owner=user) | models.Q(members=user)
-                    ).distinct()
-
-                    # 尝试从前端获取项目ID
-                    project_id = request.data.get('project_id')
-
-                    if project_id:
-                        try:
-                            project = accessible_projects.get(id=project_id)
-                        except Project.DoesNotExist:
-                            # 如果指定项目不存在或无权限，使用第一个可访问的项目
-                            project = accessible_projects.first()
-                            if not project:
-                                # 如果用户没有任何项目，创建默认项目
-                                project = Project.objects.create(
-                                    name="默认项目",
-                                    owner=user,
-                                    description='系统自动创建的默认项目'
-                                )
-                    else:
-                        # 没有指定项目，使用第一个可访问的项目
-                        project = accessible_projects.first()
-                        if not project:
-                            # 如果用户没有任何项目，创建默认项目
-                            project = Project.objects.create(
-                                name="默认项目",
-                                owner=user,
-                                description='系统自动创建的默认项目'
-                            )
+                # 统一收口：任务关联项目 → 请求里的 project_id，都没有则报错（不再静默挑项目）
+                try:
+                    project = self._resolve_adopt_project(task, request)
+                except ValueError as exc:
+                    return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
                 adopted_count = 0
                 for test_case in test_cases:
@@ -2632,43 +2574,11 @@ class TestCaseGenerationTaskViewSet(viewsets.ModelViewSet):
                 from apps.projects.models import Project
                 from django.db import models
 
-                # 优先使用任务关联的项目
-                if task.project:
-                    project = task.project
-                    logger.info(f"使用任务关联的项目: {project.name}")
-                else:
-                    # 回退到项目选择逻辑
-                    user = task.created_by
-                    accessible_projects = Project.objects.filter(
-                        models.Q(owner=user) | models.Q(members=user)
-                    ).distinct()
-
-                    # 尝试从前端获取项目ID
-                    project_id = request.data.get('project_id')
-
-                    if project_id:
-                        try:
-                            project = accessible_projects.get(id=project_id)
-                        except Project.DoesNotExist:
-                            # 如果指定项目不存在或无权限，使用第一个可访问的项目
-                            project = accessible_projects.first()
-                            if not project:
-                                # 如果用户没有任何项目，创建默认项目
-                                project = Project.objects.create(
-                                    name="默认项目",
-                                    owner=user,
-                                    description='系统自动创建的默认项目'
-                                )
-                    else:
-                        # 没有指定项目，使用第一个可访问的项目
-                        project = accessible_projects.first()
-                        if not project:
-                            # 如果用户没有任何项目，创建默认项目
-                            project = Project.objects.create(
-                                name="默认项目",
-                                owner=user,
-                                description='系统自动创建的默认项目'
-                            )
+                # 统一收口：任务关联项目 → 请求里的 project_id，都没有则报错（不再静默挑项目）
+                try:
+                    project = self._resolve_adopt_project(task, request)
+                except ValueError as exc:
+                    return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
                 adopted_count = 0
                 for case_data in test_cases_data:
@@ -2913,32 +2823,53 @@ class TestCaseGenerationTaskViewSet(viewsets.ModelViewSet):
 
     def _parse_table_format(self, content):
         """解析表格格式的测试用例"""
-        lines = [line.strip() for line in content.split('\n') if line.strip()]
+        lines = content.split('\n')
         test_cases = []
-        table_data = []
 
-        # 提取表格数据
-        for line in lines:
-            if '|' in line and not line.startswith('|-'):
-                # 针对内容中可能包含转义后的 \| 进行预处理
-                # 先把 \| 替换为一个临时占位符，分割完后再替换回来
-                temp_placeholder = "___PIPE___"
-                processed_line = line.replace(r'\|', temp_placeholder)
+        # 按连续行切分为多个表格块（内容里可能同时存在分析/覆盖矩阵等表格）
+        blocks = []
+        current_block = []
+        for raw_line in lines:
+            line = raw_line.strip()
 
-                # 移除首尾的 |
-                if processed_line.startswith('|'):
-                    processed_line = processed_line[1:]
-                if processed_line.endswith('|'):
-                    processed_line = processed_line[:-1]
+            if not line or '|' not in line:
+                if current_block:
+                    blocks.append(current_block)
+                    current_block = []
+                continue
 
-                cells = []
-                for cell in processed_line.split('|'):
-                    # 恢复原来的转义管道符，并清理空格
-                    cell_content = cell.replace(temp_placeholder, '|').replace('&#124;', '|').strip()
-                    cells.append(cell_content)
+            # 分隔行属于表格的一部分，只跳过不采集，不打断当前表格块
+            if AIModelService._is_table_separator(line):
+                continue
 
-                if len(cells) > 1:
-                    table_data.append(cells)
+            # 针对内容中可能包含转义后的 \| 进行预处理
+            # 先把 \| 替换为一个临时占位符，分割完后再替换回来
+            temp_placeholder = "___PIPE___"
+            processed_line = line.replace(r'\|', temp_placeholder)
+
+            # 移除首尾的 |
+            if processed_line.startswith('|'):
+                processed_line = processed_line[1:]
+            if processed_line.endswith('|'):
+                processed_line = processed_line[:-1]
+
+            cells = []
+            for cell in processed_line.split('|'):
+                # 恢复原来的转义管道符，并清理空格
+                cell_content = cell.replace(temp_placeholder, '|').replace('&#124;', '|').strip()
+                cells.append(cell_content)
+
+            if len(cells) > 1:
+                current_block.append(cells)
+
+        if current_block:
+            blocks.append(current_block)
+
+        if not blocks:
+            return []
+
+        # 取行数最多的表格块作为用例表，避免把非用例表格当成用例表解析
+        table_data = max(blocks, key=len)
 
         if len(table_data) < 2:
             return []

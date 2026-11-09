@@ -1,4 +1,5 @@
 from rest_framework import serializers
+from apps.projects.models import Project
 from .models import (
     RequirementDocument, RequirementAnalysis, BusinessRequirement,
     GeneratedTestCase, AnalysisTask, AIModelConfig, PromptConfig, TestCaseGenerationTask,
@@ -119,8 +120,13 @@ class DocumentUploadSerializer(serializers.ModelSerializer):
         return super().create(validated_data)
 
 
-class TestCaseGenerationRequestSerializer(serializers.Serializer):
-    """测试用例生成请求序列化器"""
+class BusinessRequirementTestCaseGenerationSerializer(serializers.Serializer):
+    """旧接口 generate_test_cases 的请求序列化器（按需求ID批量生成）。
+
+    注意：它原本也叫 TestCaseGenerationRequestSerializer，与下面 287 行那个
+    「新的」同名，后者会遮蔽前者，导致 generate_test_cases 取 requirement_ids 时 KeyError。
+    这里改名消除遮蔽。
+    """
     requirement_ids = serializers.ListField(
         child=serializers.IntegerField(),
         help_text="需求ID列表"
@@ -290,6 +296,29 @@ class TestCaseGenerationRequestSerializer(serializers.Serializer):
     requirement_text = serializers.CharField(help_text="需求描述")
     use_writer_model = serializers.BooleanField(default=True, help_text="是否使用编写模型")
     use_reviewer_model = serializers.BooleanField(default=True, help_text="是否使用评审模型")
+    # 之前漏了这个字段，导致前端选的「关联项目」被 DRF 直接丢掉，
+    # 生成出来的任务 project 永远是 NULL，采纳时才会被塞进随机的项目。
+    project = serializers.PrimaryKeyRelatedField(
+        queryset=Project.objects.all(),
+        required=False,
+        allow_null=True,
+        help_text="关联项目ID（可选）"
+    )
+
+    def validate_project(self, value):
+        """只允许关联当前用户可访问的项目。"""
+        if value is None:
+            return value
+        request = self.context.get('request')
+        user = getattr(request, 'user', None)
+        if user is not None and user.is_authenticated:
+            from django.db import models as django_models
+            accessible = Project.objects.filter(
+                django_models.Q(owner=user) | django_models.Q(members=user)
+            ).distinct()
+            if not accessible.filter(id=value.id).exists():
+                raise serializers.ValidationError('项目不存在或你没有访问权限')
+        return value
 
 
 class GenerationConfigSerializer(serializers.ModelSerializer):

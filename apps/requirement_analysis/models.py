@@ -1068,6 +1068,52 @@ class AIModelService:
         return full_content
 
     @staticmethod
+    def _split_table_row(line: str) -> List[str]:
+        """按 | 拆分 Markdown 表格行，保留空单元格（避免某列为空导致后续列错位）。"""
+        text = (line or '').strip()
+        if text.startswith('|'):
+            text = text[1:]
+        if text.endswith('|'):
+            text = text[:-1]
+        return [cell.strip() for cell in text.split('|')]
+
+    @staticmethod
+    def _is_table_separator(line: str) -> bool:
+        """判断是否为表格分隔行，如 |---|---|、|---|:--:|"""
+        import re
+
+        stripped = (line or '').strip()
+        if not stripped or '-' not in stripped:
+            return False
+        return bool(re.match(r'^\|?[\s:\-|]+\|?$', stripped))
+
+    @staticmethod
+    def _find_table_layout(lines: List[str]):
+        """定位内容中的用例表格：返回 (分隔线索引, 数据行起始索引, 数据行结束索引)。
+
+        内容里可能同时存在“分析/覆盖矩阵”等表格，这里取数据行最多的那个表格块，
+        避免把非用例表格当成用例表处理。找不到表格时返回 (-1, -1, -1)。
+        """
+        best = (-1, -1, -1)
+        best_rows = 0
+
+        for i, line in enumerate(lines):
+            if not line.strip().startswith('|') or not AIModelService._is_table_separator(line):
+                continue
+
+            data_start = i + 1
+            data_end = data_start
+            while data_end < len(lines) and lines[data_end].strip().startswith('|'):
+                data_end += 1
+
+            rows = data_end - data_start
+            if rows > best_rows:
+                best_rows = rows
+                best = (i, data_start, data_end)
+
+        return best
+
+    @staticmethod
     def sort_test_cases_by_id(test_cases_content: str) -> str:
         """
         按照测试用例编号排序测试用例内容
@@ -1086,6 +1132,40 @@ class AIModelService:
         # 按行分割内容
         lines = test_cases_content.split('\n')
 
+        # 表格格式（默认提示词产出的就是表格）：按首列编号的数值排序
+        _, data_start, data_end = AIModelService._find_table_layout(lines)
+        if data_start != -1:
+            block = lines[data_start:data_end]
+            if len(block) < 2:
+                return test_cases_content
+
+            def table_key(line):
+                cells = AIModelService._split_table_row(line)
+                case_id = cells[0] if cells else ''
+                match = re.match(r'^(.*?)(\d+)$', case_id)
+                if not match:
+                    return None
+                return match.group(1), int(match.group(2))
+
+            keys = [table_key(line) for line in block]
+            if any(key is None for key in keys):
+                logger.info("表格用例编号无法解析，保持原顺序")
+                return test_cases_content
+
+            # 仅在单一编号前缀（同一模块）内排序，避免多模块用例相互穿插
+            if len({key[0] for key in keys}) > 1:
+                logger.info("检测到多个用例编号前缀，保持原顺序不排序")
+                return test_cases_content
+
+            sorted_block = [line for _, line in sorted(zip(keys, block), key=lambda item: item[0][1])]
+            if sorted_block == block:
+                return test_cases_content
+
+            lines[data_start:data_end] = sorted_block
+            logger.info(f"已按用例编号对 {len(block)} 条表格用例排序")
+            return '\n'.join(lines)
+
+        # 非表格格式：按用例块首行的编号排序（原逻辑）
         # 识别用例块：每个用例从包含编号的行开始
         # 支持多种编号格式：TC-001, TC001, TEST-001, 测试用例1, 1. 等
         case_pattern = re.compile(r'^(#{1,6}\s+)?(?:TC[-_]?\d+|TEST[-_]?\d+|测试用例\d+|\d+[\.\、]\s*[:：]?\s*\S+)',
@@ -1141,7 +1221,13 @@ class AIModelService:
     @staticmethod
     def fix_incomplete_last_case(test_cases_content: str) -> str:
         """
-        检测并修复不完整的最后一条测试用例
+        检测并剔除末尾不完整的测试用例
+
+        覆盖两种截断形态（模型命中 max_tokens 或流式中断时最常见）：
+        1. 最后一行被截断在单元格中间：行首是 |，行尾没有 |；
+        2. 最后一行结构完整，但列数少于表头列数（缺列）。
+
+        只处理 Markdown 表格，非表格内容原样返回。
 
         Args:
             test_cases_content: 测试用例内容
@@ -1154,50 +1240,62 @@ class AIModelService:
 
         lines = test_cases_content.split('\n')
 
-        # 检查最后几行，找到最后一个表格行
-        table_lines = []
-        for i in range(len(lines) - 1, -1, -1):
-            line = lines[i].strip()
-            if line.startswith('|') and line.endswith('|'):
-                table_lines.insert(0, (i, line))
-                # 只检查最后10行
-                if len(table_lines) >= 10:
-                    break
+        # 从末尾跳过空行，定位最后一行表格
+        last_index = len(lines) - 1
+        while last_index >= 0 and not lines[last_index].strip():
+            last_index -= 1
 
-        if not table_lines:
+        if last_index < 0 or not lines[last_index].strip().startswith('|'):
+            # 末尾不是表格行，无可判定的截断
             return test_cases_content
 
-        # 检查最后一个表格行是否完整（应该有7个|，即7列）
-        last_line_index, last_line = table_lines[-1]
-        column_count = last_line.count('|')
+        # 向上回溯整个表格块
+        block_start = last_index
+        while block_start - 1 >= 0 and lines[block_start - 1].strip().startswith('|'):
+            block_start -= 1
 
-        # 正常的表格应该有7个|（开头+结尾+5个分隔符）
-        if column_count < 7:
-            logger.warning(f"检测到最后一条用例不完整: 只有{column_count}列，应该是7列")
-            # 删除不完整的最后一条用例
-            # 找到完整的上一条用例
-            for i in range(len(table_lines) - 2, -1, -1):
-                prev_index, prev_line = table_lines[i]
-                if prev_line.count('|') >= 7:
-                    # 截断到上一条完整用例的位置
-                    fixed_content = '\n'.join(lines[:prev_index + 1])
-                    logger.info(f"已删除不完整的最后一条用例，保留了{prev_index + 1}行")
-                    return fixed_content
+        block = [(i, lines[i].strip()) for i in range(block_start, last_index + 1)]
+        data_rows = [(i, line) for i, line in block
+                     if not AIModelService._is_table_separator(line)]
+        if not data_rows:
+            return test_cases_content
 
-            # 如果找不到完整的上一条，直接删除最后5行
-            fixed_content = '\n'.join(lines[:-5])
-            logger.info(f"删除最后5行不完整的内容")
-            return fixed_content
+        # 期望列数：优先取表头行（表格块首行）
+        expected_columns = len(AIModelService._split_table_row(data_rows[0][1]))
+        if expected_columns < 2:
+            return test_cases_content
 
-        return test_cases_content
+        # 从末尾往前剔除不完整的行
+        cut_index = None
+        for index, line in data_rows[::-1]:
+            is_truncated = (
+                not line.endswith('|')
+                or len(AIModelService._split_table_row(line)) < expected_columns
+            )
+            if is_truncated:
+                cut_index = index
+            else:
+                break
+
+        if cut_index is None:
+            return test_cases_content
+
+        removed_count = last_index - cut_index + 1
+        logger.warning(
+            f"检测到末尾 {removed_count} 行测试用例不完整（期望 {expected_columns} 列），已剔除"
+        )
+        return '\n'.join(lines[:cut_index]).rstrip()
 
     @staticmethod
     def renumber_test_cases(test_cases_content: str) -> str:
         """
         重新编号测试用例，使其编号连续
 
+        保持原有编号前缀与数字位数不变（如 CAROUSEL_001/002/004 -> CAROUSEL_001/002/003），
+        只做“补洞”，不会整体平移起始编号。非表格内容或编号格式不统一时原样返回。
+
         Args:
-            test_cases_content: 测试用例内容（字符串）
+            test_cases_content: 测试用例内容
 
         Returns:
             str: 重新编号后的测试用例内容
@@ -1209,90 +1307,57 @@ class AIModelService:
 
         lines = test_cases_content.split('\n')
 
-        # 找到表格分隔线
-        separator_line = None
-        separator_index = -1
-        for i, line in enumerate(lines):
-            if line.strip().startswith('|') and '|' in line and '---' in line:
-                separator_line = line
-                separator_index = i
-                break
-
-        if not separator_line:
-            logger.warning("未找到表格分隔线，无法重新编号")
+        # 定位表格数据行
+        _, data_start, data_end = AIModelService._find_table_layout(lines)
+        if data_start == -1 or data_end <= data_start:
+            logger.warning("未找到表格数据行，跳过重新编号")
             return test_cases_content
 
-        # 计算列数
-        column_count = separator_line.count('|')
+        data_indices = list(range(data_start, data_end))
 
-        # 找到第一个数据行（包含编号的行）
-        first_data_index = -1
-        for i in range(separator_index + 1, len(lines)):
-            line = lines[i]
-            if line.strip().startswith('|') and line.count('|') == column_count:
-                first_data_index = i
-                break
+        def parse_case_id(line: str):
+            cells = AIModelService._split_table_row(line)
+            case_id = cells[0] if cells else ''
+            match = re.match(r'^(.*?)(\d+)$', case_id)
+            if not match:
+                return None
+            return match.group(1), match.group(2)
 
-        if first_data_index == -1:
-            logger.warning("未找到任何数据行")
+        parsed = [parse_case_id(lines[i]) for i in data_indices]
+        if any(item is None for item in parsed):
+            logger.warning("存在无法识别的用例编号，跳过重新编号")
             return test_cases_content
 
-        # 从第一个数据行中提取编号格式
-        first_line = lines[first_data_index]
-        parts = first_line.split('|')
-        if len(parts) < 2:
-            logger.warning("无法解析第一列")
+        prefix = parsed[0][0]
+        width = len(parsed[0][1])
+        if any(item[0] != prefix or len(item[1]) != width for item in parsed):
+            logger.warning("用例编号前缀或数字位数不一致，跳过重新编号")
             return test_cases_content
 
-        # 获取第一列的编号（例如：IMMSG001）
-        first_id = parts[1].strip()
-
-        # 提取编号格式前缀（例如：IMMSG）
-        id_match = re.match(r'^([A-Z]+)(\d+)$', first_id)
-        if not id_match:
-            logger.warning(f"无法识别编号格式: {first_id}")
+        numbers = [int(item[1]) for item in parsed]
+        start_number = numbers[0]
+        if numbers == list(range(start_number, start_number + len(numbers))):
+            # 编号已经连续，无需改动
             return test_cases_content
 
-        prefix = id_match.group(1)  # 例如：IMMSG
-        total_cases = 0
-
-        # 重新编号所有数据行
-        result_lines = lines[:first_data_index]
-        i = first_data_index
-
-        while i < len(lines):
-            line = lines[i]
-
-            # 检查是否是数据行
-            if not line.strip().startswith('|'):
-                # 不是表格行，添加并继续
-                result_lines.append(line)
-                i += 1
+        result_lines = list(lines)
+        for offset, index in enumerate(data_indices):
+            line = result_lines[index]
+            stripped = line.strip()
+            leading = line[:len(line) - len(line.lstrip())]
+            first_pipe = stripped.find('|')
+            second_pipe = stripped.find('|', first_pipe + 1)
+            if first_pipe == -1 or second_pipe == -1:
                 continue
+            new_id = f"{prefix}{str(start_number + offset).zfill(width)}"
+            # 只替换首列（编号列），保持该行其余内容不变
+            result_lines[index] = (
+                leading + stripped[:first_pipe + 1] + f" {new_id} " + stripped[second_pipe:]
+            )
 
-            # 检查列数是否正确
-            if line.count('|') != column_count:
-                # 列数不对，可能是空行或其他内容
-                result_lines.append(line)
-                i += 1
-                continue
-
-            # 这是一个数据行，重新编号
-            total_cases += 1
-            new_id = f"{prefix}{total_cases:03d}"  # 格式：IMMSG001
-
-            # 替换第一列的编号，保持原有格式
-            parts = line.split('|')
-            if len(parts) >= 2:
-                # 保持第一列（空）和第二列（编号）之间的空格
-                # 只替换编号部分
-                parts[1] = f" {new_id} "
-                new_line = '|'.join(parts)
-                result_lines.append(new_line)
-
-            i += 1
-
-        renumbered_content = '\n'.join(result_lines)
-        logger.info(f"重新编号完成: 共{total_cases}条测试用例，编号范围: {prefix}001-{prefix}{total_cases:03d}")
-
-        return renumbered_content
+        logger.info(
+            f"重新编号完成: 共{len(numbers)}条，编号范围 "
+            f"{prefix}{str(start_number).zfill(width)}-"
+            f"{prefix}{str(start_number + len(numbers) - 1).zfill(width)}"
+        )
+        return '\n'.join(result_lines)

@@ -19,18 +19,24 @@
         </div>
 
         <div class="filter-actions">
-          <button
+          <!-- 图标已在 main.js 全局注册，这里用字符串名引用即可 -->
+          <el-button
             v-if="selectedTasks.length > 0"
-            class="batch-delete-btn"
-            @click="batchDeleteTasks"
-            :disabled="isDeleting">
+            class="filter-delete-btn"
+            type="danger"
+            icon="Delete"
+            :loading="isDeleting"
+            @click="batchDeleteTasks">
             <span v-if="isDeleting">{{ $t('generatedTestCases.deleting') }}</span>
             <span v-else>{{ $t('generatedTestCases.batchDelete', { count: selectedTasks.length }) }}</span>
-          </button>
-          <button class="refresh-btn" @click="loadTasks" :disabled="isLoading">
-            <span v-if="isLoading">{{ $t('generatedTestCases.loading') }}</span>
-            <span v-else>{{ $t('generatedTestCases.refresh') }}</span>
-          </button>
+          </el-button>
+          <el-button
+            class="filter-refresh-btn"
+            icon="Refresh"
+            :loading="isLoading"
+            @click="loadTasks">
+            {{ $t('generatedTestCases.refresh') }}
+          </el-button>
         </div>
       </div>
     </div>
@@ -381,6 +387,7 @@
 
 <script>
 import api from '@/utils/api'
+import { countTestCases } from '@/utils/testCaseParser'
 import { ElMessage } from 'element-plus'
 
 export default {
@@ -638,57 +645,9 @@ export default {
       return statusMap[status] || status
     },
 
-    // 获取测试用例条数
+    // 获取测试用例条数（与任务详情页共用同一解析口径，残缺行不计入）
     getTestCaseCount(task) {
-      if (!task.final_test_cases) {
-        return 0
-      }
-
-      // 解析测试用例内容，计算条数
-      const content = task.final_test_cases
-      const lines = content.split('\n').filter(line => line.trim())
-
-      // 尝试表格格式
-      let tableRows = 0
-      let isFirstRow = true
-      let isTableFormat = false
-
-      for (let line of lines) {
-        if (line.includes('|') && !line.includes('--------')) {
-          const cells = line.split('|').map(cell => cell.trim()).filter(cell => cell)
-          if (cells.length > 1) {
-            // 检查第一行是否是表头
-            if (isFirstRow) {
-              isFirstRow = false
-              // 如果第一行包含表头标识，标记为表格格式
-              if (line.includes('测试用例编号') || line.includes('ID') || line.includes('用例ID') ||
-                  line.includes('场景') || line.includes('步骤')) {
-                isTableFormat = true
-                continue  // 跳过表头行
-              }
-            }
-
-            tableRows++
-            if (tableRows >= 1) {
-              isTableFormat = true
-            }
-          }
-        }
-      }
-
-      if (isTableFormat && tableRows > 0) {
-        return tableRows
-      }
-
-      // 尝试结构化文本格式
-      let caseCount = 0
-      for (const line of lines) {
-        if (line.includes('测试用例') || line.includes('Test Case') || line.match(/^(\d+\.|测试场景)/)) {
-          caseCount++
-        }
-      }
-
-      return caseCount || 0
+      return countTestCases(task.final_test_cases)
     },
 
     viewTaskDetail(task) {
@@ -1015,7 +974,6 @@ export default {
 <style scoped>
 .generated-testcase-list {
   padding: 20px;
-  max-width: 1400px;
   margin: 0 auto;
 }
 
@@ -1026,13 +984,13 @@ export default {
 
 .page-header h2 {
   font-size: 1.6rem; /* H2标题适合的字体大小 */
-  color: #2c3e50;
+  color: #303133;
   margin-bottom: 0; /* 移除底部边距 */
   margin-top: 5px; /* 减少顶部边距 */
 }
 
 .page-header p {
-  color: #666;
+  color: #606266;
   font-size: 1.1rem;
 }
 
@@ -1043,86 +1001,60 @@ export default {
 
 .filter-card {
   background: white;
-  border-radius: 12px;
+  border-radius: 4px;
   padding: 25px;
-  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.1);
   display: flex;
-  gap: 20px;
-  align-items: end;
+  gap: 16px;
+  align-items: center; /* 单行对齐：标签、下拉框、按钮垂直居中 */
   flex-wrap: wrap;
 }
 
+/* 标签与下拉框同行，不再上下堆叠 */
 .filter-group {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
+  align-items: center;
   gap: 8px;
-  min-width: 150px;
+  min-width: 0;
+  flex-shrink: 0;
 }
 
 .filter-group label {
   font-weight: bold;
-  color: #2c3e50;
+  color: #303133;
   font-size: 0.9rem;
+  white-space: nowrap;
 }
 
 .filter-select {
-  padding: 10px;
-  border: 1px solid #ddd;
-  border-radius: 6px;
+  height: 32px; /* 与 el-button 默认高度对齐，保证同一行等高 */
+  padding: 0 10px;
+  border: 1px solid #dcdfe6;
+  border-radius: 4px;
   font-size: 0.9rem;
+  color: #606266;
   background: white;
   cursor: pointer;
+  transition: border-color 0.2s ease;
 }
 
 .filter-select:focus {
   outline: none;
-  border-color: #3498db;
-  box-shadow: 0 0 0 2px rgba(52, 152, 219, 0.2);
+  border-color: #409eff;
+  box-shadow: 0 0 0 2px rgba(64, 158, 255, 0.2);
 }
 
 .filter-actions {
   display: flex;
+  align-items: center;
   gap: 10px;
+  flex-shrink: 0;
 }
 
-.refresh-btn {
-  background: #3498db;
-  color: white;
-  border: none;
-  padding: 10px 20px;
-  border-radius: 6px;
-  cursor: pointer;
-  font-size: 0.9rem;
-  transition: background 0.3s ease;
-}
-
-.refresh-btn:hover:not(:disabled) {
-  background: #2980b9;
-}
-
-.refresh-btn:disabled {
-  background: #bdc3c7;
-  cursor: not-allowed;
-}
-
-.batch-delete-btn {
-  background: #e74c3c;
-  color: white;
-  border: none;
-  padding: 10px 20px;
-  border-radius: 6px;
-  cursor: pointer;
-  font-size: 0.9rem;
-  transition: background 0.3s ease;
-}
-
-.batch-delete-btn:hover:not(:disabled) {
-  background: #c0392b;
-}
-
-.batch-delete-btn:disabled {
-  background: #bdc3c7;
-  cursor: not-allowed;
+/* 批量删除按钮：普通删除图标（Delete），图标尺寸按 medium(16px) 渲染 */
+.filter-delete-btn :deep(.el-icon) {
+  font-size: 16px;
 }
 
 /* 统计信息 */
@@ -1132,9 +1064,9 @@ export default {
 
 .stats-card {
   background: white;
-  border-radius: 12px;
+  border-radius: 4px;
   padding: 25px;
-  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.1);
   display: flex;
   gap: 40px; /* 调整间距，因为现在有4个项目 */
   justify-content: center;
@@ -1150,26 +1082,26 @@ export default {
 .stat-number {
   font-size: 2rem;
   font-weight: bold;
-  color: #3498db;
+  color: #409eff;
 }
 
 .stat-label {
-  color: #666;
+  color: #606266;
   font-size: 0.9rem;
 }
 
 /* 测试用例列表 */
 .testcases-section {
   background: white;
-  border-radius: 12px;
+  border-radius: 4px;
   padding: 30px;
-  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.1);
 }
 
 .loading-state, .empty-state {
   text-align: center;
   padding: 60px 20px;
-  color: #666;
+  color: #606266;
 }
 
 .empty-icon {
@@ -1178,12 +1110,12 @@ export default {
 }
 
 .empty-state h3 {
-  color: #2c3e50;
+  color: #303133;
   margin-bottom: 10px;
 }
 
 .empty-state a {
-  color: #3498db;
+  color: #409eff;
   text-decoration: none;
 }
 
@@ -1192,53 +1124,55 @@ export default {
 }
 
 .testcases-table {
-  border: 1px solid #ddd;
-  border-radius: 8px;
+  border: 1px solid #dcdfe6;
+  border-radius: 4px;
   overflow-x: auto; /* 内容超宽时横向滚动，操作列固定在右侧 */
 }
 
 .table-header {
   display: grid;
-  grid-template-columns: 50px 60px 180px 320px 100px 100px 180px 260px;
-  background: #f8f9fa;
+  grid-template-columns: 50px 60px 180px minmax(344px, 1fr) 100px 100px 180px 236px;
+  background: #f5f7fa;
   font-weight: bold;
-  color: #2c3e50;
+  color: #909399;
 }
 
 .table-body .table-row {
   display: grid;
-  grid-template-columns: 50px 60px 180px 320px 100px 100px 180px 260px;
-  border-bottom: 1px solid #eee;
+  grid-template-columns: 50px 60px 180px minmax(344px, 1fr) 100px 100px 180px 236px;
+  border-bottom: 1px solid #ebeef5;
   transition: background 0.2s ease;
 }
 
 .table-row:hover {
-  background: #f8f9fa;
+  background: #f5f7fa;
 }
 
 .table-row.selected {
-  background: #e3f2fd;
+  background: #ecf5ff;
 }
 
 .table-row.selected:hover {
-  background: #bbdefb;
+  background: #d9ecff;
 }
 
 .header-cell {
   padding: 12px;
+  box-sizing: border-box; /* 让声明宽度=实际列宽，避免 padding 撑出 25px 横向溢出 */
   display: flex;
   align-items: center;
   justify-content: center;
-  border-right: 1px solid #eee;
+  border-right: 1px solid #ebeef5;
   word-wrap: break-word;
   word-break: break-word;
 }
 
 .body-cell {
   padding: 12px;
+  box-sizing: border-box;
   display: flex;
   align-items: center;
-  border-right: 1px solid #eee;
+  border-right: 1px solid #ebeef5;
   word-wrap: break-word;
   word-break: break-word;
 }
@@ -1258,7 +1192,7 @@ export default {
   justify-content: center;
   width: 60px;
   font-weight: 500;
-  color: #7f8c8d;
+  color: #909399;
   flex-shrink: 0;
 }
 
@@ -1266,7 +1200,7 @@ export default {
   width: 18px;
   height: 18px;
   cursor: pointer;
-  accent-color: #3498db;
+  accent-color: #409eff;
 }
 
 /* 任务ID列 */
@@ -1279,10 +1213,9 @@ export default {
   justify-content: flex-start;
 }
 
-/* 关联需求列 */
+/* 关联需求列：弹性列，吸收表格剩余宽度（最小 344px，再窄就横向滚动） */
 .requirement-name-cell {
-  min-width: 320px;
-  max-width: 320px;
+  min-width: 344px;
   flex-shrink: 0;
 }
 
@@ -1317,18 +1250,19 @@ export default {
   justify-content: center;
 }
 
-/* 操作列：固定在右侧，横向滚动时始终可见 */
+/* 操作列：固定在右侧，横向滚动时始终可见
+   236px = 三个按钮 209.6px + 单元格左右内边距 24px + 左边框 1px，刚好一行放下 3 个按钮 */
 .action-cell {
-  min-width: 260px;
+  min-width: 236px;
   flex-shrink: 0;
   position: sticky;
   right: 0;
   z-index: 2;
-  border-left: 1px solid #eee;
+  border-left: 1px solid #ebeef5;
 }
 
 .header-cell.action-cell {
-  background: #f8f9fa;
+  background: #f5f7fa;
 }
 
 .body-cell.action-cell {
@@ -1338,12 +1272,12 @@ export default {
 
 /* 行 hover/选中时，固定操作列背景跟随行底色，避免透出滚动内容 */
 .table-row:hover .body-cell.action-cell {
-  background: #f8f9fa;
+  background: #f5f7fa;
 }
 
 .table-row.selected .body-cell.action-cell,
 .table-row.selected:hover .body-cell.action-cell {
-  background: #e3f2fd;
+  background: #ecf5ff;
 }
 
 .action-buttons {
@@ -1356,10 +1290,10 @@ export default {
 }
 
 .count-badge {
-  background: #3498db;
+  background: #409eff;
   color: white;
   padding: 4px 12px;
-  border-radius: 12px;
+  border-radius: 4px;
   font-size: 0.85rem;
   font-weight: bold;
   min-width: 30px;
@@ -1369,7 +1303,7 @@ export default {
 
 .requirement-name {
   font-weight: 500;
-  color: #2c3e50;
+  color: #303133;
   line-height: 1.4;
   word-wrap: break-word;
   word-break: break-word;
@@ -1377,66 +1311,77 @@ export default {
 }
 
 .requirement-id {
-  color: #666;
+  color: #606266;
   font-size: 0.8rem;
   margin-left: 5px;
 }
 
 .priority-tag,
 .status-tag {
-  padding: 4px 8px;
+  padding: 3px 8px;
+  border: 1px solid transparent;
   border-radius: 4px;
   font-size: 0.8rem;
   font-weight: bold;
+  line-height: 1.4;
 }
 
 .priority-tag.p0 {
-  background: #ffebee;
-  color: #d32f2f;
+  background: #fef0f0;
+  border-color: #fde2e2;
+  color: #f56c6c;
 }
 
 .priority-tag.p1 {
-  background: #fff3e0;
-  color: #f57c00;
+  background: #fdf6ec;
+  border-color: #faecd8;
+  color: #e6a23c;
 }
 
 .priority-tag.p2 {
-  background: #e3f2fd;
-  color: #1976d2;
+  background: #ecf5ff;
+  border-color: #d9ecff;
+  color: #409eff;
 }
 
 .priority-tag.p3 {
-  background: #e8f5e8;
-  color: #388e3c;
+  background: #f0f9eb;
+  border-color: #e1f3d8;
+  color: #67c23a;
 }
 
 .status-tag.pending {
-  background: #fff3cd;
-  color: #856404;
+  background: #fdf6ec;
+  border-color: #faecd8;
+  color: #e6a23c;
 }
 
 .status-tag.generating {
-  background: #e3f2fd;
-  color: #1976d2;
+  background: #ecf5ff;
+  border-color: #d9ecff;
+  color: #409eff;
 }
 
 .status-tag.reviewing {
-  background: #e3f2fd;
-  color: #1976d2;
+  background: #ecf5ff;
+  border-color: #d9ecff;
+  color: #409eff;
 }
 
 .status-tag.completed {
-  background: #d4edda;
-  color: #155724;
+  background: #f0f9eb;
+  border-color: #e1f3d8;
+  color: #67c23a;
 }
 
 .status-tag.failed {
-  background: #f8d7da;
-  color: #721c24;
+  background: #fef0f0;
+  border-color: #fde2e2;
+  color: #f56c6c;
 }
 
 .view-detail-btn {
-  background: #3498db;
+  background: #409eff;
   color: white;
   border: none;
   padding: 6px 8px;
@@ -1448,11 +1393,11 @@ export default {
 }
 
 .view-detail-btn:hover {
-  background: #2980b9;
+  background: #66b1ff;
 }
 
 .adopt-btn {
-  background: #27ae60;
+  background: #67c23a;
   color: white;
   border: none;
   padding: 6px 8px;
@@ -1464,11 +1409,11 @@ export default {
 }
 
 .adopt-btn:hover {
-  background: #229954;
+  background: #85ce61;
 }
 
 .discard-btn {
-  background: #e74c3c;
+  background: #f56c6c;
   color: white;
   border: none;
   padding: 6px 8px;
@@ -1480,7 +1425,7 @@ export default {
 }
 
 .discard-btn:hover {
-  background: #c0392b;
+  background: #f78989;
 }
 
 .action-buttons {
@@ -1493,13 +1438,13 @@ export default {
 }
 
 .adopted-label {
-  color: #27ae60;
+  color: #67c23a;
   font-weight: bold;
   font-size: 0.8rem;
   padding: 6px 12px;
-  background: #e8f5e8;
+  background: #f0f9eb;
   border-radius: 4px;
-  border: 1px solid #27ae60;
+  border: 1px solid #e1f3d8;
 }
 
 /* 分页组件样式 */
@@ -1510,12 +1455,12 @@ export default {
   align-items: center;
   background: white;
   padding: 20px;
-  border-radius: 8px;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  border-radius: 4px;
+  box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.1);
 }
 
 .pagination-info {
-  color: #666;
+  color: #606266;
   font-size: 0.9rem;
 }
 
@@ -1532,13 +1477,13 @@ export default {
 }
 
 .page-size-selector label {
-  color: #666;
+  color: #606266;
   font-size: 0.9rem;
 }
 
 .page-size-selector select {
   padding: 6px 10px;
-  border: 1px solid #ddd;
+  border: 1px solid #dcdfe6;
   border-radius: 4px;
   font-size: 0.9rem;
 }
@@ -1551,9 +1496,9 @@ export default {
 
 .page-btn {
   padding: 8px 12px;
-  border: 1px solid #ddd;
+  border: 1px solid #dcdfe6;
   background: white;
-  color: #666;
+  color: #606266;
   border-radius: 4px;
   cursor: pointer;
   font-size: 0.9rem;
@@ -1561,20 +1506,21 @@ export default {
 }
 
 .page-btn:hover:not(:disabled) {
-  background: #f0f0f0;
-  border-color: #ccc;
+  background: #ecf5ff;
+  border-color: #c6e2ff;
+  color: #409eff;
 }
 
 .page-btn:disabled {
-  color: #ccc;
+  color: #a8abb2;
   cursor: not-allowed;
-  background: #f9f9f9;
+  background: #f5f7fa;
 }
 
 .page-btn.active {
-  background: #3498db;
+  background: #409eff;
   color: white;
-  border-color: #3498db;
+  border-color: #409eff;
 }
 
 .page-numbers {
@@ -1585,7 +1531,7 @@ export default {
 
 .ellipsis {
   padding: 8px 4px;
-  color: #666;
+  color: #606266;
 }
 
 .page-jumper {
@@ -1595,14 +1541,14 @@ export default {
 }
 
 .page-jumper label {
-  color: #666;
+  color: #606266;
   font-size: 0.9rem;
 }
 
 .page-jumper input {
   width: 60px;
   padding: 6px 8px;
-  border: 1px solid #ddd;
+  border: 1px solid #dcdfe6;
   border-radius: 4px;
   font-size: 0.9rem;
   text-align: center;
@@ -1610,7 +1556,7 @@ export default {
 
 .jump-btn {
   padding: 6px 12px;
-  background: #3498db;
+  background: #409eff;
   color: white;
   border: none;
   border-radius: 4px;
@@ -1620,7 +1566,7 @@ export default {
 }
 
 .jump-btn:hover {
-  background: #2980b9;
+  background: #66b1ff;
 }
 
 /* 测试用例详情弹窗 */
@@ -1639,7 +1585,7 @@ export default {
 
 .modal-content {
   background: white;
-  border-radius: 12px;
+  border-radius: 4px;
   padding: 0;
   max-width: 800px;
   width: 90%;
@@ -1652,12 +1598,12 @@ export default {
   justify-content: space-between;
   align-items: center;
   padding: 20px 30px;
-  border-bottom: 1px solid #eee;
+  border-bottom: 1px solid #ebeef5;
 }
 
 .modal-header h3 {
   margin: 0;
-  color: #2c3e50;
+  color: #303133;
 }
 
 .close-btn {
@@ -1665,7 +1611,7 @@ export default {
   border: none;
   font-size: 1.5rem;
   cursor: pointer;
-  color: #666;
+  color: #606266;
 }
 
 .modal-body {
@@ -1678,24 +1624,24 @@ export default {
 
 .detail-item label {
   font-weight: bold;
-  color: #2c3e50;
+  color: #303133;
   display: block;
   margin-bottom: 8px;
 }
 
 .detail-item span,
 .detail-item p {
-  color: #666;
+  color: #606266;
   line-height: 1.6;
 }
 
 .test-steps {
   white-space: pre-line;
   line-height: 1.6;
-  background: #f8f9fa;
+  background: #f5f7fa;
   padding: 15px;
-  border-radius: 6px;
-  border-left: 4px solid #3498db;
+  border-radius: 4px;
+  border-left: 4px solid #409eff;
 }
 
 /* 前置条件 / 预期结果同样是多行文本，需保留换行，否则会折叠成一行 */
@@ -1731,7 +1677,7 @@ export default {
 
 .form-group label {
   font-weight: bold;
-  color: #2c3e50;
+  color: #303133;
   margin-bottom: 8px;
 }
 
@@ -1739,8 +1685,8 @@ export default {
 .form-group select,
 .form-group textarea {
   padding: 10px;
-  border: 1px solid #ddd;
-  border-radius: 6px;
+  border: 1px solid #dcdfe6;
+  border-radius: 4px;
   font-size: 0.9rem;
   background: white;
 }
@@ -1749,8 +1695,8 @@ export default {
 .form-group select:focus,
 .form-group textarea:focus {
   outline: none;
-  border-color: #3498db;
-  box-shadow: 0 0 0 2px rgba(52, 152, 219, 0.2);
+  border-color: #409eff;
+  box-shadow: 0 0 0 2px rgba(64, 158, 255, 0.2);
 }
 
 .form-group textarea {
@@ -1759,13 +1705,13 @@ export default {
 }
 
 .form-hint {
-  color: #666;
+  color: #606266;
   font-size: 0.8rem;
   margin-top: 5px;
 }
 
 .required {
-  color: #e74c3c;
+  color: #f56c6c;
   font-weight: bold;
 }
 
@@ -1775,64 +1721,54 @@ export default {
   justify-content: flex-end;
   margin-top: 30px;
   padding-top: 20px;
-  border-top: 1px solid #eee;
+  border-top: 1px solid #ebeef5;
 }
 
 .confirm-btn {
-  background: #27ae60;
+  background: #67c23a;
   color: white;
   border: none;
   padding: 12px 24px;
-  border-radius: 6px;
+  border-radius: 4px;
   cursor: pointer;
   font-size: 0.9rem;
   transition: background 0.3s ease;
 }
 
 .confirm-btn:hover:not(:disabled) {
-  background: #229954;
+  background: #85ce61;
 }
 
 .confirm-btn:disabled {
-  background: #bdc3c7;
+  background: #c0c4cc;
   cursor: not-allowed;
 }
 
 .cancel-btn {
-  background: #95a5a6;
-  color: white;
-  border: none;
-  padding: 12px 24px;
-  border-radius: 6px;
+  background: #fff;
+  color: #606266;
+  border: 1px solid #dcdfe6;
+  padding: 11px 23px;
+  border-radius: 4px;
   cursor: pointer;
   font-size: 0.9rem;
-  transition: background 0.3s ease;
+  transition: all 0.2s ease;
 }
 
 .cancel-btn:hover {
-  background: #7f8c8d;
+  background: #ecf5ff;
+  border-color: #c6e2ff;
+  color: #409eff;
 }
 
-/* 响应式设计 */
+/* 响应式设计：表格保持 8 列固定宽度，窄屏由 .testcases-table 横向滚动承接，
+   不再压缩列数（原先压成 5 个轨道会让后 3 列掉到第二行） */
 @media (max-width: 1200px) {
-  .table-header,
-  .table-body .table-row {
-    grid-template-columns: 150px 1fr 100px 140px 260px;
-  }
-
   .action-buttons {
     flex-direction: row;
     gap: 2px;
     align-items: center;
     flex-wrap: wrap;
-  }
-
-  .view-detail-btn,
-  .adopt-btn,
-  .discard-btn {
-    margin-right: 0;
-    font-size: 0.65rem;
-    padding: 2px 4px;
   }
 }
 
@@ -1847,23 +1783,18 @@ export default {
     gap: 20px;
   }
 
-  .table-header,
-  .table-body .table-row {
-    grid-template-columns: 120px 1fr 80px 120px 240px;
-  }
-  
   .header-cell,
   .body-cell {
     padding: 8px;
     font-size: 0.8rem;
   }
-  
+
   .action-buttons {
     flex-direction: column;
     gap: 2px;
     align-items: stretch;
   }
-  
+
   .view-detail-btn,
   .adopt-btn,
   .discard-btn {

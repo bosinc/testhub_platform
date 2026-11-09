@@ -172,10 +172,10 @@ export default {
     statusActive: '激活',
 
     // Actions
-    batchDelete: '🗑️ 批量删除({count})',
-    deleting: '🗑️ 删除中...',
-    refresh: '🔄 刷新',
-    loading: '🔄 加载中...',
+    batchDelete: '批量删除({count})',
+    deleting: '删除中...',
+    refresh: '刷新',
+    loading: '加载中...',
 
     // Stats
     totalTasks: '任务总数',
@@ -215,7 +215,7 @@ export default {
     createTask: '页面创建一个任务吧！',
 
     // Loading
-    loadingTasks: '🔄 正在加载任务列表...',
+    loadingTasks: '正在加载任务列表...',
     generatingWait: '任务正在生成中，请稍候...',
 
     // Pagination
@@ -507,11 +507,11 @@ export default {
     // 页面头部
     title: '任务详情',
     taskId: '任务ID',
-    exportBtn: '💾 导出Excel',
-    exporting: '💾 导出中...',
+    exportBtn: '导出Excel',
+    exporting: '导出中...',
 
     // 需求描述折叠卡片
-    requirementTitle: '📋 需求描述',
+    requirementTitle: '需求描述',
     requirementHint: '（点击展开查看完整内容）',
     copyRequirement: '复制需求描述',
 
@@ -525,8 +525,8 @@ export default {
     // 批量操作
     selectAll: '全选',
     selectedCount: '已选择 {count} 条用例',
-    batchAdopt: '✅ 一键采纳 ({count})',
-    batchDiscard: '❌ 一键弃用 ({count})',
+    batchAdopt: '一键采纳 ({count})',
+    batchDiscard: '一键弃用 ({count})',
 
     // 表格头部
     tableSelect: '选择',
@@ -539,9 +539,9 @@ export default {
     tableActions: '操作',
 
     // 表格操作按钮
-    viewDetail: '📖 查看详情',
-    adopt: '✅ 采纳',
-    discard: '❌ 弃用',
+    viewDetail: '查看详情',
+    adopt: '采纳',
+    discard: '弃用',
 
     // 空状态
     emptyTitle: '暂无测试用例数据',
@@ -593,6 +593,10 @@ export default {
     confirmAdoptSingle: '确定要采纳测试用例"{scenario}"吗？',
     confirmDiscardSingle: '确定要弃用测试用例"{scenario}"吗？此操作不可恢复。',
     adoptSuccess: '成功采纳 {count} 条测试用例！',
+    adoptSuccessToProject: '成功采纳 {count} 条用例到项目「{project}」',
+    adoptTargetProject: '导入到项目：',
+    adoptTargetProjectPlaceholder: '选择项目',
+    adoptProjectRequired: '该任务未关联项目，请先选择用例要导入的项目',
     discardSuccess: '成功弃用 {count} 条测试用例',
     allDiscardedSuccess: '所有测试用例已弃用，任务已删除',
     caseDiscardedSuccess: '测试用例已弃用',
