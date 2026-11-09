@@ -384,8 +384,8 @@
 
       <!-- 主体内容 -->
       <el-container>
-        <!-- 顶部导航 -->
-        <el-header height="60px">
+        <!-- 顶部导航（高度由 --app-header-height 控制，与 logo 条同步） -->
+        <el-header>
           <div class="header-content">
             <div class="header-left">
               <el-breadcrumb separator="/">
@@ -465,7 +465,6 @@ import {
   Odometer, Timer, Setting, AlarmClock, Bell, Aim, Edit, Cpu, ArrowDown, Cellphone, Connection, FolderOpened, Tickets, Plus,
   SetUp, TrendCharts, Files, UserFilled
 } from '@element-plus/icons-vue'
-import logoSvg from '@/assets/images/logo.svg'
 import logoHomePng from '@/assets/images/logo_home.png'
 
 const router = useRouter()
@@ -474,9 +473,8 @@ const userStore = useUserStore()
 const appStore = useAppStore()
 const { t } = useI18n()
 
-const logoImage = computed(() => {
-		return route.path === '/home' ? logoSvg : logoHomePng
-	})
+// 侧边栏统一使用横版 logo（原先 /home 会切到方形图标 logo.svg，导致顶栏标识不一致）
+const logoImage = logoHomePng
 	
 
 // 当前语言显示
@@ -643,6 +641,9 @@ const handleCommand = (command) => {
   height: 100vh;
   width: 100vw;
   overflow: hidden;
+  /* 顶部栏高度：logo 条与 el-header 共用同一个变量，
+     各断点只改变量值，两处高度永远同步，不会再错位 */
+  --app-header-height: 60px;
 }
 
 .layout > .el-container {
@@ -651,20 +652,28 @@ const handleCommand = (command) => {
 }
 
 .logo {
-  height: 60px;
+  /* 高度跟随顶部栏（各断点由 --app-header-height 统一控制） */
+  height: var(--app-header-height);
   display: flex;
   align-items: center;
   justify-content: center;
-  background-color: #001529;
+  /* logo_home.png 自带白色背景：底色取同色，contain 产生的留白与底色融为一体，
+     视觉上"填满"整个区域，同时图片比例完全不变（无拉伸） */
+  background-color: #ffffff;
   color: white;
-  border-bottom: 1px solid #1f1f1f;
+  /* 与顶部白色导航栏的边框连成一条，视觉上不分层 */
+  border-bottom: 1px solid #e8e8e8;
   flex-shrink: 0;
+  /* 显式 border-box：加内边距时总高仍是 60px，不会把顶部栏顶下去 */
+  box-sizing: border-box;
+  padding: 6px 10px;
 
 		.logo-img {
 			width: 100%;
 			height: 100%;
-			/* 侧边栏宽度不再固定，改为 contain 保证 logo 不被拉伸变形 */
-			object-fit: fill;
+			/* 保持比例，不拉伸：多出来的空间由同色背景吸收 */
+			object-fit: contain;
+			object-position: center;
 		}
 	}
 
@@ -748,7 +757,7 @@ const handleCommand = (command) => {
   border-bottom: 1px solid #e8e8e8;
   padding: 0;
   flex-shrink: 0;
-  height: 60px !important;
+  height: var(--app-header-height) !important;
 
   .header-content {
     height: 100%;
@@ -880,8 +889,8 @@ const handleCommand = (command) => {
     padding: 12px;
   }
 
-  .el-header {
-    height: 56px !important;
+  .layout {
+    --app-header-height: 56px;
   }
   
   .el-menu {
@@ -897,9 +906,11 @@ const handleCommand = (command) => {
     padding: 12px;
   }
 
+  .layout {
+    --app-header-height: 56px;
+  }
+
   .el-header {
-    height: 56px !important;
-    
     .header-content {
       padding: 0 15px;
     }
@@ -920,9 +931,11 @@ const handleCommand = (command) => {
     padding: 10px;
   }
 
+  .layout {
+    --app-header-height: 52px;
+  }
+
   .el-header {
-    height: 52px !important;
-    
     .header-content {
       padding: 0 12px;
     }
@@ -962,9 +975,11 @@ const handleCommand = (command) => {
     padding: 8px;
   }
 
+  .layout {
+    --app-header-height: 50px;
+  }
+
   .el-header {
-    height: 50px !important;
-    
     .header-content {
       padding: 0 10px;
     }
@@ -988,9 +1003,11 @@ const handleCommand = (command) => {
     padding: 6px;
   }
 
+  .layout {
+    --app-header-height: 48px;
+  }
+
   .el-header {
-    height: 48px !important;
-    
     .header-content {
       padding: 0 8px;
     }
