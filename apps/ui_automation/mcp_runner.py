@@ -1,20 +1,19 @@
-"""
-mcp_runner.py - MCP 场景的单用例异步执行器
+"""UI 自动化的 MCP 异步执行器（单用例 / 测试套件）。
 
-apps.mcp.actions.run_ui_case_action 依赖本模块的 start_case_execution()。
-与 TestCaseViewSet.run 的 Web 端同步执行不同，MCP 契约要求「立即返回执行记录、
-后台异步执行、Agent 轮询执行 ID 查结果」，故此处创建 TestCaseExecution 后
-在后台线程执行，不阻塞 MCP 工具调用。
+apps.mcp.actions 依赖本模块的 ``start_case_execution`` 与
+``start_suite_execution``。与页面的同步执行不同，MCP 契约要求
+「立即返回执行记录 ID → 后台执行 → Agent 轮询结果」。
 
-执行流程与 views.TestCaseViewSet.run 对齐，复用同一套引擎：
-  - PlaywrightTestEngine（异步 API，线程内新建事件循环）
-  - SeleniumTestEngine（同步 API）
+执行体本身不再由本模块实现，统一复用 ``test_executor``：
+
+- 单用例：``test_executor.run_single_case``，与页面「运行用例」同一套步骤循环
+  （含 storageState、navigate、urlContains 等待）
+- 套件：``test_executor.TestExecutor``，与页面「执行套件」同一实现
+
+本模块只负责「预建执行记录 + 起后台线程 + 立即返回 ID」。
 """
-import asyncio
-import json
 import logging
 import threading
-import time
 
 from django.db import connection
 from django.utils import timezone
@@ -24,200 +23,24 @@ from .models import TestCaseExecution
 logger = logging.getLogger(__name__)
 
 
-def _collect_steps_data(case):
-    """预加载步骤与元素数据（与 views.run 相同的快照结构）。"""
-    steps_data = []
-    for step in case.steps.all().order_by('step_number'):
-        step_data = {
-            'step': step,
-            'action_type': step.action_type,
-            'description': step.description,
-        }
-        if step.element:
-            step_data['element_data'] = {
-                'locator_strategy': (step.element.locator_strategy.name
-                                     if step.element.locator_strategy else 'css'),
-                'locator_value': step.element.locator_value,
-                'locator_options': step.element.locator_options or {},
-                'name': step.element.name,
-                'wait_timeout': step.element.wait_timeout,
-                'force_action': step.element.force_action,
-            }
-        else:
-            step_data['element_data'] = None
-        steps_data.append(step_data)
-    return steps_data
+def _worker_case(execution, case, engine, browser, headless):
+    """后台执行单个用例；结果由 run_single_case 写入预建记录。"""
+    from .test_executor import run_single_case
 
-
-def _finish_execution(execution, status, step_results, screenshots,
-                      error_message, start_time):
-    """落库执行结果（字段含义与 views.run 的保存逻辑一致）。"""
     try:
-        execution.status = status
-        execution.error_message = error_message or ''
-        execution.execution_logs = json.dumps(step_results, ensure_ascii=False)
-        execution.execution_time = round(time.time() - start_time, 2)
-        execution.screenshots = screenshots
-        execution.finished_at = timezone.now()
-        execution.save()
-    except Exception:
-        logger.exception('[McpRunner] 保存执行结果失败 execution_id=%s', execution.id)
-
-
-async def _run_playwright_async(execution, case, steps_data, browser, headless):
-    from .playwright_engine import PlaywrightTestEngine
-
-    engine = PlaywrightTestEngine(browser_type=browser, headless=headless)
-    screenshots = []
-    step_results = []
-    result = {'status': 'passed', 'error_message': None}
-    try:
-        # MCP 单用例运行单独创建项目变量副本，不与其他执行共享状态。
-        engine.initialize_variables(case.project.variables)
-        await engine.start()
-        if case.project.base_url:
-            success, nav_log = await engine.navigate(case.project.base_url)
-            if not success:
-                result['status'] = 'failed'
-                result['error_message'] = f'导航到测试页面失败: {nav_log}'
-                return result, step_results, screenshots
-        for i, info in enumerate(steps_data, 1):
-            try:
-                success, step_log, shot = await engine.execute_step(
-                    info['step'], info['element_data'] or {})
-            except Exception as e:
-                success, step_log, shot = False, f'步骤执行异常: {e}', None
-            step_results.append({
-                'step_number': i,
-                'action_type': info['action_type'],
-                'description': info['description'] or '',
-                'success': success,
-                'error': None if success else step_log,
-                **({'variables': engine.variables.snapshot()} if engine.variables.strict else {}),
-            })
-            if not success:
-                result['status'] = 'failed'
-                result['error_message'] = f'步骤 {i} 执行失败: {step_log}'
-                shot = shot or await _safe_screenshot(engine, is_async=True)
-                if shot:
-                    screenshots.append({
-                        'url': shot,
-                        'description': f'步骤 {i} 失败截图',
-                        'step_number': i,
-                        'timestamp': timezone.now().isoformat(),
-                    })
-                break
-            if info['action_type'] == 'screenshot' and shot:
-                screenshots.append({
-                    'url': shot,
-                    'description': f'步骤 {i}: {info["description"] or "手动截图"}',
-                    'step_number': i,
-                    'timestamp': timezone.now().isoformat(),
-                })
-    finally:
+        run_single_case(
+            case, engine=engine, browser=browser, headless=headless,
+            executed_by=execution.created_by, execution=execution,
+        )
+    except Exception as exc:  # noqa: BLE001 - 后台线程兜底，避免记录卡在 running
+        logger.exception('[McpRunner] 用例执行异常 case_id=%s', case.id)
         try:
-            await engine.stop()
-        except Exception:
-            logger.warning('[McpRunner] Playwright 引擎关闭异常', exc_info=True)
-    return result, step_results, screenshots
-
-
-async def _safe_screenshot(engine, is_async=False):
-    try:
-        if is_async:
-            return await engine.capture_screenshot()
-        return engine.capture_screenshot()
-    except Exception:
-        return None
-
-
-def _run_selenium_sync(execution, case, steps_data, browser, headless):
-    from .selenium_engine import SeleniumTestEngine
-
-    engine = SeleniumTestEngine(browser_type=browser, headless=headless)
-    screenshots = []
-    step_results = []
-    result = {'status': 'passed', 'error_message': None}
-    try:
-        # 两种浏览器引擎均从用例定义初始化同一套 UI 变量上下文。
-        engine.initialize_variables(case.project.variables)
-        engine.start()
-        if case.project.base_url:
-            success, nav_log = engine.navigate(case.project.base_url)
-            if not success:
-                result['status'] = 'failed'
-                result['error_message'] = f'导航到测试页面失败: {nav_log}'
-                return result, step_results, screenshots
-        for i, info in enumerate(steps_data, 1):
-            try:
-                success, step_log, shot = engine.execute_step(
-                    info['step'], info['element_data'] or {})
-            except Exception as e:
-                success, step_log, shot = False, f'步骤执行异常: {e}', None
-            step_results.append({
-                'step_number': i,
-                'action_type': info['action_type'],
-                'description': info['description'] or '',
-                'success': success,
-                'error': None if success else step_log,
-                **({'variables': engine.variables.snapshot()} if engine.variables.strict else {}),
-            })
-            if not success:
-                result['status'] = 'failed'
-                result['error_message'] = f'步骤 {i} 执行失败: {step_log}'
-                shot = shot or _safe_screenshot(engine)
-                if shot:
-                    screenshots.append({
-                        'url': shot,
-                        'description': f'步骤 {i} 失败截图',
-                        'step_number': i,
-                        'timestamp': timezone.now().isoformat(),
-                    })
-                break
-            if info['action_type'] == 'screenshot' and shot:
-                screenshots.append({
-                    'url': shot,
-                    'description': f'步骤 {i}: {info["description"] or "手动截图"}',
-                    'step_number': i,
-                    'timestamp': timezone.now().isoformat(),
-                })
-    finally:
-        try:
-            engine.stop()
-        except Exception:
-            logger.warning('[McpRunner] Selenium 引擎关闭异常', exc_info=True)
-    return result, step_results, screenshots
-
-
-def _worker_playwright(execution, case, steps_data, browser, headless):
-    start_time = time.time()
-    try:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            result, step_results, screenshots = loop.run_until_complete(
-                _run_playwright_async(execution, case, steps_data, browser, headless))
-        finally:
-            loop.close()
-        _finish_execution(execution, result['status'], step_results, screenshots,
-                          result['error_message'], start_time)
-    except Exception as e:
-        logger.exception('[McpRunner] Playwright 执行异常 execution_id=%s', execution.id)
-        _finish_execution(execution, 'error', [], [], f'执行异常: {e}', start_time)
-    finally:
-        connection.close()
-
-
-def _worker_selenium(execution, case, steps_data, browser, headless):
-    start_time = time.time()
-    try:
-        result, step_results, screenshots = _run_selenium_sync(
-            execution, case, steps_data, browser, headless)
-        _finish_execution(execution, result['status'], step_results, screenshots,
-                          result['error_message'], start_time)
-    except Exception as e:
-        logger.exception('[McpRunner] Selenium 执行异常 execution_id=%s', execution.id)
-        _finish_execution(execution, 'error', [], [], f'执行异常: {e}', start_time)
+            execution.status = 'failed'
+            execution.error_message = f'执行异常: {exc}'
+            execution.finished_at = timezone.now()
+            execution.save(update_fields=['status', 'error_message', 'finished_at'])
+        except Exception:  # noqa: BLE001
+            logger.exception('[McpRunner] 执行记录落库失败 execution_id=%s', execution.id)
     finally:
         connection.close()
 
@@ -237,22 +60,15 @@ def start_case_execution(case, user, engine='playwright', browser='chrome',
         TestCaseExecution（status='running'）
 
     Raises:
-        ValueError: 执行环境检查失败（浏览器/驱动缺失等）
+        ValueError: 执行环境检查失败（浏览器/驱动缺失等）或用例没有步骤
     """
-    from .playwright_engine import PlaywrightTestEngine
-    from .selenium_engine import SeleniumTestEngine
+    from .test_executor import check_engine_environment
 
-    if engine == 'selenium':
-        is_ready, error_msg = SeleniumTestEngine.check_execution_environment(browser)
-        worker = _worker_selenium
-    else:
-        is_ready, error_msg = PlaywrightTestEngine.check_execution_environment_sync(browser)
-        worker = _worker_playwright
+    is_ready, error_msg = check_engine_environment(engine, browser)
     if not is_ready:
         raise ValueError(f'{engine} 执行环境检查失败: {error_msg}')
 
-    steps_data = _collect_steps_data(case)
-    if not steps_data:
+    if not case.steps.exists():
         raise ValueError(f"用例 '{case.name}' 没有定义任何步骤")
 
     execution = TestCaseExecution.objects.create(
@@ -268,12 +84,95 @@ def start_case_execution(case, user, engine='playwright', browser='chrome',
     )
 
     thread = threading.Thread(
-        target=worker,
-        args=(execution, case, steps_data, browser, headless),
+        target=_worker_case,
+        args=(execution, case, engine, browser, headless),
         name=f'mcp-ui-case-{execution.id}',
         daemon=False,
     )
     thread.start()
     logger.info('[McpRunner] 用例 %s (id=%s) 已异步启动, engine=%s, execution_id=%s',
                 case.name, case.id, engine, execution.id)
+    return execution
+
+
+def _worker_suite(execution, suite, engine, browser, headless, storage_state_id, user):
+    """后台执行 UI 套件（复用预建的 TestExecution 记录）。"""
+    from .test_executor import TestExecutor
+
+    try:
+        executor = TestExecutor(
+            test_suite=suite,
+            engine=engine,
+            browser=browser,
+            headless=headless,
+            executed_by=user,
+            storage_state_id=storage_state_id,
+            execution=execution,
+        )
+        executor.run()
+    except Exception as exc:  # noqa: BLE001 - 后台线程兜底，避免记录卡在 RUNNING
+        logger.exception('[McpRunner] 套件执行异常 suite_id=%s', suite.id)
+        try:
+            execution.status = 'FAILED'
+            execution.error_message = f'套件执行异常: {exc}'
+            execution.finished_at = timezone.now()
+            execution.save(update_fields=['status', 'error_message', 'finished_at'])
+        except Exception:  # noqa: BLE001
+            logger.exception('[McpRunner] 套件执行记录落库失败 execution_id=%s', execution.id)
+    finally:
+        connection.close()
+
+
+def start_suite_execution(suite, user, engine='playwright', browser='chrome',
+                          headless=True, storage_state_id=None):
+    """异步启动 UI 测试套件执行，立即返回 TestExecution（status='RUNNING'）。
+
+    与页面 ``TestSuiteViewSet.run_suite`` 一致：套件必须包含测试用例，
+    执行前校验浏览器环境；结果落在 TestExecution.result_data，
+    每个用例另有一条 TestCaseExecution 记录。
+
+    Raises:
+        ValueError: 套件为空或执行环境检查失败
+    """
+    from .models import StorageState, TestExecution
+    from .test_executor import check_engine_environment
+
+    if not suite.suite_test_cases.exists():
+        raise ValueError(f'测试套件「{suite.name}」未包含任何测试用例，无法执行')
+
+    if engine not in ('playwright', 'selenium'):
+        raise ValueError(f'不支持的引擎: {engine}')
+
+    if storage_state_id:
+        if not StorageState.objects.filter(pk=storage_state_id, project=suite.project).exists():
+            raise ValueError('登录态不存在或不属于当前套件项目')
+    is_ready, error_msg = check_engine_environment(engine, browser)
+    if engine == 'selenium':
+        storage_state_id = None  # Selenium 引擎不支持登录态注入
+    if not is_ready:
+        raise ValueError(f'{engine} 执行环境检查失败: {error_msg}')
+
+    execution = TestExecution.objects.create(
+        project=suite.project,
+        test_suite=suite,
+        status='RUNNING',
+        engine=engine,
+        browser=browser,
+        headless=headless,
+        executed_by=user,
+        started_at=timezone.now(),
+        run_config={'storage_state_id': storage_state_id, 'trigger': 'mcp'},
+    )
+    suite.execution_status = 'running'
+    suite.save(update_fields=['execution_status'])
+
+    thread = threading.Thread(
+        target=_worker_suite,
+        args=(execution, suite, engine, browser, headless, storage_state_id, user),
+        name=f'mcp-ui-suite-{execution.id}',
+        daemon=False,
+    )
+    thread.start()
+    logger.info('[McpRunner] 套件 %s (id=%s) 已异步启动, engine=%s, execution_id=%s',
+                suite.name, suite.id, engine, execution.id)
     return execution

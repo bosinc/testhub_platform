@@ -30,7 +30,7 @@ from .models import (
     RequestHistory, ScenarioCase, ScenarioCaseFolder, TestExecution, ScenarioCaseRequest,
     ScheduledTask, TaskExecutionLog, NotificationLog,
     TaskNotificationSetting, OperationLog, AIServiceConfig,
-    TestSuite, TestSuiteItem,
+    TestSuite,
 )
 
 from .serializers import (
@@ -49,8 +49,9 @@ logger = logging.getLogger(__name__)
 
 from .utils import (
     execute_assertions,
+    execute_scenario_case,
+    execute_test_suite,
     extract_response_variables,
-    normalize_scenario_case_assertions,
     prepare_request_body,
     send_api_request,
 )
@@ -984,192 +985,29 @@ class ScenarioCaseViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'])
     def execute(self, request, pk=None):
-        """执行场景用例"""
+        """执行场景用例。
+
+        变量替换、请求发送、断言执行与历史落库统一复用
+        ``utils.execute_scenario_case``，与定时任务、MCP 执行同一条实现。
+        """
         scenario_case = self.get_object()
-        
-        try:
-            # 创建执行记录
-            execution = TestExecution.objects.create(
-                scenario_case=scenario_case,
-                status='RUNNING',
-                start_time=timezone.now(),
-                executed_by=request.user
-            )
-            
-            # 获取场景用例中的请求
-            scenario_case_requests = ScenarioCaseRequest.objects.filter(
-                scenario_case=scenario_case,
-                enabled=True
-            ).order_by('order')
-            
-            execution.total_requests = scenario_case_requests.count()
-            execution.save()
-            
-            results = []
-            passed_count = 0
-            failed_count = 0
-            
-            # 创建变量解析器
-            resolver = VariableResolver()
-            scenario_case_variables = dict(scenario_case.environment.variables or {}) if scenario_case.environment else {}
+        result = execute_scenario_case(
+            scenario_case, scenario_case.environment, request.user)
 
-            # 执行每个请求
-            for scenario_case_request in scenario_case_requests:
-                api_request = scenario_case_request.request
-                
-                try:
-                    # 解析环境变量
-                    variables = dict(scenario_case_variables)
-                    
-                    # 替换URL中的变量（先解析动态函数，再替换环境变量）
-                    url = self._replace_variables(api_request.url, variables)
-                    url = resolver.resolve(url)
+        # 执行体内部已把异常落成 FAILED；没有执行记录说明记录都没建起来。
+        if not result.get('execution_id'):
+            return Response({'error': result.get('error') or '执行失败'},
+                            status=status.HTTP_400_BAD_REQUEST)
 
-                    # 准备请求头
-                    headers = {}
-                    # 支持新的数组格式和旧的对象格式
-                    if isinstance(api_request.headers, list):
-                        # 新的数组格式 [{"key": "Authorization", "value": "Bearer {{token}}", "enabled": true, "description": "..."}]
-                        for header_item in api_request.headers:
-                            if header_item.get('enabled', True) and header_item.get('key'):
-                                key = header_item['key']
-                                value = self._replace_variables(str(header_item.get('value', '')), variables)
-                                value = resolver.resolve(value)
-                                headers[key] = value
-                    else:
-                        # 旧的对象格式 {"Authorization": "Bearer {{token}}"}
-                        headers = api_request.headers.copy()
-                        for key, value in headers.items():
-                            headers[key] = self._replace_variables(str(value), variables)
-                            headers[key] = resolver.resolve(headers[key])
-
-                    params = api_request.params.copy() if api_request.params else {}
-                    for key, value in params.items():
-                        params[key] = self._replace_variables(str(value), variables)
-                        params[key] = resolver.resolve(params[key])
-                    url, params = resolve_path_parameters(url, params)
-
-                    body_type, body_data = prepare_request_body(
-                        api_request.body, api_request.method, variables, resolver
-                    )
-
-                    # 执行请求
-                    start_time = time.time()
-                    response = send_api_request(
-                        method=api_request.method,
-                        url=url,
-                        headers=headers,
-                        params=params,
-                        body_type=body_type,
-                        body=body_data,
-                    )
-                    end_time = time.time()
-                    response_time = (end_time - start_time) * 1000
-
-                    # 场景用例后续请求使用当前请求新提取的变量。
-                    _, extracted_variables = extract_response_variables(
-                        response,
-                        scenario_case_request.extractors,
-                    )
-                    # scenario_case_variables 仅存在于本次场景用例执行上下文，执行结束后自动释放。
-                    variables.update(extracted_variables)
-                    scenario_case_variables.update(extracted_variables)
-                    
-                    # 场景用例请求配置是执行时的唯一断言来源，允许在场景用例内独立编辑。
-                    assertions = normalize_scenario_case_assertions(scenario_case_request.assertions, response_time)
-                    # 添加响应时间到断言中
-                    for assertion in assertions:
-                        if assertion.get('type') == 'response_time':
-                            assertion['actual_time'] = response_time
-                    
-                    # 使用共享的断言执行方法
-                    assertions_results = execute_assertions(response, assertions)
-                    
-                    # 检查所有断言是否通过
-                    passed = True
-                    error_message = ''
-                    
-                    for assertion_result in assertions_results:
-                        if not assertion_result.get('passed', True):
-                            passed = False
-                            error_message = (
-                                f"断言失败: {assertion_result.get('name', '未命名断言')} - "
-                                f"{assertion_result.get('error') or '断言不通过'}"
-                            )
-                            break
-                    
-                    if passed:
-                        passed_count += 1
-                    else:
-                        failed_count += 1
-                    
-                    results.append({
-                        'name': api_request.name,
-                        'method': api_request.method,
-                        'url': url,
-                        'status_code': response.status_code,
-                        'response_time': response_time,
-                        'passed': passed,
-                        'error': error_message,
-                        'assertions_results': assertions_results
-                    })
-                    
-                    # 保存请求历史
-                    RequestHistory.objects.create(
-                        request=api_request,
-                        environment=scenario_case.environment,
-                        request_data={
-                            'url': url,
-                            'method': api_request.method,
-                            'headers': headers,
-                            'params': params,
-                            'body': body_data
-                        },
-                        response_data={
-                            'headers': dict(response.headers),
-                            'body': response.text,
-                            'json': response.json() if response.headers.get('content-type', '').startswith('application/json') else None
-                        },
-                        status_code=response.status_code,
-                        response_time=response_time,
-                        assertions_results=assertions_results,
-                        executed_by=request.user
-                    )
-                    
-                except Exception as e:
-                    failed_count += 1
-                    results.append({
-                        'name': api_request.name,
-                        'method': api_request.method,
-                        'url': api_request.url,
-                        'passed': False,
-                        'error': str(e)
-                    })
-            
-            # 更新执行结果
-            execution.end_time = timezone.now()
-            execution.passed_requests = passed_count
-            execution.failed_requests = failed_count
-            execution.status = 'COMPLETED' if failed_count == 0 else 'FAILED'
-            execution.results = results
-            execution.save()
-            
-            # 记录执行操作
-            log_operation(
-                operation_type='execute',
-                resource_type='scenario_case',
-                resource_id=scenario_case.id,
-                resource_name=scenario_case.name,
-                user=request.user
-            )
-            
-            return Response(TestExecutionSerializer(execution).data)
-            
-        except Exception as e:
-            execution.status = 'FAILED'
-            execution.end_time = timezone.now()
-            execution.save()
-            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        log_operation(
+            operation_type='execute',
+            resource_type='scenario_case',
+            resource_id=scenario_case.id,
+            resource_name=scenario_case.name,
+            user=request.user
+        )
+        execution = TestExecution.objects.get(id=result['execution_id'])
+        return Response(TestExecutionSerializer(execution).data)
 
     def perform_create(self, serializer):
         """创建场景用例时记录日志"""
@@ -1229,42 +1067,6 @@ class ScenarioCaseViewSet(viewsets.ModelViewSet):
             
         except Exception as e:
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
-    
-    def _replace_variables(self, text, variables):
-        """替换文本中的变量"""
-        if not isinstance(text, str):
-            return text
-        
-        result = text
-        for key, value in (variables or {}).items():
-            if isinstance(value, dict):
-                replacement = str(value.get('currentValue', '') or value.get('initialValue', ''))
-            else:
-                replacement = str(value) if value is not None else ''
-            result = result.replace(f'{{{{{key}}}}}', replacement)
-        return result
-    
-    def _replace_variables_in_dict(self, data, variables):
-        """递归替换字典中的变量"""
-        if isinstance(data, dict):
-            return {k: self._replace_variables_in_dict(v, variables) for k, v in data.items()}
-        elif isinstance(data, list):
-            return [self._replace_variables_in_dict(item, variables) for item in data]
-        elif isinstance(data, str):
-            return self._replace_variables(data, variables)
-        else:
-            return data
-    
-    def _resolve_variables_in_dict(self, data, resolver):
-        """递归解析字典中的动态函数占位符"""
-        if isinstance(data, dict):
-            return {k: self._resolve_variables_in_dict(v, resolver) for k, v in data.items()}
-        elif isinstance(data, list):
-            return [self._resolve_variables_in_dict(item, resolver) for item in data]
-        elif isinstance(data, str):
-            return resolver.resolve(data)
-        else:
-            return data
 
 
 class TestSuiteViewSet(viewsets.ModelViewSet):
@@ -1284,35 +1086,19 @@ class TestSuiteViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'])
     def execute(self, request, pk=None):
-        """依次执行测试套件中的场景用例。"""
+        """依次执行测试套件中的场景用例。
+
+        循环、汇总与成功判定统一复用 ``utils.execute_test_suite``
+        （与定时任务、MCP 异步执行同一实现），本视图只负责返回结果。
+        """
         test_suite = self.get_object()
-        items = TestSuiteItem.objects.filter(test_suite=test_suite, enabled=True).order_by('order')
-        results = []
-        for item in items:
-            scenario_case = item.scenario_case
-            try:
-                scenario_case_view = ScenarioCaseViewSet()
-                scenario_case_view.request = request
-                scenario_case_view.kwargs = {'pk': scenario_case.id}
-                resp = scenario_case_view.execute(request, pk=scenario_case.id)
-                data = resp.data
-                results.append({
-                    'scenario_case_id': scenario_case.id,
-                    'scenario_case_name': scenario_case.name,
-                    'status': data.get('status'),
-                    'passed': data.get('passed_requests'),
-                    'failed': data.get('failed_requests'),
-                    'total': data.get('total_requests'),
-                    'error': data.get('error'),
-                })
-            except Exception as e:
-                results.append({
-                    'scenario_case_id': scenario_case.id,
-                    'scenario_case_name': scenario_case.name,
-                    'status': 'FAILED',
-                    'error': str(e),
-                })
-        return Response({'test_suite': test_suite.name, 'results': results})
+        result = execute_test_suite(test_suite, test_suite.environment, request.user)
+        return Response({
+            'success': result['success'],
+            'test_suite': result['test_suite'],
+            'suite_execution_id': result['suite_execution_id'],
+            'results': result['results'],
+        })
 
 
 class ScenarioCaseRequestViewSet(viewsets.ModelViewSet):

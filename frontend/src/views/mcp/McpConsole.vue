@@ -74,10 +74,11 @@
       <!-- 待确认操作 -->
       <el-tab-pane :label="pendingLabel" name="pending">
         <div class="filter-bar">
-          <el-select v-model="pendingFilter.status" :placeholder="$t('mcp.filterStatus')" clearable style="width: 160px" @change="loadPending">
+          <el-select v-model="pendingFilter.status" :placeholder="$t('mcp.filterStatus')" style="width: 160px" @change="onPendingFilterChange">
             <el-option v-for="s in statusOptions" :key="s.value" :label="s.label" :value="s.value" />
           </el-select>
           <el-button :icon="Refresh" @click="loadPending">{{ $t('common.refresh') }}</el-button>
+          <span class="filter-hint">{{ $t('mcp.pendingListHint') }}</span>
         </div>
         <el-table :data="pendingList" v-loading="pendingLoading" stripe>
           <el-table-column prop="id" label="ID" width="60" />
@@ -414,13 +415,14 @@ async function copyConfig(variant) {
   }
 }
 
-// 待确认
+// 待确认（列表默认只看 pending，历史状态经「全部状态」显式查看）
+const ALL_STATUS = 'all'
 const pendingLoading = ref(false)
 const pendingList = ref([])
 const pendingTotal = ref(0)
 const pendingPage = ref(1)
 const pendingPageSize = ref(20)
-const pendingFilter = reactive({ status: '' })
+const pendingFilter = reactive({ status: 'pending' })
 const pendingCount = ref(0)
 
 const pendingLabel = computed(() => pendingCount.value
@@ -432,7 +434,8 @@ const statusOptions = computed(() => [
   { value: 'approved', label: t('mcp.statusApproved') },
   { value: 'rejected', label: t('mcp.statusRejected') },
   { value: 'consumed', label: t('mcp.statusConsumed') },
-  { value: 'expired', label: t('mcp.statusExpired') }
+  { value: 'expired', label: t('mcp.statusExpired') },
+  { value: ALL_STATUS, label: t('mcp.statusAll') }
 ])
 const pendingStatusType = (s) => ({ pending: 'warning', approved: 'success', rejected: 'danger', consumed: 'info', expired: 'info' }[s] || 'info')
 const pendingStatusLabel = (s) => ({ pending: t('mcp.statusPending'), approved: t('mcp.statusApproved'), rejected: t('mcp.statusRejected'), consumed: t('mcp.statusConsumed'), expired: t('mcp.statusExpired') }[s] || s)
@@ -479,16 +482,26 @@ const countdownText = (row) => {
 async function loadPending() {
   pendingLoading.value = true
   try {
-    const res = await getPendingList({ page: pendingPage.value, status: pendingFilter.status || undefined })
+    // 默认只拉待确认；选「全部状态」才不带 status（历史记录按需查看）
+    const selected = pendingFilter.status || 'pending'
+    const res = await getPendingList({
+      page: pendingPage.value,
+      status: selected === ALL_STATUS ? undefined : selected
+    })
     pendingList.value = res.data?.results || []
     pendingTotal.value = res.data?.count || 0
-    // 待确认计数（仅未过滤时统计 pending）
-    if (!pendingFilter.status) pendingCount.value = pendingTotal.value
+    pendingCount.value = res.data?.pending_count ?? 0
   } catch (e) {
     ElMessage.error(t('mcp.msgLoadPendingFail'))
   } finally {
     pendingLoading.value = false
   }
+}
+
+// 切换状态筛选时回到第一页，避免停在越界页码拿到空列表
+function onPendingFilterChange() {
+  pendingPage.value = 1
+  loadPending()
 }
 
 async function loadLogs() {
@@ -563,6 +576,10 @@ onUnmounted(() => {
   gap: 8px;
   align-items: center;
   margin-bottom: 12px;
+}
+.filter-hint {
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
 }
 .mono {
   font-family: 'Consolas', 'Monaco', monospace;

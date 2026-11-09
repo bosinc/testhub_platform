@@ -1,4 +1,5 @@
 import json
+import logging
 import time
 import requests
 from requests.adapters import HTTPAdapter
@@ -7,6 +8,8 @@ from django.utils import timezone
 from .models import RequestHistory
 from .variable_resolver import VariableResolver
 from .path_params import resolve_path_parameters
+
+logger = logging.getLogger(__name__)
 
 
 def _api_request_retry(method):
@@ -217,28 +220,59 @@ def execute_assertions(response, assertions):
     return results
 
 
-def execute_scenario_case(scenario_case, environment, executed_by):
-    """执行单个场景用例并返回结果。"""
+def execute_scenario_case(scenario_case, environment, executed_by, execution=None):
+    """执行单个场景用例并返回结果。
+
+    execution 为空时新建 TestExecution；异步执行场景下由调用方预建记录
+    （便于立即返回执行 ID 供轮询），此处直接复用并更新同一条记录。
+    """
     from .models import TestExecution, RequestHistory
     
     try:
         # 创建变量解析器
         resolver = VariableResolver()
         
-        # 创建执行记录
-        execution = TestExecution.objects.create(
-            scenario_case=scenario_case,
-            status='RUNNING',
-            start_time=timezone.now(),
-            executed_by=executed_by
-        )
+        # 创建执行记录（异步执行时复用调用方预建的记录）
+        if execution is None:
+            execution = TestExecution.objects.create(
+                scenario_case=scenario_case,
+                status='RUNNING',
+                start_time=timezone.now(),
+                executed_by=executed_by
+            )
+        else:
+            execution.status = 'RUNNING'
+            execution.start_time = execution.start_time or timezone.now()
         
         # 获取场景用例中的请求
         scenario_case_requests = scenario_case.scenariocaserequest_set.filter(enabled=True).order_by('order')
         
         execution.total_requests = scenario_case_requests.count()
         execution.save()
-        
+
+        # 没有启用请求的场景视为配置错误：不能因为「0 通过 0 失败」被当成通过。
+        # 所有调用方（MCP 套件执行器、execute_test_suite）都走这里，
+        # 统一落 FAILED 并给出明确原因。
+        if execution.total_requests == 0:
+            empty_message = '场景用例未包含启用的请求，无法执行'
+            execution.end_time = timezone.now()
+            execution.passed_requests = 0
+            execution.failed_requests = 0
+            execution.status = 'FAILED'
+            execution.results = [{'passed': False, 'error': empty_message}]
+            execution.save()
+            logger.warning('[ApiExecutor] 场景用例无启用请求 id=%s execution_id=%s',
+                           scenario_case.id, execution.id)
+            return {
+                'success': False,
+                'execution_id': execution.id,
+                'passed_count': 0,
+                'failed_count': 0,
+                'total_count': 0,
+                'results': [{'passed': False, 'error': empty_message}],
+                'error': empty_message,
+            }
+
         results = []
         passed_count = 0
         failed_count = 0
@@ -329,7 +363,7 @@ def execute_scenario_case(scenario_case, environment, executed_by):
                 else:
                     failed_count += 1
                 
-                results.append({
+                request_result = {
                     'name': api_request.name,
                     'method': api_request.method,
                     'url': url,
@@ -338,29 +372,35 @@ def execute_scenario_case(scenario_case, environment, executed_by):
                     'passed': passed,
                     'error': error_message,
                     'assertions_results': assertions_results
-                })
+                }
                 
-                # 保存请求历史
-                RequestHistory.objects.create(
-                    request=api_request,
-                    environment=environment,
-                    request_data={
-                        'url': url,
-                        'method': api_request.method,
-                        'headers': headers,
-                        '极速版params': params,
-                        'body': body_data
-                    },
-                    response_data={
-                        'headers': dict(response.headers),
-                        'body': response.text,
-                        'json': response.json() if response.headers.get('content-type', '').startswith('application/json') else None
-                    },
-                    status_code=response.status_code,
-                    response_time=response_time,
-                    assertions_results=assertions_results,
-                    executed_by=executed_by
-                )
+                # 保存请求历史：历史落库失败只记日志，不改变本次请求的执行结论，
+                try:
+                    RequestHistory.objects.create(
+                        request=api_request,
+                        environment=environment,
+                        request_data={
+                            'url': url,
+                            'method': api_request.method,
+                            'headers': headers,
+                            'params': params,
+                            'body': body_data
+                        },
+                        response_data={
+                            'headers': dict(response.headers),
+                            'body': response.text,
+                            'json': response.json() if response.headers.get('content-type', '').startswith('application/json') else None
+                        },
+                        status_code=response.status_code,
+                        response_time=response_time,
+                        assertions_results=assertions_results,
+                        executed_by=executed_by
+                    )
+                except Exception:  # noqa: BLE001 - 历史记录失败不影响执行结论
+                    logger.warning('[ApiExecutor] 请求历史保存失败 request_id=%s',
+                                   api_request.id, exc_info=True)
+
+                results.append(request_result)
                 
             except Exception as e:
                 failed_count += 1
@@ -390,42 +430,121 @@ def execute_scenario_case(scenario_case, environment, executed_by):
         }
         
     except Exception as e:
+        # 预建记录的异步执行路径必须落终态，避免轮询一直停留在 RUNNING。
+        if execution is not None:
+            try:
+                execution.status = 'FAILED'
+                execution.end_time = timezone.now()
+                execution.results = [{'passed': False, 'error': str(e)}]
+                execution.save(update_fields=['status', 'end_time', 'results'])
+            except Exception:  # noqa: BLE001 - 落库失败不掩盖原始异常
+                pass
         return {
             'success': False,
             'error': str(e)
         }
 
 
-def execute_test_suite(test_suite, environment, executed_by):
-    """依次运行测试套件中的场景用例。"""
-    from .models import TestSuiteItem
+def execute_test_suite(test_suite, environment, executed_by, suite_execution=None):
+    """依次运行测试套件中的场景用例，并落套件维度执行记录。
+
+    同步调用方（页面 / 定时任务）不传 ``suite_execution``，由本函数创建记录；
+    MCP 异步执行器需要「立即返回执行 ID 再后台跑」，会预建记录并传入复用。
+    两条路径共用同一套循环、汇总与成功判定，避免判定口径漂移。
+
+    Args:
+        suite_execution: 可选的预建 ``ApiSuiteExecution``，传入时复用该记录，
+            不再新建（异步执行靠它实现「先返回 ID，后执行」）。
+    """
+    from .models import ApiSuiteExecution, TestSuiteItem
+
+    execution_environment = environment or test_suite.environment
+    # 套件执行记录必须关联执行者：未显式传入时回退套件创建者。
+    executed_by = executed_by or test_suite.created_by
+    items = list(
+        TestSuiteItem.objects.filter(test_suite=test_suite, enabled=True)
+        .select_related('scenario_case', 'scenario_case__environment')
+        .order_by('order')
+    )
+
+    if suite_execution is None:
+        suite_execution = ApiSuiteExecution.objects.create(
+            test_suite=test_suite,
+            status='RUNNING',
+            start_time=timezone.now(),
+            total_scenarios=len(items),
+            executed_by=executed_by,
+        )
+    else:
+        # 复用调用方预建的记录：重置为运行态，保证轮询方看到一致的初始状态。
+        suite_execution.status = 'RUNNING'
+        suite_execution.start_time = suite_execution.start_time or timezone.now()
+        suite_execution.end_time = None
+        suite_execution.error_message = ''
+        suite_execution.total_scenarios = len(items)
+        suite_execution.passed_scenarios = 0
+        suite_execution.failed_scenarios = 0
+        suite_execution.results = []
+        suite_execution.save()
 
     results = []
-    execution_environment = environment or test_suite.environment
-    for item in TestSuiteItem.objects.filter(test_suite=test_suite, enabled=True).select_related(
-        'scenario_case', 'scenario_case__environment'
-    ).order_by('order'):
-        scenario_case = item.scenario_case
-        result = execute_scenario_case(
-            scenario_case,
-            execution_environment or scenario_case.environment,
-            executed_by,
-        )
-        failed = result.get('failed_count', 0)
-        succeeded = result.get('success', False) and failed == 0
-        results.append({
-            'scenario_case_id': scenario_case.id,
-            'scenario_case_name': scenario_case.name,
-            'status': 'COMPLETED' if succeeded else 'FAILED',
-            'passed': result.get('passed_count', 0),
-            'failed': failed,
-            'total': result.get('total_count', 0),
-            'error': result.get('error'),
-        })
+    passed = 0
+    failed = 0
+    try:
+        for item in items:
+            scenario_case = item.scenario_case
+            result = execute_scenario_case(
+                scenario_case,
+                execution_environment or scenario_case.environment,
+                executed_by,
+            )
+            failed_count = result.get('failed_count', 0)
+            # 0 请求的场景不算通过（与 MCP 套件执行器保持同一判定）。
+            succeeded = (bool(result.get('success')) and failed_count == 0
+                         and bool(result.get('total_count')))
+            if succeeded:
+                passed += 1
+            else:
+                failed += 1
+            results.append({
+                'scenario_case_id': scenario_case.id,
+                'scenario_case_name': scenario_case.name,
+                'execution_id': result.get('execution_id'),
+                'status': 'COMPLETED' if succeeded else 'FAILED',
+                'passed': result.get('passed_count', 0),
+                'failed': failed_count,
+                'total': result.get('total_count', 0),
+                'error': result.get('error') or (
+                    '' if succeeded else '场景用例未包含启用的请求'),
+            })
+            # 每个场景执行完即刷新汇总，长套件执行中也能看到进度。
+            suite_execution.passed_scenarios = passed
+            suite_execution.failed_scenarios = failed
+            suite_execution.results = list(results)
+            suite_execution.save(
+                update_fields=['passed_scenarios', 'failed_scenarios', 'results'])
+        suite_execution.status = 'COMPLETED' if failed == 0 else 'FAILED'
+        if not items:
+            # 空套件没有可执行场景：落 FAILED，避免「0 场景 0 失败」被当成通过。
+            suite_execution.status = 'FAILED'
+            suite_execution.error_message = '测试套件未包含任何启用的场景用例，无法执行'
+    except Exception as exc:  # noqa: BLE001 - 套件执行异常必须落终态
+        logger.exception('[ApiSuite] 套件执行异常 suite_id=%s', test_suite.id)
+        suite_execution.status = 'FAILED'
+        suite_execution.error_message = str(exc)
+    finally:
+        suite_execution.end_time = timezone.now()
+        suite_execution.passed_scenarios = passed
+        suite_execution.failed_scenarios = failed
+        suite_execution.results = list(results)
+        suite_execution.save()
 
     return {
-        'success': all(result['status'] == 'COMPLETED' for result in results),
+        # 空套件没有可执行场景，不能算通过。
+        'success': bool(results) and all(
+            result['status'] == 'COMPLETED' for result in results),
         'test_suite': test_suite.name,
+        'suite_execution_id': suite_execution.id,
         'results': results,
     }
 

@@ -2012,708 +2012,175 @@ class TestCaseViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'])
     def run(self, request, pk=None):
-        """运行单个测试用例 - 支持选择Playwright或Selenium执行引擎"""
+        """运行单个测试用例（Playwright / Selenium）。
+
+        步骤循环、登录态动作、截图与结果落库统一复用
+        ``test_executor.run_single_case``，与 MCP 异步执行同一实现；
+        本视图只负责前置校验与响应组装。
+        """
+        from .test_executor import check_engine_environment, run_single_case
+
         test_case = self.get_object()
+        engine_type = request.data.get('engine', 'playwright')
+        browser = request.data.get('browser', 'chrome')
+        headless = request.data.get('headless', False)
 
-        try:
-            # 获取执行引擎选择，默认使用playwright
-            engine_type = request.data.get('engine', 'playwright')
-            if engine_type == 'selenium' and test_case.steps.filter(action_type='storageState').exists():
-                return Response({'error': '包含登录态步骤的测试用例必须使用 Playwright 执行'}, status=status.HTTP_400_BAD_REQUEST)
+        if engine_type == 'selenium' and test_case.steps.filter(
+                action_type='storageState').exists():
+            return Response({'error': '包含登录态步骤的测试用例必须使用 Playwright 执行'},
+                            status=status.HTTP_400_BAD_REQUEST)
 
-            # 创建执行记录
-            execution = TestCaseExecution.objects.create(
-                test_case=test_case,
-                project=test_case.project,
-                execution_source='manual',
-                status='running',
-                engine=engine_type,
-                browser=request.data.get('browser', 'chrome'),
-                headless=request.data.get('headless', False),
-                created_by=request.user,
-                started_at=timezone.now()
-            )
+        # 先建记录再检查环境：环境不可用时也要留下一条 failed 记录可追溯。
+        execution = TestCaseExecution.objects.create(
+            test_case=test_case,
+            project=test_case.project,
+            execution_source='manual',
+            status='running',
+            engine=engine_type,
+            browser=browser,
+            headless=headless,
+            created_by=request.user,
+            started_at=timezone.now(),
+        )
 
-            # 根据引擎类型导入对应的执行引擎
+        is_ready, error_msg = check_engine_environment(engine_type, browser)
+        if not is_ready:
+            logger.error(f"{engine_type} 执行环境检查失败: {error_msg}")
+            execution.status = 'failed'
+            execution.error_message = error_msg
             if engine_type == 'selenium':
-                from .selenium_engine import SeleniumTestEngine
-
-                # Selenium 引擎需要预先检查浏览器和驱动是否可用
-                browser_type = request.data.get('browser', 'chrome')
-                is_ready, error_msg = SeleniumTestEngine.check_execution_environment(browser_type)
-                if not is_ready:
-                    # 浏览器环境不可用，立即返回错误
-                    logger.error(f"Selenium 执行环境检查失败: {error_msg}")
-                    execution.status = 'failed'
-                    execution.error_message = error_msg
-                    execution.execution_logs = (
-                        f"浏览器环境检查失败\n\n{error_msg}\n\n建议：\n"
-                        f"1. 请确认已安装 {browser_type.capitalize()} 浏览器\n"
-                        f"2. 执行 `python manage.py download_webdrivers --browsers {browser_type}` 安装对应驱动\n"
-                        f"3. 或者尝试使用其他浏览器（Chrome、Firefox、Edge）\n"
-                        f"4. 或者使用 Playwright 引擎（支持自动下载浏览器）"
-                    )
-                    execution.finished_at = timezone.now()
-                    execution.save()
-
-                    return Response({
-                        'success': False,
-                        'logs': execution.execution_logs,
-                        'screenshots': [],
-                        'execution_time': 0,
-                        'errors': [{
-                            'message': f'{browser_type.capitalize()} 浏览器执行环境不可用',
-                            'details': error_msg,
-                            'step_number': None,
-                            'action_type': '浏览器检查',
-                            'element': '',
-                            'description': '执行前浏览器与驱动环境检查'
-                        }]
-                    }, status=status.HTTP_400_BAD_REQUEST)
+                execution.execution_logs = (
+                    f"浏览器环境检查失败\n\n{error_msg}\n\n建议：\n"
+                    f"1. 请确认已安装 {browser.capitalize()} 浏览器\n"
+                    f"2. 执行 `python manage.py download_webdrivers --browsers {browser}` 安装对应驱动\n"
+                    f"3. 或者尝试使用其他浏览器（Chrome、Firefox、Edge）\n"
+                    f"4. 或者使用 Playwright 引擎（支持自动下载浏览器）"
+                )
             else:
-                import asyncio
-                import threading
-                from .playwright_engine import PlaywrightTestEngine
-
-                browser_type = request.data.get('browser', 'chrome')
-                is_ready, error_msg = PlaywrightTestEngine.check_execution_environment_sync(browser_type)
-                if not is_ready:
-                    logger.error(f"Playwright 执行环境检查失败: {error_msg}")
-                    execution.status = 'failed'
-                    execution.error_message = error_msg
-                    execution.execution_logs = (
-                        f"Playwright 浏览器环境检查失败\n\n{error_msg}\n\n建议：\n"
-                        f"1. 执行 `python -m playwright install` 或 `python -m playwright install {PlaywrightTestEngine.normalize_browser_type(browser_type)}` 安装浏览器\n"
-                        f"2. 如果 Playwright 模块未安装，请先执行 `pip install playwright`\n"
-                        f"3. 或者切换到 Selenium 引擎并安装对应浏览器驱动"
-                    )
-                    execution.finished_at = timezone.now()
-                    execution.save()
-
-                    return Response({
-                        'success': False,
-                        'logs': execution.execution_logs,
-                        'screenshots': [],
-                        'execution_time': 0,
-                        'errors': [{
-                            'message': f'{browser_type.capitalize()} Playwright 执行环境不可用',
-                            'details': error_msg,
-                            'step_number': None,
-                            'action_type': '浏览器检查',
-                            'element': '',
-                            'description': '执行前 Playwright 浏览器环境检查'
-                        }]
-                    }, status=status.HTTP_400_BAD_REQUEST)
-
-            start_time = time.time()
-
-            # 获取测试用例的所有步骤
-            test_steps = list(test_case.steps.all().order_by('step_number'))
-
-            # 预先获取所有步骤的数据,避免在异步上下文中访问ORM
-            steps_data = []
-            for step in test_steps:
-                step_data = {
-                    'step': step,
-                    'action_type': step.action_type,
-                    'description': step.description,
-                    'input_value': step.input_value,
-                    'wait_time': step.wait_time,
-                    'assert_type': step.assert_type,
-                    'assert_value': step.assert_value,
-                    'action_params': step.action_params or {},
-                }
-
-                # 获取元素数据
-                if step.element:
-                    step_data['element_data'] = {
-                        'locator_strategy': step.element.locator_strategy.name if step.element.locator_strategy else 'css',
-                        'locator_value': step.element.locator_value,
-                        'locator_options': step.element.locator_options or {},
-                        'name': step.element.name,
-                        'wait_timeout': step.element.wait_timeout,  # 添加元素的等待超时设置（秒）
-                        'force_action': step.element.force_action  # 添加强制操作选项
-                    }
-                else:
-                    step_data['element_data'] = None
-
-                steps_data.append(step_data)
-
-            # 存储步骤执行结果（用于JSON格式的execution_logs）
-            step_results = []
-
-            # 生成执行日志（保留文本格式用于调试）
-            execution_logs = []
-            execution_logs.append(f"测试用例 '{test_case.name}' 开始执行")
-            execution_logs.append(f"执行时间: {timezone.now().strftime('%Y-%m-%d %H:%M:%S')}")
-            execution_logs.append(f"执行引擎: {engine_type.upper()}")
-            execution_logs.append(f"浏览器: {request.data.get('browser', 'chrome').capitalize()}")
-            headless_mode = request.data.get('headless', False)
-            mode_text = "无头模式" if headless_mode else "有头模式"
-            execution_logs.append(f"执行模式: {mode_text}")
-            execution_logs.append(f"执行用户: {request.user.username}")
-            execution_logs.append(f"项目基础URL: {test_case.project.base_url}")
-            execution_logs.append("")
-
-            # 截图列表
-            screenshots = []
-            # 详细错误信息列表
-            detailed_errors = []
-            execution_result = {'status': 'passed', 'error_message': None}
-
-            # 根据引擎类型选择执行方式
-            if engine_type == 'selenium':
-                # Selenium同步执行
-                def run_test_selenium():
-                    """使用Selenium执行测试"""
-                    browser_type = request.data.get('browser', 'chrome')
-                    headless = request.data.get('headless', False)
-
-                    # 创建Selenium引擎实例
-                    engine = SeleniumTestEngine(browser_type=browser_type, headless=headless)
-
-                    try:
-                        # 单用例运行使用独立项目变量副本。
-                        engine.initialize_variables(test_case.project.variables)
-                        # 启动浏览器
-                        execution_logs.append("========== 初始化浏览器 ==========")
-                        try:
-                            engine.start()
-                            mode_text = "无头模式" if headless else "有头模式"
-                            execution_logs.append(
-                                f"✓ {browser_type.capitalize()} 浏览器启动成功 (Selenium, {mode_text})")
-                            execution_logs.append("")
-                        except Exception as browser_error:
-                            # 浏览器启动失败
-                            execution_logs.append(f"✗ {browser_type.capitalize()} 浏览器启动失败")
-                            execution_logs.append(f"  错误: {str(browser_error)}")
-                            execution_logs.append("")
-                            execution_result['status'] = 'failed'
-                            execution_result[
-                                'error_message'] = f"{browser_type.capitalize()} 浏览器启动失败: {str(browser_error)}"
-
-                            # 添加详细错误信息
-                            detailed_errors.append({
-                                'step_number': None,
-                                'action_type': '浏览器启动',
-                                'element': '',
-                                'message': f"{browser_type.capitalize()} 浏览器启动失败",
-                                'details': str(browser_error),
-                                'description': '执行前浏览器启动检查'
-                            })
-
-                            return False
-
-                        # 导航到项目基础URL
-                        if test_case.project.base_url:
-                            execution_logs.append("========== 导航到测试页面 ==========")
-                            success, nav_log = engine.navigate(test_case.project.base_url)
-                            execution_logs.append(nav_log)
-                            execution_logs.append("")
-
-                            if not success:
-                                execution_result['status'] = 'failed'
-                                execution_result['error_message'] = "导航到测试页面失败"
-                                return False
-
-                        if steps_data:
-                            execution_logs.append("========== 执行测试步骤 ==========")
-                            step_count = len(steps_data)
-                            execution_logs.append(f"共有 {step_count} 个步骤需要执行")
-                            execution_logs.append("")
-
-                            for i, step_info in enumerate(steps_data, 1):
-                                execution_logs.append(f"========== 开始执行步骤 {i}/{step_count} ==========")
-                                execution_logs.append(f"步骤 {i}/{step_count}:")
-
-                                step = step_info['step']
-                                action_type = step_info['action_type']
-                                description = step_info['description']
-                                element_data = step_info['element_data']
-
-                                action_choices_dict = dict(TestCaseStep.ACTION_TYPE_CHOICES)
-                                action_type_text = action_choices_dict.get(action_type, action_type)
-                                execution_logs.append(f"  操作: {action_type_text}")
-
-                                if description:
-                                    execution_logs.append(f"  说明: {description}")
-
-                                if element_data:
-                                    execution_logs.append(f"  元素: {element_data['name']}")
-                                    execution_logs.append(
-                                        f"  定位器: {element_data['locator_strategy']}={element_data['locator_value']}")
-                                else:
-                                    execution_logs.append(f"  (此步骤不需要元素)")
-
-                                try:
-                                    success, step_log, screenshot_base64 = engine.execute_step(step, element_data or {})
-                                    execution_logs.append(f"  {step_log}")
-                                    execution_logs.append("")
-
-                                    # 记录步骤执行结果（用于JSON格式）
-                                    step_results.append({
-                                        'step_number': i,
-                                        'action_type': action_type,
-                                        'description': description or '',
-                                        'success': success,
-                                        'error': None if success else step_log,
-                                        # 仅新变量用例附加脱敏快照，保持旧执行记录结构不变。
-                                        **({'variables': engine.variables.snapshot()} if engine.variables.strict else {})
-                                    })
-
-                                    if not success:
-                                        logger.info(f"[调试-Selenium] 步骤 {i} 执行失败，设置状态为 failed")
-                                        execution_result['status'] = 'failed'
-                                        element_info = element_data['name'] if element_data else "未知元素"
-                                        execution_result['error_message'] = step_log  # 使用step_log作为错误信息
-                                        logger.info(f"[调试-Selenium] execution_result = {execution_result}")
-
-                                        detailed_errors.append({
-                                            'step_number': i,
-                                            'action_type': action_type_text,
-                                            'element': element_info,
-                                            'message': f"步骤 {i}/{step_count} 执行失败",
-                                            'details': step_log,
-                                            'description': description or ''
-                                        })
-
-                                        if not screenshot_base64:
-                                            screenshot_base64 = engine.capture_screenshot()
-
-                                        if screenshot_base64:
-                                            screenshots.append({
-                                                'url': screenshot_base64,
-                                                'description': f'步骤 {i} 失败截图: {description or action_type_text}',
-                                                'step_number': i,
-                                                'timestamp': timezone.now().isoformat()
-                                                # 移除 loaded 和 error 字段，让前端自行处理
-                                            })
-                                            execution_logs.append(f"  📸 失败截图已捕获")
-
-                                        return False
-
-                                    if action_type == 'screenshot' and screenshot_base64:
-                                        screenshots.append({
-                                            'url': screenshot_base64,
-                                            'description': f'步骤 {i}: {description or "手动截图"}',
-                                            'step_number': i,
-                                            'timestamp': timezone.now().isoformat()
-                                            # 移除 loaded 和 error 字段，让前端自行处理
-                                        })
-
-                                except Exception as e:
-                                    execution_logs.append(f"  ✗ 步骤执行异常: {str(e)}")
-                                    import traceback
-                                    tb_str = traceback.format_exc()
-                                    execution_logs.append(f"  [调试] 异常堆栈:\n{tb_str}")
-
-                                    # 记录步骤执行结果（异常情况）
-                                    step_results.append({
-                                        'step_number': i,
-                                        'action_type': action_type,
-                                        'description': description or '',
-                                        'success': False,
-                                        'error': str(e)
-                                    })
-
-                                    execution_result['status'] = 'failed'
-                                    execution_result['error_message'] = f"步骤 {i} 执行异常: {str(e)}"
-
-                                    element_info = element_data['name'] if element_data else "未知元素"
-                                    detailed_errors.append({
-                                        'step_number': i,
-                                        'action_type': action_type_text,
-                                        'element': element_info,
-                                        'message': f"步骤 {i}/{step_count} 执行异常",
-                                        'details': f"异常: {str(e)}\n\n堆栈跟踪:\n{tb_str}",
-                                        'description': description or ''
-                                    })
-
-                                    try:
-                                        screenshot_base64 = engine.capture_screenshot()
-                                        if screenshot_base64:
-                                            screenshots.append({
-                                                'url': screenshot_base64,
-                                                'description': f'步骤 {i} 异常截图: {str(e)}',
-                                                'step_number': i,
-                                                'timestamp': timezone.now().isoformat()
-                                                # 移除 loaded 和 error 字段，让前端自行处理
-                                            })
-                                    except:
-                                        pass
-
-                                    return False
-
-                            execution_logs.append(f"========== 执行完成 ({step_count} 个步骤全部通过) ==========")
-                            return True
-                        else:
-                            execution_logs.append("警告: 测试用例没有定义任何步骤")
-                            return True
-
-                    except Exception as exc:
-                        # 定义初始化失败时也生成可读的失败步骤，不启动后续动作。
-                        execution_result['status'] = 'failed'
-                        execution_result['error_message'] = engine.variables.redact(str(exc))
-                        execution_logs.append(execution_result['error_message'])
-                        step_results.append({'step_number': 0, 'action_type': 'initializeVariables',
-                                             'success': False, 'error': execution_result['error_message']})
-                        return False
-                    finally:
-                        execution_logs.append("")
-                        execution_logs.append("========== 清理资源 ==========")
-                        engine.stop()
-                        execution_logs.append("✓ 浏览器已关闭")
-
-                # 在独立线程中运行Selenium测试
-                import threading
-                test_thread = threading.Thread(target=run_test_selenium)
-                test_thread.start()
-                test_thread.join()
-
-            else:
-                # Playwright异步执行
-                def run_test_in_thread():
-                    """在独立线程中运行异步测试"""
-
-                    async def run_test():
-                        """异步执行测试"""
-                        from asgiref.sync import sync_to_async
-                        # 根据浏览器类型选择
-                        browser_map = {
-                            'chrome': 'chromium',
-                            'firefox': 'firefox',
-                            'safari': 'webkit',
-                            'edge': 'chromium'
-                        }
-                        browser_type = browser_map.get(request.data.get('browser', 'chrome'), 'chromium')
-                        headless = request.data.get('headless', False)
-
-                        # 创建Playwright引擎实例
-                        engine = PlaywrightTestEngine(browser_type=browser_type, headless=headless)
-
-                        try:
-                            # 单用例入口每次创建独立变量副本，不继承其他运行状态。
-                            engine.initialize_variables(test_case.project.variables)
-                            # 启动浏览器
-                            execution_logs.append("========== 初始化浏览器 ==========")
-                            selected_state = None
-                            selected_state_id = request.data.get('storage_state_id')
-                            if selected_state_id and engine_type == 'playwright':
-                                # 启动独立浏览器上下文时注入可选的初始登录态。
-                                selected_state = await sync_to_async(
-                                    lambda: StorageState.objects.filter(
-                                        pk=selected_state_id, project_id=test_case.project_id
-                                    ).first()
-                                )()
-                                if not selected_state:
-                                    raise ValidationError({'storage_state_id': '登录态不存在或不属于当前项目'})
-                            await engine.start(selected_state.file.path if selected_state else None)
-                            mode_text = "无头模式" if headless else "有头模式"
-                            execution_logs.append(
-                                f"✓ {browser_type.capitalize()} 浏览器启动成功 (Playwright, {mode_text})")
-                            execution_logs.append("")
-
-                            # 导航到项目基础URL
-                            if test_case.project.base_url:
-                                execution_logs.append("========== 导航到测试页面 ==========")
-                                success, nav_log = await engine.navigate(test_case.project.base_url)
-                                execution_logs.append(nav_log)
-                                execution_logs.append("")
-
-                                if not success:
-                                    execution_result['status'] = 'failed'
-                                    execution_result['error_message'] = "导航到测试页面失败"
-                                    return False
-
-                            if steps_data:
-                                execution_logs.append("========== 执行测试步骤 ==========")
-                                step_count = len(steps_data)
-                                execution_logs.append(f"共有 {step_count} 个步骤需要执行")
-                                execution_logs.append("")
-
-                                for i, step_info in enumerate(steps_data, 1):
-                                    execution_logs.append(f"========== 开始执行步骤 {i}/{step_count} ==========")
-                                    execution_logs.append(f"步骤 {i}/{step_count}:")
-
-                                    # 从预先获取的数据中获取信息
-                                    step = step_info['step']
-                                    action_type = step_info['action_type']
-                                    description = step_info['description']
-                                    element_data = step_info['element_data']
-
-                                    # 获取操作类型的中文显示
-                                    action_choices_dict = dict(TestCaseStep.ACTION_TYPE_CHOICES)
-                                    action_type_text = action_choices_dict.get(action_type, action_type)
-                                    execution_logs.append(f"  操作: {action_type_text}")
-
-                                    if description:
-                                        execution_logs.append(f"  说明: {description}")
-
-                                    if element_data:
-                                        execution_logs.append(f"  元素: {element_data['name']}")
-                                        execution_logs.append(
-                                            f"  定位器: {element_data['locator_strategy']}={element_data['locator_value']}")
-                                    else:
-                                        execution_logs.append(f"  (此步骤不需要元素)")
-
-                                    # 执行步骤
-                                    try:
-                                        execution_logs.append(f"  [调试] 准备执行步骤...")
-                                        # 登录态动作会重建上下文，因此必须由 Playwright 引擎处理。
-                                        if action_type == 'storageState':
-                                            step_params = step_info.get('action_params') or {}
-                                            step_log = await engine.apply_storage_state_action(
-                                                step_params, project_id=test_case.project_id, user=request.user
-                                            )
-                                            success, screenshot_base64 = True, None
-                                        else:
-                                            success, step_log, screenshot_base64 = await engine.execute_step(step,
-                                                                                                             element_data or {})
-                                        execution_logs.append(f"  [调试] 步骤执行完成, success={success}")
-
-                                        execution_logs.append(f"  {step_log}")
-                                        execution_logs.append("")
-
-                                        # 记录步骤执行结果（用于JSON格式）
-                                        step_results.append({
-                                            'step_number': i,
-                                            'action_type': action_type,
-                                            'description': description or '',
-                                            'success': success,
-                                            'error': None if success else step_log,
-                                            **({'variables': engine.variables.snapshot()} if engine.variables.strict else {})
-                                        })
-
-                                        # 如果步骤失败,保存截图
-                                        if not success:
-                                            execution_logs.append(f"  [调试] 检测到步骤失败,准备处理...")
-                                            execution_result['status'] = 'failed'
-
-                                            # 获取失败的元素信息
-                                            element_info = element_data['name'] if element_data else "未知元素"
-
-                                            execution_result['error_message'] = step_log  # 使用step_log作为错误信息
-
-                                            # 添加详细错误信息
-                                            detailed_errors.append({
-                                                'step_number': i,
-                                                'action_type': action_type_text,
-                                                'element': element_info,
-                                                'message': f"步骤 {i}/{step_count} 执行失败",
-                                                'details': step_log,  # 包含详细的错误日志
-                                                'description': description or ''
-                                            })
-
-                                            # 如果没有截图,捕获一张
-                                            if not screenshot_base64:
-                                                screenshot_base64 = await engine.capture_screenshot()
-
-                                        if screenshot_base64:
-                                            screenshots.append({
-                                                'url': screenshot_base64,
-                                                'description': f'步骤 {i} 失败截图: {description or action_type_text}',
-                                                'step_number': i,
-                                                'timestamp': timezone.now().isoformat()
-                                                # 移除 loaded 和 error 字段，让前端自行处理
-                                            })
-                                            execution_logs.append(f"  📸 失败截图已捕获")
-
-                                            execution_logs.append(f"  [调试] 步骤失败,准备退出执行...")
-                                            return False
-
-                                        # 如果是截图步骤且成功,也保存截图
-                                        if action_type == 'screenshot' and screenshot_base64:
-                                            screenshots.append({
-                                                'url': screenshot_base64,
-                                                'description': f'步骤 {i}: {description or "手动截图"}',
-                                                'step_number': i,
-                                                'timestamp': timezone.now().isoformat()
-                                                # 移除 loaded 和 error 字段，让前端自行处理
-                                            })
-
-                                        execution_logs.append(f"  [调试] 步骤 {i} 成功完成,准备执行下一步...")
-
-                                    except Exception as e:
-                                        execution_logs.append(f"  ✗ 步骤执行异常: {str(e)}")
-                                        execution_logs.append(f"  [调试] 异常详情: {repr(e)}")
-                                        import traceback
-                                        tb_str = traceback.format_exc()
-                                        execution_logs.append(f"  [调试] 异常堆栈:\n{tb_str}")
-
-                                        # 记录步骤执行结果（异常情况）
-                                        step_results.append({
-                                            'step_number': i,
-                                            'action_type': action_type,
-                                            'description': description or '',
-                                            'success': False,
-                                            'error': str(e)
-                                        })
-
-                                        execution_result['status'] = 'failed'
-                                        execution_result['error_message'] = f"步骤 {i} 执行异常: {str(e)}"
-
-                                        # 添加详细错误信息
-                                        element_info = element_data['name'] if element_data else "未知元素"
-                                        detailed_errors.append({
-                                            'step_number': i,
-                                            'action_type': action_type_text,
-                                            'element': element_info,
-                                            'message': f"步骤 {i}/{step_count} 执行异常",
-                                            'details': f"异常: {str(e)}\n\n堆栈跟踪:\n{tb_str}",
-                                            'description': description or ''
-                                        })
-
-                                        # 捕获异常截图
-                                        try:
-                                            screenshot_base64 = await engine.capture_screenshot()
-                                            if screenshot_base64:
-                                                screenshots.append({
-                                                    'url': screenshot_base64,
-                                                    'description': f'步骤 {i} 异常截图: {str(e)}',
-                                                    'step_number': i,
-                                                    'timestamp': timezone.now().isoformat()
-                                                    # 移除 loaded 和 error 字段，让前端自行处理
-                                                })
-                                        except:
-                                            pass
-
-                                        execution_logs.append(f"  [调试] 发生异常,准备退出执行...")
-                                        return False
-
-                                # 所有步骤都成功
-                                execution_logs.append(f"========== 执行完成 ({step_count} 个步骤全部通过) ==========")
-                                return True
-
-                            else:
-                                execution_logs.append("警告: 测试用例没有定义任何步骤")
-                                return True
-
-                        except Exception as exc:
-                            execution_result['status'] = 'failed'
-                            execution_result['error_message'] = engine.variables.redact(str(exc))
-                            execution_logs.append(execution_result['error_message'])
-                            step_results.append({'step_number': 0, 'action_type': 'initializeVariables',
-                                                 'success': False, 'error': execution_result['error_message']})
-                            return False
-                        finally:
-                            # 关闭浏览器
-                            execution_logs.append("")
-                            execution_logs.append("========== 清理资源 ==========")
-                            await engine.stop()
-                            execution_logs.append("✓ 浏览器已关闭")
-
-                    # 在新的事件循环中运行测试
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-                    try:
-                        loop.run_until_complete(run_test())
-                    finally:
-                        loop.close()
-
-                # 在独立线程中运行Playwright测试
-                import threading
-                test_thread = threading.Thread(target=run_test_in_thread)
-                test_thread.start()
-                test_thread.join()  # 等待测试完成
-
-            # 计算总执行时间
-            total_time = round(time.time() - start_time, 2)
-            execution_logs.append("")
-            execution_logs.append("执行环境信息:")
-            execution_logs.append(f"- 执行引擎: {engine_type.upper()}")
-            execution_logs.append(f"- 浏览器: {request.data.get('browser', 'chrome').capitalize()}")
-            execution_logs.append(f"- 屏幕分辨率: 1920x1080")
-            execution_logs.append(f"- 总执行时间: {total_time}秒")
-
-            if screenshots:
-                execution_logs.append(f"- 截图数量: {len(screenshots)} 张")
-
-            # 保存执行日志和截图
-            logger.info(f"[调试] 准备保存执行结果: execution_result['status'] = {execution_result['status']}")
-            execution.status = execution_result['status']
-
-            # 保存error_message（step_log已经是简洁的错误信息）
-            execution.error_message = execution_result['error_message'] or ''
-
-            # 保存步骤执行结果为JSON格式
-            execution.execution_logs = json.dumps(step_results, ensure_ascii=False)
-            execution.execution_time = total_time
+                execution.execution_logs = (
+                    f"Playwright 浏览器环境检查失败\n\n{error_msg}\n\n建议：\n"
+                    f"1. 执行 `python -m playwright install` 安装浏览器\n"
+                    f"2. 如果 Playwright 模块未安装，请先执行 `pip install playwright`\n"
+                    f"3. 或者切换到 Selenium 引擎并安装对应浏览器驱动"
+                )
             execution.finished_at = timezone.now()
-            execution.screenshots = screenshots
             execution.save()
-            logger.info(f"[调试] 执行结果已保存: execution.status = {execution.status}")
 
-            serializer = TestCaseExecutionSerializer(execution)
-            # 格式化错误信息为统一的对象格式
-            errors = []
-            if detailed_errors:
-                # 使用详细的错误信息
-                for error in detailed_errors:
-                    errors.append({
-                        'message': error['message'],
-                        'details': error['details'],
-                        'step_number': error['step_number'],
-                        'action_type': error['action_type'],
-                        'element': error['element'],
-                        'description': error['description']
-                    })
-            elif execution.error_message:
-                # 如果没有详细错误信息，使用简单格式
-                errors.append({
-                    'message': execution.error_message,
-                    'details': ''
-                })
-
-            # 记录运行操作
-            log_operation('run', 'test_case', test_case.id, test_case.name, request.user)
-
-            return Response({
-                'success': execution.status == 'passed',
-                'logs': execution.execution_logs,
-                'screenshots': screenshots,
-                'execution_time': execution.execution_time,
-                'errors': errors
-            })
-
-        except Exception as e:
-            logger.error(f"执行测试用例失败: {str(e)}")
-            import traceback
-            traceback.print_exc()
             return Response({
                 'success': False,
-                'logs': f"执行失败: {str(e)}\n\n{traceback.format_exc()}",
+                'logs': execution.execution_logs,
                 'screenshots': [],
                 'execution_time': 0,
-                'errors': [{'message': str(e), 'stack': traceback.format_exc()}]
+                'errors': [{
+                    'message': f'{browser.capitalize()} 执行环境不可用',
+                    'details': error_msg,
+                    'step_number': None,
+                    'action_type': '浏览器检查',
+                    'element': '',
+                    'description': '执行前浏览器与驱动环境检查'
+                }]
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            case_result = run_single_case(
+                test_case,
+                engine=engine_type,
+                browser=browser,
+                headless=headless,
+                executed_by=request.user,
+                execution=execution,
+            )
+        except Exception as exc:  # noqa: BLE001 - 兜底：执行体异常也要返回结构化结果
+            logger.exception('执行测试用例失败: %s', exc)
+            return Response({
+                'success': False,
+                'logs': f"执行失败: {exc}",
+                'screenshots': [],
+                'execution_time': 0,
+                'errors': [{'message': f'执行失败: {exc}', 'details': ''}],
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        # 失败步骤转成前端使用的结构化错误（含中文动作名与元素名）。
+        action_labels = dict(TestCaseStep.ACTION_TYPE_CHOICES)
+        step_count = test_case.steps.count()
+        element_names = {
+            step.step_number: (step.element.name if step.element else '')
+            for step in test_case.steps.select_related('element')
+        }
+        errors = []
+        for step_result in case_result.get('steps') or []:
+            if step_result.get('success', True):
+                continue
+            number = step_result.get('step_number')
+            action_type = step_result.get('action_type') or ''
+            errors.append({
+                'message': f"步骤 {number}/{step_count} 执行失败",
+                'details': step_result.get('error') or '',
+                'step_number': number,
+                'action_type': action_labels.get(action_type, action_type),
+                'element': element_names.get(number, ''),
+                'description': step_result.get('description') or '',
+            })
+        if not errors and execution.error_message:
+            errors.append({'message': execution.error_message, 'details': ''})
+
+        log_operation('run', 'test_case', test_case.id, test_case.name, request.user)
+
+        return Response({
+            'success': execution.status == 'passed',
+            'logs': execution.execution_logs,
+            'screenshots': case_result.get('screenshots') or [],
+            'execution_time': execution.execution_time,
+            'errors': errors,
+        })
 
     @action(detail=False, methods=['post'])
     def batch_run(self, request):
-        """批量运行测试用例"""
-        test_case_ids = request.data.get('test_case_ids', [])
-        project_id = request.data.get('project_id')
+        """批量运行测试用例。
 
+        每个用例独立异步执行并立即返回执行记录 ID（不再伪造 passed），
+        结果用 ``/test-case-executions/{id}/`` 轮询。
+        """
+        from .mcp_runner import start_case_execution
+
+        test_case_ids = request.data.get('test_case_ids', [])
         if not test_case_ids:
-            return Response({'error': '请选择要运行的测试用例'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({'error': '请选择要运行的测试用例'},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        engine = request.data.get('engine', 'playwright')
+        browser = request.data.get('browser', 'chrome')
+        headless = request.data.get('headless', True)
 
         results = []
         for test_case_id in test_case_ids:
-            try:
-                test_case = TestCase.objects.get(id=test_case_id)
-                # 这里调用单个运行逻辑
-                # 简化处理，实际应该异步执行
-                results.append({
-                    'test_case_id': test_case_id,
-                    'test_case_name': test_case.name,
-                    'status': 'passed'
-                })
-            except TestCase.DoesNotExist:
+            test_case = self.get_queryset().filter(id=test_case_id).first()
+            if not test_case:
                 results.append({
                     'test_case_id': test_case_id,
                     'test_case_name': '未知',
                     'status': 'error',
-                    'error': '测试用例不存在'
+                    'error': '测试用例不存在或无权限',
                 })
+                continue
+            try:
+                execution = start_case_execution(
+                    test_case, request.user, engine=engine,
+                    browser=browser, headless=headless)
+            except ValueError as exc:
+                results.append({
+                    'test_case_id': test_case.id,
+                    'test_case_name': test_case.name,
+                    'status': 'error',
+                    'error': str(exc),
+                })
+                continue
+            results.append({
+                'test_case_id': test_case.id,
+                'test_case_name': test_case.name,
+                'status': execution.status,
+                'execution_id': execution.id,
+            })
 
         return Response({'results': results})
 
@@ -3024,17 +2491,14 @@ class UiScheduledTaskViewSet(viewsets.ModelViewSet):
                 elif task.storage_state_id:
                     return Response({'error': '只有 Playwright 任务支持登录态'}, status=status.HTTP_400_BAD_REQUEST)
 
-                storage_state_path = None
-                if task.storage_state_id:
-                    selected_state = StorageState.objects.filter(
-                        pk=task.storage_state_id, project=task.project
-                    ).first()
-                    if not selected_state:
-                        return Response({'error': '登录态不存在或不属于任务关联项目'}, status=status.HTTP_400_BAD_REQUEST)
-                    storage_state_path = selected_state.file.path
+                if task.storage_state_id and not StorageState.objects.filter(
+                        pk=task.storage_state_id, project=task.project).exists():
+                    return Response({'error': '登录态不存在或不属于任务关联项目'},
+                                    status=status.HTTP_400_BAD_REQUEST)
 
                 # 在后台线程中执行测试用例
                 import threading
+                from .test_executor import run_single_case
 
                 def run_test_cases():
                     """在后台线程中执行测试用例"""
@@ -3043,7 +2507,7 @@ class UiScheduledTaskViewSet(viewsets.ModelViewSet):
 
                     try:
                         for test_case in test_cases:
-                            # 创建执行记录
+                            # 执行记录由本视图预建，执行体统一复用 run_single_case。
                             execution = TestCaseExecution.objects.create(
                                 test_case=test_case,
                                 project=task.project,
@@ -3053,265 +2517,36 @@ class UiScheduledTaskViewSet(viewsets.ModelViewSet):
                                 browser=task.browser,
                                 headless=task.headless,
                                 created_by=task.created_by,
-                                started_at=timezone.now()
+                                started_at=timezone.now(),
                             )
-
-                            # 实际执行测试用例
                             try:
-                                logger.info(f"开始执行定时任务的测试用例: {test_case.name} (ID: {test_case.id})")
-
-                                start_time = time.time()
-
-                                # 获取测试用例的所有步骤
-                                test_steps = list(test_case.steps.all().order_by('step_number'))
-
-                                # 预先获取所有步骤的数据
-                                steps_data = []
-                                for step in test_steps:
-                                    step_data = {
-                                        'step': step,
-                                        'action_type': step.action_type,
-                                        'description': step.description,
-                                        'input_value': step.input_value,
-                                        'wait_time': step.wait_time,
-                                        'assert_type': step.assert_type,
-                                        'assert_value': step.assert_value,
-                                        'action_params': step.action_params or {},
-                                    }
-
-                                    if step.element:
-                                        step_data['element_data'] = {
-                                            'locator_strategy': step.element.locator_strategy.name if step.element.locator_strategy else 'css',
-                                            'locator_value': step.element.locator_value,
-                                            'locator_options': step.element.locator_options or {},
-                                            'name': step.element.name,
-                                            'wait_timeout': step.element.wait_timeout,
-                                            'force_action': step.element.force_action
-                                        }
-                                    else:
-                                        step_data['element_data'] = None
-
-                                    steps_data.append(step_data)
-
-                                # 存储步骤执行结果和截图
-                                step_results = []
-                                screenshots = []
-                                execution_logs = []
-                                execution_result = {'status': 'passed', 'error_message': None}
-
-                                # 根据引擎类型执行
-                                if task.engine == 'selenium':
-                                    from .selenium_engine import SeleniumTestEngine
-
-                                    # 检查浏览器和驱动是否可用
-                                    is_ready, error_msg = SeleniumTestEngine.check_execution_environment(task.browser)
-                                    if not is_ready:
-                                        execution.status = 'failed'
-                                        execution.error_message = error_msg
-                                        execution.execution_logs = json.dumps([{
-                                            'step_number': 0,
-                                            'action_type': '浏览器检查',
-                                            'description': '执行前浏览器与驱动环境检查',
-                                            'success': False,
-                                            'error': error_msg
-                                        }], ensure_ascii=False)
-                                        execution.finished_at = timezone.now()
-                                        execution.save()
-                                        failed_count += 1
-                                        continue
-
-                                    # 创建Selenium引擎实例并执行
-                                    engine = SeleniumTestEngine(browser_type=task.browser, headless=task.headless)
-
-                                    try:
-                                        # 每个定时单用例任务使用独立项目变量副本。
-                                        engine.initialize_variables(test_case.project.variables)
-                                        # 启动浏览器
-                                        engine.start()
-                                        execution_logs.append("✓ 浏览器启动成功")
-
-                                        # 导航到项目基础URL
-                                        if test_case.project.base_url:
-                                            success, nav_log = engine.navigate(test_case.project.base_url)
-                                            execution_logs.append(nav_log)
-                                            if not success:
-                                                execution_result['status'] = 'failed'
-                                                execution_result['error_message'] = "导航到测试页面失败"
-                                                raise Exception("导航到测试页面失败")
-
-                                        # 执行测试步骤
-                                        for i, step_info in enumerate(steps_data, 1):
-                                            step = step_info['step']
-                                            action_type = step_info['action_type']
-                                            element_data = step_info['element_data']
-
-                                            success, step_log, screenshot_base64 = engine.execute_step(step,
-                                                                                                       element_data or {})
-
-                                            step_results.append({
-                                                'step_number': i,
-                                                'action_type': action_type,
-                                                'description': step_info['description'] or '',
-                                                'success': success,
-                                                'error': None if success else step_log,
-                                                **({'variables': engine.variables.snapshot()} if engine.variables.strict else {})
-                                            })
-
-                                            if not success:
-                                                execution_result['status'] = 'failed'
-                                                execution_result['error_message'] = step_log
-
-                                                if not screenshot_base64:
-                                                    screenshot_base64 = engine.capture_screenshot()
-
-                                                if screenshot_base64:
-                                                    screenshots.append({
-                                                        'url': screenshot_base64,
-                                                        'description': f'步骤 {i} 失败截图',
-                                                        'step_number': i,
-                                                        'timestamp': timezone.now().isoformat()
-                                                    })
-
-                                                break
-
-                                            if action_type == 'screenshot' and screenshot_base64:
-                                                screenshots.append({
-                                                    'url': screenshot_base64,
-                                                    'description': f'步骤 {i}: {step_info["description"] or "手动截图"}',
-                                                    'step_number': i,
-                                                    'timestamp': timezone.now().isoformat()
-                                                })
-
-                                    finally:
-                                        engine.stop()
-
-                                else:  # Playwright
-                                    import asyncio
-                                    from asgiref.sync import sync_to_async
-                                    from .playwright_engine import PlaywrightTestEngine
-
-                                    async def run_playwright_test():
-                                        browser_map = {
-                                            'chrome': 'chromium',
-                                            'firefox': 'firefox',
-                                            'safari': 'webkit',
-                                            'edge': 'chromium'
-                                        }
-                                        browser_type = browser_map.get(task.browser, 'chromium')
-
-                                        engine = PlaywrightTestEngine(browser_type=browser_type, headless=task.headless)
-
-                                        try:
-                                            # 定时任务的每个独立用例都创建自己的变量上下文。
-                                            engine.initialize_variables(test_case.project.variables)
-                                            # 启动浏览器
-                                            await engine.start(storage_state_path)
-                                            execution_logs.append("✓ 浏览器启动成功")
-
-                                            # 获取项目基础URL（同步操作）
-                                            base_url = await sync_to_async(lambda: test_case.project.base_url)()
-
-                                            # 导航到项目基础URL
-                                            if base_url:
-                                                success, nav_log = await engine.navigate(base_url)
-                                                execution_logs.append(nav_log)
-                                                if not success:
-                                                    execution_result['status'] = 'failed'
-                                                    execution_result['error_message'] = "导航到测试页面失败"
-                                                    return False
-
-                                            # 执行测试步骤
-                                            for i, step_info in enumerate(steps_data, 1):
-                                                step = step_info['step']
-                                                action_type = step_info['action_type']
-                                                element_data = step_info['element_data']
-
-                                                # 套件执行沿用测试用例的登录态步骤处理逻辑。
-                                                if action_type == 'storageState':
-                                                    step_log = await engine.apply_storage_state_action(
-                                                        step_info.get('action_params') or {},
-                                                        project_id=test_case.project_id,
-                                                        user=task.created_by,
-                                                    )
-                                                    success, screenshot_base64 = True, None
-                                                else:
-                                                    success, step_log, screenshot_base64 = await engine.execute_step(
-                                                        step, element_data or {}
-                                                    )
-
-                                                step_results.append({
-                                                    'step_number': i,
-                                                    'action_type': action_type,
-                                                    'description': step_info['description'] or '',
-                                                    'success': success,
-                                                    'error': None if success else step_log,
-                                                    **({'variables': engine.variables.snapshot()} if engine.variables.strict else {})
-                                                })
-
-                                                if not success:
-                                                    execution_result['status'] = 'failed'
-                                                    execution_result['error_message'] = step_log
-
-                                                    if not screenshot_base64:
-                                                        screenshot_base64 = await engine.capture_screenshot()
-
-                                                    if screenshot_base64:
-                                                        screenshots.append({
-                                                            'url': screenshot_base64,
-                                                            'description': f'步骤 {i} 失败截图',
-                                                            'step_number': i,
-                                                            'timestamp': timezone.now().isoformat()
-                                                        })
-
-                                                    return False
-
-                                                if action_type == 'screenshot' and screenshot_base64:
-                                                    screenshots.append({
-                                                        'url': screenshot_base64,
-                                                        'description': f'步骤 {i}: {step_info["description"] or "手动截图"}',
-                                                        'step_number': i,
-                                                        'timestamp': timezone.now().isoformat()
-                                                    })
-
-                                            return True
-
-                                        finally:
-                                            await engine.stop()
-
-                                    # 在新的事件循环中运行Playwright测试
-                                    loop = asyncio.new_event_loop()
-                                    asyncio.set_event_loop(loop)
-                                    try:
-                                        loop.run_until_complete(run_playwright_test())
-                                    finally:
-                                        loop.close()
-
-                                # 计算执行时间
-                                total_time = round(time.time() - start_time, 2)
-
-                                # 保存执行结果
-                                execution.status = execution_result['status']
-                                execution.error_message = execution_result['error_message'] or ''
-                                execution.execution_logs = json.dumps(step_results, ensure_ascii=False)
-                                execution.execution_time = total_time
-                                execution.screenshots = screenshots
-                                execution.finished_at = timezone.now()
-                                execution.save()
-
-                                if execution.status == 'passed':
-                                    success_count += 1
-                                    logger.info(f"测试用例 {test_case.name} 执行成功")
-                                else:
-                                    failed_count += 1
-                                    logger.warning(f"测试用例 {test_case.name} 执行失败: {execution.error_message}")
-
-                            except Exception as e:
-                                logger.error(f"执行测试用例 {test_case.name} 时发生异常: {str(e)}")
+                                case_result = run_single_case(
+                                    test_case,
+                                    engine=task.engine,
+                                    browser=task.browser,
+                                    headless=task.headless,
+                                    executed_by=task.created_by,
+                                    execution=execution,
+                                    storage_state_id=task.storage_state_id,
+                                )
+                            except Exception as exc:  # noqa: BLE001 - 单用例失败不影响同批其他用例
+                                logger.error(
+                                    f"执行测试用例 {test_case.name} 时发生异常: {exc}")
                                 execution.status = 'failed'
-                                execution.error_message = str(e)
+                                execution.error_message = str(exc)
                                 execution.finished_at = timezone.now()
                                 execution.save()
                                 failed_count += 1
+                                continue
+
+                            if case_result.get('status') == 'passed':
+                                success_count += 1
+                                logger.info(f"测试用例 {test_case.name} 执行成功")
+                            else:
+                                failed_count += 1
+                                logger.warning(
+                                    f"测试用例 {test_case.name} 执行失败: "
+                                    f"{case_result.get('error')}")
 
                         # 更新任务执行结果
                         if failed_count == 0:

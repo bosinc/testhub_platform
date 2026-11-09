@@ -94,10 +94,32 @@ def get_mcp():
         mcp = FastMCP(
             'TestHub',
             instructions=(
-                'TestHub AI 测试平台 MCP Server。读工具（list_*/get_*/search_*）即时返回；'
-                '危险工具需先调用 preview_* 获取 confirm_token，再调用对应 confirm_* 确认执行。'
+                'TestHub AI 测试平台 MCP Server，覆盖功能用例、接口测试（请求/场景用例/套件）、'
+                'UI 自动化（用例/套件/元素库）与压测。'
+                '读工具（list_*/get_*）即时返回，用于先获取项目、用例、元素等 ID；'
+                'list_projects 返回的 ui_project_id / api_project_id 即 UI、API 自动化项目 ID，'
+                '可直接传给 list_ui_*/list_api_* 与 preview_create_ui_case 等工具。'
+                '按目录取自动化用例：先用 list_ui_case_folders / list_scenario_case_folders '
+                '拿到目录 id，再传给 list_ui_cases / list_api_scenarios 的 folder_id'
+                '（include_children 默认 true，含子目录）。'
+                '创建时若只知目录名称不知 ID，直接传路径：data.module_path / folder_path / '
+                'group_path / collection_path（「父/子」多级，如「登录/短信登录」）；'
+                '末级目录不存在默认报错并给出同级候选，需要自动创建时传 create_missing=true。'
+                '功能用例列表可用 linked=ui_missing/api_missing/all_missing 筛出未建自动化的用例；'
+                'linked=ui_stale/api_stale 可筛出「有记录但目标已失效」的悬空关联，需重新关联。'
+                '缺元素用 preview_create_ui_element 新建、缺接口用 preview_create_api_request 新建，'
+                '再分别用 preview_create_ui_case / preview_create_api_scenario_case 建关联用例；'
+                '功能用例已有关联时创建会被拒绝，确需替换要显式传 replace_link=true。'
+                '写与执行工具需先调用 preview_* 获取 confirm_token，再调用对应 confirm_* 确认执行。'
                 '若平台开启了人工审批模式，confirm_* 会返回 awaiting_approval，'
                 '此时请用同一 confirm_token 轮询 get_approval_status 直至 approved/rejected/expired。'
+                '异步执行（执行用例/套件）确认后返回 execution_id，'
+                '请分别用 get_ui_execution / get_ui_suite_execution / '
+                'get_api_scenario_execution / get_api_suite_execution 轮询结果。'
+                '执行类工具会产生真实外部副作用：接口场景/套件会发起真实 HTTP 请求（含写请求），'
+                'UI 用例会驱动真实浏览器，压测会产生真实负载。执行前请核对预览中的请求数、'
+                '写请求数与执行环境，生产环境先在测试环境验证；幂等性由调用方保证，'
+                '不要对含写请求的场景反复重试。'
             ),
             streamable_http_path='/',
             stateless_http=True,

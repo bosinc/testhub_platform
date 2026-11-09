@@ -4,8 +4,10 @@
 运行: python manage.py test apps.mcp.tests.test_confirm
 """
 from datetime import timedelta
+import time
 
 from django.contrib.auth import get_user_model
+from django.core import signing
 from django.test import TestCase, override_settings
 from django.utils import timezone
 
@@ -18,11 +20,28 @@ from apps.mcp.confirm import (
     reject_pending,
     verify_pending,
 )
-from apps.mcp.models import McpPendingConfirm
+from apps.mcp.models import CONFIRM_TOKEN_TTL_SECONDS, McpPendingConfirm
 from apps.projects.models import Project
 from apps.testcases.models import TestCase as FunctionalTestCase
 
 User = get_user_model()
+
+_TOKEN_SALT = 'apps.mcp.confirm-token'
+
+
+class _AgedTimestampSigner(signing.TimestampSigner):
+    """签发时间戳回拨 offset 秒的令牌，用于验证签名层过期。
+
+    与线上同一 SECRET_KEY / salt，仅时间戳不同，因此能通过签名校验、
+    只会在 max_age 判定时被判过期——正是需要覆盖的路径。
+    """
+
+    def __init__(self, *args, offset=0, **kwargs):
+        self._offset = offset
+        super().__init__(*args, **kwargs)
+
+    def timestamp(self):
+        return signing.b62_encode(int(time.time()) - self._offset)
 
 
 class ConfirmFlowBase(TestCase):
@@ -58,10 +77,10 @@ class ConfirmTokenFlowTest(ConfirmFlowBase):
         pending = verify_pending(result['confirm_token'], self.user)
         exec_result = consume_pending(pending, self.user)
 
-        # 动作真实执行：功能用例落库
+        # 动作真实执行：功能用例落库（steps 数组按文本落库）
         case = FunctionalTestCase.objects.get(project=self.project)
         self.assertEqual(case.title, 'MCP 创建的用例')
-        self.assertEqual(case.step_details.count(), 1)
+        self.assertIn('打开页面', case.steps)
         self.assertEqual(exec_result['testcase_id'], case.id)
 
         # 状态置为 consumed
@@ -80,6 +99,56 @@ class ConfirmTokenFlowTest(ConfirmFlowBase):
             verify_pending(result['confirm_token'], self.user)
         self.assertIn('过期', str(cm.exception))
         self.assertEqual(McpPendingConfirm.objects.get().status, 'expired')
+
+    def test_token_signature_expires_after_ttl(self):
+        """签名层 5 分钟过期：DB 记录尚未过期，超时令牌也必须被拒。
+
+        这条覆盖的是 TimestampSigner 的 max_age，与 expires_at 无关；
+        此前只测了 expires_at，若 TTL 常量或 Signer 用法被改错无人发现。
+        """
+        self._create_pending()
+        pending = McpPendingConfirm.objects.get()
+        aged = _AgedTimestampSigner(
+            salt=_TOKEN_SALT, offset=CONFIRM_TOKEN_TTL_SECONDS + 60).sign(str(pending.id))
+
+        with self.assertRaises(ConfirmError) as cm:
+            verify_pending(aged, self.user)
+        self.assertIn('过期', str(cm.exception))
+
+        pending.refresh_from_db()
+        self.assertFalse(pending.is_expired)      # 记录本身未过期 → 拦截来自令牌
+        self.assertEqual(pending.status, 'pending')  # 且未被误置为 expired
+
+    def test_token_within_ttl_still_accepted(self):
+        """边界对照：TTL 内 1 分钟的令牌仍可正常校验，避免误伤正常流程"""
+        self._create_pending()
+        pending = McpPendingConfirm.objects.get()
+        fresh = _AgedTimestampSigner(
+            salt=_TOKEN_SALT, offset=CONFIRM_TOKEN_TTL_SECONDS - 60).sign(str(pending.id))
+        self.assertEqual(verify_pending(fresh, self.user).id, pending.id)
+
+    def test_poll_expired_token_returns_expired(self):
+        """轮询接口对超时令牌返回 expired 状态而非抛错"""
+        self._create_pending()
+        pending = McpPendingConfirm.objects.get()
+        aged = _AgedTimestampSigner(
+            salt=_TOKEN_SALT, offset=CONFIRM_TOKEN_TTL_SECONDS + 60).sign(str(pending.id))
+        info = query_approval_status(aged, self.user)
+        self.assertEqual(info['status'], 'expired')
+
+    def test_approve_expired_reports_expired(self):
+        """过期记录批准时报「已过期」，而不是误导性的「当前状态(pending)不可批准」"""
+        self._create_pending()
+        pending = McpPendingConfirm.objects.get()
+        McpPendingConfirm.objects.filter(id=pending.id).update(
+            expires_at=timezone.now() - timedelta(seconds=1))
+        pending.refresh_from_db()
+
+        with self.assertRaises(ConfirmError) as cm:
+            approve_pending(pending, self.user)
+        message = str(cm.exception)
+        self.assertIn('过期', message)
+        self.assertNotIn('当前状态', message)
 
     def test_tampered_token_rejected(self):
         result = self._create_pending()

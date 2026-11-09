@@ -1,7 +1,8 @@
 from django.contrib import admin
 from .models import (
     ApiProject, ApiCollection, ApiRequest, Environment, RequestHistory,
-    ScenarioCase, TestExecution, ScheduledTask, TaskExecutionLog, AIServiceConfig
+    ScenarioCase, TestExecution, ApiSuiteExecution, ScheduledTask,
+    TaskExecutionLog, AIServiceConfig
 )
 
 
@@ -53,6 +54,15 @@ class TestExecutionAdmin(admin.ModelAdmin):
     list_display = ['scenario_case', 'status', 'total_requests', 'passed_requests', 'failed_requests', 'executed_by', 'created_at']
     list_filter = ['status', 'created_at']
     search_fields = ['scenario_case__name']
+
+
+@admin.register(ApiSuiteExecution)
+class ApiSuiteExecutionAdmin(admin.ModelAdmin):
+    list_display = ['test_suite', 'status', 'total_scenarios', 'passed_scenarios',
+                    'failed_scenarios', 'executed_by', 'start_time', 'end_time', 'created_at']
+    list_filter = ['status', 'created_at']
+    search_fields = ['test_suite__name']
+    readonly_fields = ['created_at']
 
 
 @admin.register(ScheduledTask)

@@ -12,6 +12,7 @@
 DB 记录承载状态机与监控可视化，两者互补。
 """
 import logging
+import time
 
 from django.conf import settings
 from django.core import signing
@@ -27,6 +28,20 @@ _SALT = 'apps.mcp.confirm-token'
 
 class ConfirmError(Exception):
     """confirm 校验失败（面向 Agent 的可读错误）。"""
+
+
+def _token_age_seconds(confirm_token: str):
+    """解出令牌签发至今的秒数（仅用于错误提示，不参与校验）。
+
+    令牌已过期时 TimestampSigner 直接抛 SignatureExpired、拿不到 age，
+    故改用不带时间校验的 Signer 解出原始值再算差值。
+    """
+    try:
+        raw = signing.Signer(salt=_SALT).unsign(confirm_token)
+        _, timestamp = raw.rsplit(':', 1)
+        return int(time.time()) - signing.b62_decode(timestamp)
+    except Exception:  # noqa: BLE001 - 仅用于拼提示，失败不影响主流程
+        return None
 
 
 def _human_approval_enabled() -> bool:
@@ -93,7 +108,11 @@ def verify_pending(confirm_token: str, user) -> McpPendingConfirm:
         signed_value = signing.TimestampSigner(salt=_SALT).unsign(
             confirm_token, max_age=CONFIRM_TOKEN_TTL_SECONDS)
     except signing.SignatureExpired:
-        raise ConfirmError('confirm_token 已过期（5 分钟有效），请重新调用 preview') from None
+        age = _token_age_seconds(confirm_token)
+        elapsed = f'，已签发 {age} 秒' if age is not None else ''
+        raise ConfirmError(
+            f'confirm_token 已过期（有效期 {CONFIRM_TOKEN_TTL_SECONDS} 秒{elapsed}），'
+            f'请重新调用 preview') from None
     except signing.BadSignature:
         raise ConfirmError('confirm_token 无效或已被篡改') from None
 
@@ -146,7 +165,13 @@ def consume_pending(pending: McpPendingConfirm, user) -> dict:
 
 def approve_pending(pending: McpPendingConfirm, operator) -> dict:
     """监控页手动批准：服务端触发动作执行。"""
-    if pending.status != 'pending' or pending.is_expired:
+    # 先判过期：此时 status 仍是 pending，若合并成一条会报出
+    # 「当前状态(pending)不可批准」，看起来像状态异常，实际是已超时
+    if pending.is_expired:
+        raise ConfirmError(
+            f'该操作已过期（confirm_token 有效期 {CONFIRM_TOKEN_TTL_SECONDS} 秒），'
+            f'不可批准，请让发起方重新 preview')
+    if pending.status != 'pending':
         raise ConfirmError(f'当前状态({pending.status})不可批准')
     action = ACTION_REGISTRY.get(pending.tool_name)
     if action is None:
@@ -158,6 +183,12 @@ def approve_pending(pending: McpPendingConfirm, operator) -> dict:
     pending.status = 'approved'
     pending.result = {**(result or {}), 'approved_by': operator.username}
     pending.save(update_fields=['status', 'result', 'updated_at'])
+    # 控制台批准走的是本函数（不经 tools._run_tool），同样要让该用户的 list 缓存失效
+    try:
+        from .tools import _bump_list_epoch
+        _bump_list_epoch(pending.user_id)
+    except Exception:  # noqa: BLE001 - 缓存失效失败不影响审批结果
+        pass
     return result
 
 

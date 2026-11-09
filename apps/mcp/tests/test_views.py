@@ -94,6 +94,47 @@ class PendingListViewTest(McpRestBase):
         data = self.client.get('/api/mcp/pending/').json()
         self.assertEqual(data['results'][0]['status'], 'expired')
 
+    def test_pending_count_excludes_history(self):
+        """pending_count 只统计待办，不随列表的历史记录一起膨胀"""
+        self._make_pending()
+        McpPendingConfirm.objects.create(
+            user=self.user, tool_name='confirm_create_testcase', arguments={},
+            preview='历史记录', status='consumed',
+            expires_at=timezone.now() + timedelta(minutes=5))
+        self.client.force_authenticate(user=self.user)
+
+        data = self.client.get('/api/mcp/pending/').json()
+        self.assertEqual(data['count'], 2)          # 列表保留历史用于审计
+        self.assertEqual(data['pending_count'], 1)  # 角标只算待确认
+
+    def test_status_filter_returns_single_status(self):
+        """显式传 status 时列表只返回该状态（历史记录按需查看）"""
+        self._make_pending()
+        McpPendingConfirm.objects.create(
+            user=self.user, tool_name='confirm_create_testcase', arguments={},
+            preview='历史记录', status='rejected',
+            expires_at=timezone.now() + timedelta(minutes=5))
+        self.client.force_authenticate(user=self.user)
+
+        data = self.client.get('/api/mcp/pending/?status=pending').json()
+        self.assertEqual(data['count'], 1)
+        self.assertEqual(data['results'][0]['status'], 'pending')
+        self.assertEqual(data['pending_count'], 1)
+
+    def test_pending_count_scoped_for_normal_user(self):
+        """普通用户看不到他人待办，pending_count 同样按可见范围统计"""
+        self._make_pending()  # 属于 self.user
+        other = User.objects.create(username='mcp_other', email='o@a.com')
+        McpPendingConfirm.objects.create(
+            user=other, tool_name='confirm_create_testcase', arguments={},
+            preview='他人待办', status='pending',
+            expires_at=timezone.now() + timedelta(minutes=5))
+        self.client.force_authenticate(user=self.user)
+
+        data = self.client.get('/api/mcp/pending/').json()
+        self.assertEqual(data['count'], 1)
+        self.assertEqual(data['pending_count'], 1)
+
 
 class ApproveRejectViewTest(McpRestBase):
     def test_approve_executes_action(self):

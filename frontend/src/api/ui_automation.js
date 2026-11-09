@@ -876,7 +876,7 @@ export function batchDeleteTestCaseExecutions(ids) {
 // 批量运行测试用例
 export function batchRunTestCases(data) {
   return request({
-    url: '/ui-automation/test-cases/batch-run/',
+    url: '/ui-automation/test-cases/batch_run/',
     method: 'post',
     data
   })

@@ -6,7 +6,8 @@
 - /api/mcp/tools/{name}/：单工具详情（含完整描述）
 - /api/mcp/config/：接入配置（协议端点 + 本人长效 API-Key，供客户端配置直接复制）
 - /api/mcp/logs/：调用日志（管理员全量，普通用户仅本人；支持 tool/status/时间范围过滤）
-- /api/mcp/pending/：待确认操作列表（同上，读取时惰性修正过期状态）
+- /api/mcp/pending/：确认记录列表（同上，读取时惰性修正过期状态；
+  响应含 pending_count 表示真实待办数，默认由前端按 status=pending 拉取）
 - /api/mcp/pending/{id}/approve|reject/：手动批准/拒绝（本人或管理员）
 """
 import json
@@ -242,26 +243,44 @@ class McpCallLogListView(ListAPIView):
 
 
 class McpPendingListView(ListAPIView):
-    """待确认操作：管理员全量，普通用户仅本人；支持 status 过滤。
+    """确认记录列表：管理员全量，普通用户仅本人；支持 status 过滤。
 
     读取时惰性将已过期但仍为 pending 的记录批量修正为 expired，
     避免列表出现假「待确认」。
+
+    列表本身是「确认记录」而非「待办」，历史状态（approved/rejected/
+    consumed/expired）会一并返回以保留审计轨迹；因此额外返回
+    pending_count（当前用户可见的真实待办数），供前端 Tab 角标使用——
+    未过滤时的 count 包含全部历史状态，不能直接当作待确认数量。
     """
     serializer_class = McpPendingConfirmSerializer
     pagination_class = McpPagination
     permission_classes = [IsAuthenticated]
 
+    @staticmethod
+    def _scope(user):
+        """按可见范围（本人/管理员全量）收敛的查询集。"""
+        qs = McpPendingConfirm.objects.all()
+        if not _is_privileged(user):
+            qs = qs.filter(user=user)
+        return qs
+
     def get_queryset(self):
         McpPendingConfirm.objects.filter(
             status='pending', expires_at__lt=timezone.now(),
         ).update(status='expired')
-        qs = McpPendingConfirm.objects.select_related('user')
-        if not _is_privileged(self.request.user):
-            qs = qs.filter(user=self.request.user)
+        qs = self._scope(self.request.user).select_related('user')
         pending_status = self.request.query_params.get('status')
         if pending_status:
             qs = qs.filter(status=pending_status)
         return qs
+
+    def list(self, request, *args, **kwargs):
+        response = super().list(request, *args, **kwargs)
+        # 待办数始终按 status=pending 单独统计，与列表过滤条件无关
+        response.data['pending_count'] = self._scope(request.user).filter(
+            status='pending').count()
+        return response
 
 
 class _PendingActionView(APIView):

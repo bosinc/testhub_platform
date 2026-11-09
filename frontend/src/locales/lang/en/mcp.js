@@ -77,6 +77,8 @@ export default {
   statusRejected: 'Rejected',
   statusConsumed: 'Consumed',
   statusExpired: 'Expired',
+  statusAll: 'All statuses',
+  pendingListHint: 'Showing pending only. Choose "All statuses" to review consumed / approved / rejected history.',
   statusAwaiting: 'Human approval',
   expireRemain: 'expires in {time}',
   expireExpired: 'Expired',

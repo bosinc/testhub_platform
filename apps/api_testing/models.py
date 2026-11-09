@@ -319,6 +319,56 @@ class TestExecution(models.Model):
         return f"{self.scenario_case.name} - {self.created_at}"
 
 
+class ApiSuiteExecution(models.Model):
+    """测试套件整体执行记录。
+
+    单个场景用例的执行结果仍落在 TestExecution（按 scenario_case 维度），
+    本模型记录一次「套件执行」的汇总状态与各场景用例的引用，供 MCP 工具
+    与后续页面按套件维度查询执行结果。
+    """
+
+    STATUS_CHOICES = [
+        ('PENDING', '待执行'),
+        ('RUNNING', '执行中'),
+        ('COMPLETED', '已完成'),
+        ('FAILED', '执行失败'),
+        ('CANCELLED', '已取消'),
+    ]
+
+    test_suite = models.ForeignKey(TestSuite, on_delete=models.CASCADE,
+                                   related_name='suite_executions', verbose_name='测试套件')
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='PENDING',
+                              verbose_name='执行状态')
+    start_time = models.DateTimeField(null=True, blank=True, verbose_name='开始时间')
+    end_time = models.DateTimeField(null=True, blank=True, verbose_name='结束时间')
+    total_scenarios = models.IntegerField(default=0, verbose_name='场景用例总数')
+    passed_scenarios = models.IntegerField(default=0, verbose_name='通过场景用例数')
+    failed_scenarios = models.IntegerField(default=0, verbose_name='失败场景用例数')
+    results = models.JSONField(default=list, blank=True, verbose_name='各场景用例执行结果')
+    error_message = models.TextField(blank=True, verbose_name='错误信息')
+    executed_by = models.ForeignKey(User, on_delete=models.CASCADE, verbose_name='执行者')
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='创建时间')
+
+    class Meta:
+        db_table = 'api_suite_executions'
+        verbose_name = '套件执行记录'
+        verbose_name_plural = '套件执行记录'
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['test_suite', '-created_at']),
+        ]
+
+    def __str__(self):
+        return f"{self.test_suite.name} - {self.created_at}"
+
+    @property
+    def duration(self):
+        """执行时长（秒），未结束时返回 None。"""
+        if not self.start_time or not self.end_time:
+            return None
+        return round((self.end_time - self.start_time).total_seconds(), 2)
+
+
 # 定时任务相关模型
 class ScheduledTask(models.Model):
     """定时任务模型"""

@@ -77,6 +77,8 @@ export default {
   statusRejected: '已拒绝',
   statusConsumed: '已消费',
   statusExpired: '已过期',
+  statusAll: '全部状态',
+  pendingListHint: '默认只显示待确认，已消费/已批准/已拒绝等历史记录请选择「全部状态」查看',
   statusAwaiting: '人工审批',
   expireRemain: '{time}后过期',
   expireExpired: '已过期',

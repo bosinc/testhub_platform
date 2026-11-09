@@ -4,6 +4,7 @@ UI自动化测试执行服务
 """
 import time
 import json
+import logging
 from datetime import datetime
 from django.utils import timezone
 from django.db import connection
@@ -28,15 +29,19 @@ from .playwright_engine import build_playwright_locator
 class TestExecutor:
     """测试执行器基类"""
 
-    def __init__(self, test_suite, engine='playwright', browser='chrome', headless=False, executed_by=None,
-                 storage_state_id=None):
+    def __init__(self, test_suite=None, engine='playwright', browser='chrome', headless=False, executed_by=None,
+                 storage_state_id=None, execution=None, project=None):
         self.test_suite = test_suite
+        # 单用例执行没有套件，直接由调用方传入项目；套件执行时从套件取。
+        self.project = project or (test_suite.project if test_suite else None)
         self.engine = engine
         self.browser = browser
         self.headless = headless
         self.executed_by = executed_by
         self.storage_state_id = storage_state_id
-        self.execution = None
+        # 传入 execution 表示调用方已预建执行记录（MCP 需立即返回执行 ID），
+        # 此时不再重复创建，仅复用同一条记录落结果。
+        self.execution = execution
         self.test_cases = []
         self.results = []
         # 共享字典仅存活于这次套件运行；单用例和其他执行器各自创建上下文。
@@ -53,8 +58,19 @@ class TestExecutor:
             return False
         return True
 
+    @property
+    def suite_execution_ref(self):
+        """本次套件执行记录；单用例执行时 execution 是 TestCaseExecution，返回 None。
+
+        逐用例记录必须挂到父执行记录上，否则并发执行同一套件时只能按时间窗
+        关联，两批记录会互相串批。
+        """
+        return self.execution if isinstance(self.execution, TestExecution) else None
+
     def create_execution_record(self):
-        """创建测试执行记录"""
+        """创建测试执行记录（已预建则直接复用）"""
+        if self.execution is not None:
+            return self.execution
         self.execution = TestExecution.objects.create(
             project=self.test_suite.project,
             test_suite=self.test_suite,
@@ -109,13 +125,48 @@ class TestExecutor:
             print(f"  {i}. {tc.name} (ID: {tc.id})")
         return self.test_cases
 
+    def _build_case_data(self, test_case):
+        """预加载用例步骤与元素快照，避免浏览器执行阶段再访问数据库。"""
+        case_data = {
+            'id': test_case.id,
+            'name': test_case.name,
+            'project_id': self.project.id,
+            'steps': [],
+        }
+        steps = test_case.steps.select_related(
+            'element', 'element__locator_strategy').order_by('step_number')
+        for step in steps:
+            step_data = {
+                'id': step.id,
+                'step_number': step.step_number,
+                'action_type': step.action_type,
+                'description': step.description,
+                'input_value': step.input_value,
+                'wait_time': step.wait_time,
+                'assert_type': step.assert_type,
+                'assert_value': step.assert_value,
+                'action_params': step.action_params or {},
+                'element': None,
+            }
+            if step.element:
+                step_data['element'] = {
+                    'id': step.element.id,
+                    'name': step.element.name,
+                    'locator_value': step.element.locator_value,
+                    'locator_strategy': (step.element.locator_strategy.name
+                                         if step.element.locator_strategy else 'css'),
+                    'locator_options': step.element.locator_options or {},
+                }
+            case_data['steps'].append(step_data)
+        return case_data
+
     def run(self):
         """执行测试套件"""
         print(f"[TestExecutor] 初始化执行器...")
         try:
             # 每次套件执行从项目定义创建全新的运行副本，步骤覆盖仅存活于本次执行。
             self.run_variables = {}
-            self.variables = UiVariableContext(self.test_suite.project.variables, run=self.run_variables)
+            self.variables = UiVariableContext(self.project.variables, run=self.run_variables)
             # 设置环境变量，允许在后台线程中使用同步 ORM
             # 这对于 Playwright 执行是必需的
             import os
@@ -235,45 +286,7 @@ class TestExecutor:
             return
 
         # 预先获取所有测试用例的步骤数据，避免在Playwright上下文中访问ORM
-        test_cases_data = []
-        for test_case in self.test_cases:
-            case_data = {
-                'id': test_case.id,
-                'name': test_case.name,
-                'project_id': self.test_suite.project.id,
-                # ORM 预加载后交给执行线程，避免浏览器执行阶段再访问数据库。
-                'steps': []
-            }
-
-            # 获取步骤并预先加载所有相关数据
-            steps = test_case.steps.select_related('element', 'element__locator_strategy').order_by('step_number')
-            for step in steps:
-                step_data = {
-                    'id': step.id,
-                    'step_number': step.step_number,
-                    'action_type': step.action_type,
-                    'description': step.description,
-                    'input_value': step.input_value,
-                    'wait_time': step.wait_time,
-                    'assert_type': step.assert_type,
-                    'assert_value': step.assert_value,
-                    'action_params': step.action_params or {},
-                    'element': None
-                }
-
-                # 如果有元素，预先获取元素数据
-                if step.element:
-                    step_data['element'] = {
-                        'id': step.element.id,
-                        'name': step.element.name,
-                        'locator_value': step.element.locator_value,
-                        'locator_strategy': step.element.locator_strategy.name if step.element.locator_strategy else 'css',
-                        'locator_options': step.element.locator_options or {},
-                    }
-
-                case_data['steps'].append(step_data)
-
-            test_cases_data.append(case_data)
+        test_cases_data = [self._build_case_data(tc) for tc in self.test_cases]
 
         # 预先创建所有测试用例执行记录（不设置 started_at，等实际执行时再设置）
         case_executions = {}
@@ -282,6 +295,7 @@ class TestExecutor:
                 test_case_id=case_data['id'],
                 project_id=case_data['project_id'],
                 test_suite=self.test_suite,
+                suite_execution=self.suite_execution_ref,
                 execution_source='suite',
                 status='pending',  # 初始状态为 pending
                 engine=self.engine,
@@ -309,24 +323,8 @@ class TestExecutor:
 
                 # 为每个测试用例启动新的浏览器实例
                 try:
-                    # 公共浏览器参数
-                    common_args = [
-                        '--disable-blink-features=AutomationControlled',  # 避免被检测
-                        '--ignore-certificate-errors',  # 忽略证书错误
-                        '--allow-insecure-localhost',  # 允许不安全localhost
-                        '--disable-web-security',  # 禁用web安全限制（跨域）
-                    ]
-                    # 选择浏览器
-                    if self.browser == 'firefox':
-                        browser = p.firefox.launch(headless=self.headless, args=common_args)
-                    elif self.browser == 'safari':
-                        browser = p.webkit.launch(headless=self.headless, args=common_args)
-                    else:  # chrome or edge
-                        # 添加防检测参数
-                        browser = p.chromium.launch(
-                            headless=self.headless,
-                            args=common_args
-                        )
+                    browser = _launch_playwright_browser(
+                        p, self.browser, self.headless)
 
                     print(f"✓ 浏览器已启动")
 
@@ -349,16 +347,16 @@ class TestExecutor:
                     self.current_page = self.context.new_page()
 
                     # 导航到项目基础URL
-                    if self.test_suite.project.base_url:
+                    if self.project.base_url:
                         try:
-                            print(f"正在导航到: {self.test_suite.project.base_url}")
+                            print(f"正在导航到: {self.project.base_url}")
 
                             # 检测是否在Linux服务器环境
                             import platform
                             is_linux = platform.system() == 'Linux'
 
                             self._goto_with_load_fallback(
-                                self.current_page, self.test_suite.project.base_url, timeout=30000
+                                self.current_page, self.project.base_url, timeout=30000
                             )
 
                             # 额外等待，确保动态内容加载（Vue/React等SPA应用）
@@ -367,7 +365,7 @@ class TestExecutor:
                             time.sleep(extra_wait)
 
                             print(
-                                f"✓ 成功导航到: {self.test_suite.project.base_url} (已等待页面加载完成，额外{extra_wait}秒)")
+                                f"✓ 成功导航到: {self.project.base_url} (已等待页面加载完成，额外{extra_wait}秒)")
                         except Exception as e:
                             print(f"✗ 导航失败: {str(e)}")
                             # 导航失败，记录错误并继续下一个用例
@@ -1509,44 +1507,7 @@ class TestExecutor:
         skipped = 0
 
         # 预先获取所有测试用例的步骤数据，避免在Selenium上下文中访问ORM
-        test_cases_data = []
-        for test_case in self.test_cases:
-            case_data = {
-                'id': test_case.id,
-                'name': test_case.name,
-                'project_id': self.test_suite.project.id,
-                'steps': []
-            }
-
-            # 获取步骤并预先加载所有相关数据
-            steps = test_case.steps.select_related('element', 'element__locator_strategy').order_by('step_number')
-            for step in steps:
-                step_data = {
-                    'id': step.id,
-                    'step_number': step.step_number,
-                    'action_type': step.action_type,
-                    'description': step.description,
-                    'input_value': step.input_value,
-                    'wait_time': step.wait_time,
-                    'assert_type': step.assert_type,
-                    'assert_value': step.assert_value,
-                    'action_params': step.action_params or {},
-                    'element': None
-                }
-
-                # 如果有元素，预先获取元素数据
-                if step.element:
-                    step_data['element'] = {
-                        'id': step.element.id,
-                        'name': step.element.name,
-                        'locator_value': step.element.locator_value,
-                        'locator_strategy': step.element.locator_strategy.name if step.element.locator_strategy else 'css',
-                        'locator_options': step.element.locator_options or {},
-                    }
-
-                case_data['steps'].append(step_data)
-
-            test_cases_data.append(case_data)
+        test_cases_data = [self._build_case_data(tc) for tc in self.test_cases]
 
         # 预先创建所有测试用例执行记录（不设置 started_at，等实际执行时再设置）
         case_executions = {}
@@ -1555,6 +1516,7 @@ class TestExecutor:
                 test_case_id=case_data['id'],
                 project_id=case_data['project_id'],
                 test_suite=self.test_suite,
+                suite_execution=self.suite_execution_ref,
                 execution_source='suite',
                 status='pending',  # 初始状态为 pending
                 engine=self.engine,
@@ -1665,16 +1627,16 @@ class TestExecutor:
                         pass  # 如果清理失败，继续执行
 
                 # 导航到项目基础URL
-                if self.test_suite.project.base_url:
+                if self.project.base_url:
                     try:
-                        print(f"正在导航到: {self.test_suite.project.base_url}")
+                        print(f"正在导航到: {self.project.base_url}")
 
                         # 检测是否在Linux服务器环境
                         import platform
                         is_linux = platform.system() == 'Linux'
 
                         # 导航到URL
-                        driver.get(self.test_suite.project.base_url)
+                        driver.get(self.project.base_url)
 
                         # 等待页面基本加载完成
                         # 在服务器环境（特别是无头模式）需要更长的等待时间
@@ -1690,7 +1652,7 @@ class TestExecutor:
                         time.sleep(extra_wait)
 
                         print(
-                            f"✓ 成功导航到: {self.test_suite.project.base_url} (已等待页面加载完成，额外{extra_wait}秒)")
+                            f"✓ 成功导航到: {self.project.base_url} (已等待页面加载完成，额外{extra_wait}秒)")
                     except Exception as e:
                         print(f"✗ 导航失败: {str(e)}")
                         # 导航失败，记录错误并继续下一个用例
@@ -2729,3 +2691,176 @@ class TestExecutor:
             print(f"   错误信息: {error_msg[:500]}")  # 限制长度避免刷屏
 
         return step_result
+
+
+# --------------------------------------------------------------------------- #
+# 单用例执行入口：页面「运行用例」与 MCP 异步执行共用同一实现
+# --------------------------------------------------------------------------- #
+
+logger = logging.getLogger(__name__)
+
+_PLAYWRIGHT_LAUNCH_ARGS = [
+    '--disable-blink-features=AutomationControlled',  # 避免被检测
+    '--ignore-certificate-errors',
+    '--allow-insecure-localhost',
+    '--disable-web-security',
+]
+
+
+def check_engine_environment(engine, browser):
+    """检查执行引擎环境，返回 (是否就绪, 错误信息)。
+
+    页面与 MCP 共用同一判定，调用方只负责把结果翻译成各自的响应格式。
+    """
+    if engine == 'selenium':
+        from .selenium_engine import SeleniumTestEngine
+        return SeleniumTestEngine.check_execution_environment(browser)
+    from .playwright_engine import PlaywrightTestEngine
+    return PlaywrightTestEngine.check_execution_environment_sync(browser)
+
+
+def _launch_playwright_browser(playwright, browser, headless):
+    """按浏览器类型启动 Playwright 浏览器（与套件执行同一套参数）。"""
+    args = list(_PLAYWRIGHT_LAUNCH_ARGS)
+    if browser == 'firefox':
+        return playwright.firefox.launch(headless=headless, args=args)
+    if browser == 'safari':
+        return playwright.webkit.launch(headless=headless, args=args)
+    return playwright.chromium.launch(headless=headless, args=args)
+
+
+def _wait_after_navigation():
+    """SPA 首屏在导航完成后仍需渲染，服务器（Linux）上留更长等待。"""
+    import platform
+    time.sleep(3 if platform.system() == 'Linux' else 2)
+
+
+def _run_case_playwright(executor, case_data):
+    """在独立浏览器上下文中执行单个用例（Playwright 同步 API）。"""
+    from .models import StorageState
+
+    with sync_playwright() as playwright:
+        browser = _launch_playwright_browser(
+            playwright, executor.browser, executor.headless)
+        try:
+            executor.browser_instance = browser
+            executor._active_project_id = case_data['project_id']
+            initial_state = None
+            if executor.storage_state_id:
+                initial_state = StorageState.objects.filter(
+                    pk=executor.storage_state_id,
+                    project_id=case_data['project_id'],
+                ).first()
+                if not initial_state:
+                    raise ValueError('选择的登录态不存在或不属于当前项目')
+            executor.context = browser.new_context(
+                viewport={'width': 1920, 'height': 1080},
+                user_agent=('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
+                            'AppleWebKit/537.36 (KHTML, like Gecko) '
+                            'Chrome/119.0.0.0 Safari/537.36'),
+                **({'storage_state': initial_state.file.path} if initial_state else {}),
+            )
+            executor.current_page = executor.context.new_page()
+            if executor.project.base_url:
+                executor._goto_with_load_fallback(
+                    executor.current_page, executor.project.base_url, timeout=30000)
+                _wait_after_navigation()
+            return executor.execute_test_case_playwright_no_db(case_data)
+        finally:
+            try:
+                browser.close()
+            except Exception:  # noqa: BLE001 - 关闭失败不影响执行结论
+                logger.warning('[UiSingleCase] 浏览器关闭失败', exc_info=True)
+
+
+def _run_case_selenium(executor, case_data):
+    """在独立 WebDriver 中执行单个用例（Selenium）。"""
+    import platform
+
+    driver = executor.create_selenium_driver()
+    try:
+        if executor.project.base_url:
+            driver.get(executor.project.base_url)
+            try:
+                WebDriverWait(
+                    driver, 15 if platform.system() == 'Linux' else 10
+                ).until(lambda d: d.execute_script('return document.readyState') == 'complete')
+            except Exception:  # noqa: BLE001 - 首屏就绪超时也继续执行
+                pass
+            _wait_after_navigation()
+        return executor.execute_test_case_selenium_no_db(driver, case_data)
+    finally:
+        try:
+            driver.quit()
+        except Exception:  # noqa: BLE001
+            logger.warning('[UiSingleCase] 浏览器关闭失败', exc_info=True)
+
+
+def _persist_case_execution(execution, case_result, started):
+    """把执行结果写入 TestCaseExecution（调用方预建的记录直接复用）。"""
+    if execution is None:
+        return
+    try:
+        execution.status = case_result.get('status') or 'failed'
+        execution.error_message = case_result.get('error') or ''
+        execution.execution_logs = json.dumps(
+            case_result.get('steps') or [], ensure_ascii=False)
+        execution.execution_time = round(time.time() - started, 2)
+        execution.screenshots = case_result.get('screenshots') or []
+        execution.finished_at = timezone.now()
+        execution.save()
+    except Exception:  # noqa: BLE001 - 落库失败不掩盖执行结论
+        logger.exception('[UiSingleCase] 执行记录落库失败 execution_id=%s', execution.id)
+
+
+def run_single_case(case, *, engine='playwright', browser='chrome', headless=False,
+                    executed_by=None, execution=None, storage_state_id=None):
+    """执行单个 UI 用例并把结果写入执行记录。
+
+    与套件执行共用 ``execute_test_case_*_no_db``，因此 storageState、navigate、
+    urlContains 轮询等待等步骤语义完全一致；页面「运行用例」与 MCP 异步执行
+    都调用本函数，不再各自维护一份步骤循环。
+
+    Args:
+        case: TestCase 实例（调用方已完成权限与前置校验）
+        execution: 可选的预建 TestCaseExecution（MCP 需要先返回执行 ID）
+
+    Returns:
+        dict: case_result（status / steps / error / screenshots / start_time / end_time）
+    """
+    executor = TestExecutor(
+        test_suite=None, engine=engine, browser=browser, headless=headless,
+        executed_by=executed_by, storage_state_id=storage_state_id,
+        execution=execution, project=case.project,
+    )
+    executor.run_variables = {}
+    executor.variables = UiVariableContext(
+        case.project.variables, run=executor.run_variables)
+
+    case_data = executor._build_case_data(case)
+    started = time.time()
+    try:
+        if engine == 'selenium':
+            case_result = _run_case_selenium(executor, case_data)
+        else:
+            case_result = _run_case_playwright(executor, case_data)
+    except Exception as exc:  # noqa: BLE001 - 执行异常必须落库，不能留给调用方
+        logger.exception('[UiSingleCase] 用例执行异常 case_id=%s', case.id)
+        case_result = {
+            'test_case_id': case.id,
+            'test_case_name': case.name,
+            'status': 'failed',
+            'steps': [],
+            'error': f'执行异常: {exc}',
+            'screenshots': [],
+            'start_time': datetime.now().isoformat(),
+            'end_time': datetime.now().isoformat(),
+        }
+    finally:
+        try:
+            executor.variables.clear()
+        except Exception:  # noqa: BLE001
+            pass
+
+    _persist_case_execution(execution, case_result, started)
+    return case_result

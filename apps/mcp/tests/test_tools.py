@@ -58,7 +58,8 @@ class ListProjectsToolTest(ToolBase):
 
     def test_result_cached_within_ttl(self):
         mcp_tools.list_projects(self.ctx)
-        key = f'mcp:tool:list_projects:{self.user.id}:20:0'
+        epoch = mcp_tools._list_epoch(self.user.id)
+        key = f'mcp:tool:list_projects:{self.user.id}:{epoch}:20:0'
         self.assertIsNotNone(cache.get(key))
 
     def test_cache_isolated_per_user(self):
