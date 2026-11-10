@@ -15,6 +15,25 @@ django_asgi_app = get_asgi_application()
 logger = logging.getLogger(__name__)
 
 
+def _run_startup_self_heal():
+    """一次性启动自愈：回收上次进程退出时遗留的僵尸压测执行。
+
+    压测子进程脱离 Django 进程组独立运行（start_new_session=True），
+    进程被强杀后数据库里仍会残留 RUNNING/PENDING 记录，导致场景互斥锁
+    被永久占用，必须由服务启动时兜底回收。
+    """
+    try:
+        from apps.perf_testing.services.cleanup import reap_stale_executions
+        reaped = reap_stale_executions(startup=True)
+        if reaped:
+            logger.warning('启动自愈：回收僵尸压测执行 %s 条', reaped)
+    except Exception:  # noqa: BLE001 - 自愈失败不得阻断服务启动
+        logger.exception('启动自愈失败，已跳过僵尸执行回收')
+
+
+_run_startup_self_heal()
+
+
 class _HttpRouter:
     """HTTP 分流：MCP 协议端点精确路径走 MCP 桥，其余交给 Django。
 

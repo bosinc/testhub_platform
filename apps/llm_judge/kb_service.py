@@ -259,7 +259,7 @@ def parse_kb_text(text: str, kb: KnowledgeBase,
             unit = _normalize_unit(unit_raw)
 
             # 指标名：数字之前的部分（去掉首尾符号/空格）
-            metric_part = item[: m.start()].strip(' ：:|｜\-_/')
+            metric_part = item[: m.start()].strip(' ：:|｜-_/')
             # 如果还有「：」等取后面
             metric_part = re.split(r'[:：|｜]', metric_part)[-1].strip()
             metric_name = _resolve_metric(metric_part)

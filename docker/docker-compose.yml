@@ -31,12 +31,13 @@ services:
       ALLOWED_HOSTS: ${ALLOWED_HOSTS:-localhost,127.0.0.1}
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost,http://127.0.0.1}
       CSRF_TRUSTED_ORIGINS: ${CSRF_TRUSTED_ORIGINS:-http://localhost,http://127.0.0.1}
-      APP_USE_HTTPS: "False"
-      TRUST_PROXY_SSL_HEADER: "False"
-      CSRF_COOKIE_SECURE: "False"
-      SESSION_COOKIE_SECURE: "False"
+      APP_USE_HTTPS: ${APP_USE_HTTPS:-False}
+      TRUST_PROXY_SSL_HEADER: ${TRUST_PROXY_SSL_HEADER:-False}
+      CSRF_COOKIE_SECURE: ${CSRF_COOKIE_SECURE:-False}
+      SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-False}
     ports:
-      - "${FRONTEND_PORT:-80}:80"
+      # BIND_HOST=127.0.0.1 用于同机宿主机 Nginx 终止 TLS；默认 0.0.0.0 用于 ALB/负载均衡回源（由安全组限制来源）
+      - "${BIND_HOST:-0.0.0.0}:${FRONTEND_PORT:-80}:80"
     volumes:
       - mysql_data:/var/lib/mysql
       - redis_data:/var/lib/redis
