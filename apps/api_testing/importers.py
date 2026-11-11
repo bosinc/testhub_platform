@@ -14,16 +14,29 @@ SERVER_VARIABLE_RE = re.compile(r'\{([A-Za-z_][A-Za-z0-9_]*)\}')
 def _server_base_variable(server):
     """Pick the TestHub base-URL placeholder for an OpenAPI server.
 
-    OpenAPI lets a server embed a variable, e.g. ``https://{adminurl}.example.com``.
-    We surface that variable as ``{{adminurl}}`` so TestHub resolves the real host
-    from the active environment (matching multi-gateway specs such as a public API
-    plus an admin gateway). Servers with a concrete URL (the common case) fall back
-    to ``{{baseUrl}}`` so existing imports stay unchanged.
+    TestHub executes a request by replacing every ``{{name}}`` token in the URL
+    with the active environment's variable value and then sending the resulting
+    string as a fully-qualified URL. A placeholder can therefore only safely
+    carry information that does *not* depend on the rest of the server URL.
+
+    To avoid silently producing a wrong URL, we only surface the server variable
+    as a ``{{name}}`` prefix when the variable occupies the *entire* authority
+    (host) and there is no base path -- in that case nothing else would be
+    discarded. In every other case (a concrete host, a sub-domain variable such
+    as ``https://{adminurl}.example.com``, a path/base-path variable, a port,
+    ...) we fall back to ``{{baseUrl}}`` so existing imports stay unchanged and
+    the request keeps a usable, absolute host prefix.
     """
     url = server.get('url', '') if isinstance(server, dict) else ''
-    match = SERVER_VARIABLE_RE.search(url)
-    if match:
-        return '{{' + match.group(1) + '}}'
+    if not isinstance(url, str):
+        return BASE_URL_VARIABLE
+    parts = urlsplit(url)
+    # Only a variable that IS the whole authority (and carries no base path)
+    # preserves every bit of information; anything else would lose scheme,
+    # host suffix or base path if we promoted it to a URL prefix.
+    netloc_match = SERVER_VARIABLE_RE.fullmatch(parts.netloc or '')
+    if netloc_match and parts.path in ('', '/'):
+        return '{{' + netloc_match.group(1) + '}}'
     return BASE_URL_VARIABLE
 
 
@@ -104,18 +117,21 @@ def _openapi(document):
     info = document.get('info')
     document_name = str(info.get('title') or '').strip() if isinstance(info, dict) else ''
     servers = document.get('servers') or []
-    default_base = _server_base_variable(servers[0]) if servers else BASE_URL_VARIABLE
+    default_base = _server_base_variable(servers[0]) if isinstance(servers, list) and servers else BASE_URL_VARIABLE
     for path, path_item in document['paths'].items():
         if not isinstance(path_item, dict):
             continue
         path_parameters = [_resolve(document, p) for p in path_item.get('parameters', [])]
+        # OpenAPI precedence is operation > pathItem > document.
+        path_servers = path_item.get('servers') or []
+        path_base = _server_base_variable(path_servers[0]) if isinstance(path_servers, list) and path_servers else default_base
         for method, operation in path_item.items():
             method = method.upper()
             if method not in HTTP_METHODS or not isinstance(operation, dict):
                 continue
             parameters = path_parameters + [_resolve(document, p) for p in operation.get('parameters', [])]
             op_servers = operation.get('servers') or []
-            base_variable = _server_base_variable(op_servers[0]) if op_servers else default_base
+            base_variable = _server_base_variable(op_servers[0]) if isinstance(op_servers, list) and op_servers else path_base
             params, headers, body = {}, {}, {}
             for parameter in parameters:
                 if not isinstance(parameter, dict) or not parameter.get('name'):

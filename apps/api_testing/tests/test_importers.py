@@ -40,6 +40,29 @@ class CollectionImportParserTests(SimpleTestCase):
         response = view(request)
         self.assertEqual(response.status_code, 405)
 
+    def test_import_preview_accepts_malformed_servers_without_500(self):
+        # A `servers` object (instead of an array) must not crash the preview with
+        # a 500; it should fall back to {{baseUrl}} and return 200.
+        document = {
+            'openapi': '3.0.3',
+            'servers': {'url': 'https://{adminurl}.katana-api.1m.app'},
+            'paths': {'/users': {'get': {'summary': 'Users'}}},
+        }
+        view = ApiRequestViewSet.as_view({'post': 'import_preview'})
+        user = SimpleNamespace(is_authenticated=True, is_anonymous=False)
+        factory = APIRequestFactory()
+        request = factory.post(
+            '/api/api-testing/requests/import-preview/',
+            {'file': SimpleUploadedFile('openapi.json', json.dumps(document).encode())},
+            format='multipart',
+        )
+        force_authenticate(request, user=user)
+
+        response = view(request)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['groups'][0]['items'][0]['url'], '{{baseUrl}}/users')
+
     def test_openapi_v3_resolves_server_parameters_and_json_body(self):
         document = {
             'openapi': '3.0.3',
@@ -65,10 +88,10 @@ class CollectionImportParserTests(SimpleTestCase):
         self.assertEqual(item['body'], {'type': 'json', 'data': {'name': ''}})
         self.assertEqual(item['group'], 'Users')
 
-    def test_openapi_server_variable_is_used_as_base_url(self):
-        # A spec that declares a gateway via a server variable (e.g. an admin
-        # gateway) must keep that variable as the URL prefix instead of being
-        # forced onto the default {{baseUrl}}.
+    def test_openapi_embedded_server_variable_falls_back_to_base_url(self):
+        # A sub-domain server variable (e.g. an admin gateway) cannot be safely
+        # promoted to a URL prefix: the host suffix would be discarded and the
+        # request would hit the wrong host. It must fall back to {{baseUrl}}.
         document = {
             'openapi': '3.0.3',
             'servers': [{'url': 'https://{adminurl}.katana-api.1m.app'}],
@@ -81,21 +104,91 @@ class CollectionImportParserTests(SimpleTestCase):
 
         [item] = parse_collection(json.dumps(document).encode(), 'openapi.json')
 
-        self.assertEqual(item['url'], '{{adminurl}}/post/v2/{postId}/relate-products')
+        self.assertEqual(item['url'], '{{baseUrl}}/post/v2/{postId}/relate-products')
         self.assertEqual(item['group'], 'Admin')
 
-    def test_openapi_operation_level_server_overrides_top_level(self):
-        # An operation may declare its own server that overrides the document
-        # level one, so a public API and an admin gateway can coexist.
+    def test_openapi_whole_netloc_server_variable_becomes_placeholder(self):
+        # When the variable is the entire host (and carries no base path), nothing
+        # is lost by promoting it to a URL prefix, so we surface it as {{host}}.
         document = {
             'openapi': '3.0.3',
-            'servers': [{'url': 'https://release.katana-api.1m.app'}],
+            'servers': [{'url': 'https://{gateway}'}],
+            'paths': {'/users': {'get': {'summary': 'List', 'tags': ['Users']}}},
+        }
+
+        [item] = parse_collection(json.dumps(document).encode(), 'openapi.json')
+
+        self.assertEqual(item['url'], '{{gateway}}/users')
+
+    def test_openapi_server_variable_with_path_segment_falls_back(self):
+        # A variable inside the path (not the host) must not be promoted.
+        document = {
+            'openapi': '3.0.3',
+            'servers': [{'url': 'https://api.example.com/{version}'}],
+            'paths': {'/users': {'get': {}}},
+        }
+
+        [item] = parse_collection(json.dumps(document).encode(), 'openapi.json')
+
+        self.assertEqual(item['url'], '{{baseUrl}}/users')
+
+    def test_openapi_multi_variable_server_falls_back(self):
+        document = {
+            'openapi': '3.0.3',
+            'servers': [{'url': 'https://{region}.{env}.example.com'}],
+            'paths': {'/users': {'get': {}}},
+        }
+
+        [item] = parse_collection(json.dumps(document).encode(), 'openapi.json')
+
+        self.assertEqual(item['url'], '{{baseUrl}}/users')
+
+    def test_openapi_server_with_base_path_falls_back(self):
+        document = {
+            'openapi': '3.0.3',
+            'servers': [{'url': 'https://{tenant}.example.com/api/v1'}],
+            'paths': {'/users': {'get': {}}},
+        }
+
+        [item] = parse_collection(json.dumps(document).encode(), 'openapi.json')
+
+        self.assertEqual(item['url'], '{{baseUrl}}/users')
+
+    def test_openapi_path_item_server_is_respected(self):
+        # OpenAPI precedence is operation > pathItem > document. A path item may
+        # declare its own servers that override the document level ones.
+        document = {
+            'openapi': '3.0.3',
+            'servers': [{'url': 'https://release.example.test'}],
+            'paths': {
+                '/public': {'get': {'summary': 'Public', 'tags': ['Public']}},
+                '/admin': {
+                    'servers': [{'url': 'https://{adminurl}'}],
+                    'get': {'summary': 'Admin', 'tags': ['Admin']},
+                },
+            },
+        }
+
+        items = parse_collection(json.dumps(document).encode(), 'openapi.json')
+        by_name = {i['name']: i for i in items}
+
+        self.assertEqual(by_name['Public']['url'], '{{baseUrl}}/public')
+        self.assertEqual(by_name['Admin']['url'], '{{adminurl}}/admin')
+
+    def test_openapi_operation_level_server_overrides_path_item_and_document(self):
+        # An operation may declare its own server that overrides both the path
+        # item and document level ones, so a public API and an admin gateway can
+        # coexist.
+        document = {
+            'openapi': '3.0.3',
+            'servers': [{'url': 'https://release.example.test'}],
             'paths': {
                 '/products/{productId}': {
-                    'get': {'summary': 'Public product', 'tags': ['Products']},
+                    'servers': [{'url': 'https://{pathurl}'}],
+                    'get': {'summary': 'Path-level product', 'tags': ['Products']},
                     'post': {
                         'summary': 'Admin update', 'tags': ['Admin'],
-                        'servers': [{'url': 'https://{adminurl}.katana-api.1m.app'}],
+                        'servers': [{'url': 'https://{adminurl}'}],
                     },
                 },
             },
@@ -104,8 +197,22 @@ class CollectionImportParserTests(SimpleTestCase):
         items = parse_collection(json.dumps(document).encode(), 'openapi.json')
         by_name = {i['name']: i for i in items}
 
-        self.assertEqual(by_name['Public product']['url'], '{{baseUrl}}/products/{productId}')
+        self.assertEqual(by_name['Path-level product']['url'], '{{pathurl}}/products/{productId}')
         self.assertEqual(by_name['Admin update']['url'], '{{adminurl}}/products/{productId}')
+
+    def test_malformed_servers_object_does_not_raise(self):
+        # Spec authors occasionally write `servers` as an object instead of an
+        # array. This must not raise (which would surface as a 500); it should
+        # fall back to {{baseUrl}}.
+        document = {
+            'openapi': '3.0.3',
+            'servers': {'url': 'https://{adminurl}.katana-api.1m.app'},
+            'paths': {'/users': {'get': {}}},
+        }
+
+        [item] = parse_collection(json.dumps(document).encode(), 'openapi.json')
+
+        self.assertEqual(item['url'], '{{baseUrl}}/users')
 
     def test_swagger_v2_body_parameter_is_imported(self):
         document = {
