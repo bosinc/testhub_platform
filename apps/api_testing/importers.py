@@ -8,6 +8,23 @@ from urllib.parse import parse_qsl, urlsplit, urlunsplit
 HTTP_METHODS = {'GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'}
 PATH_PARAMETER_RE = re.compile(r'(?<!\{)\{([^{}]+)\}(?!\})')
 BASE_URL_VARIABLE = '{{baseUrl}}'
+SERVER_VARIABLE_RE = re.compile(r'\{([A-Za-z_][A-Za-z0-9_]*)\}')
+
+
+def _server_base_variable(server):
+    """Pick the TestHub base-URL placeholder for an OpenAPI server.
+
+    OpenAPI lets a server embed a variable, e.g. ``https://{adminurl}.example.com``.
+    We surface that variable as ``{{adminurl}}`` so TestHub resolves the real host
+    from the active environment (matching multi-gateway specs such as a public API
+    plus an admin gateway). Servers with a concrete URL (the common case) fall back
+    to ``{{baseUrl}}`` so existing imports stay unchanged.
+    """
+    url = server.get('url', '') if isinstance(server, dict) else ''
+    match = SERVER_VARIABLE_RE.search(url)
+    if match:
+        return '{{' + match.group(1) + '}}'
+    return BASE_URL_VARIABLE
 
 
 def _resolve(document, value, depth=0):
@@ -69,10 +86,15 @@ def _path_parameter_names(path):
     return names
 
 
-def _import_url(path):
-    """Prefix imported paths with the standard environment base URL variable."""
+def _import_url(path, base_variable=BASE_URL_VARIABLE):
+    """Prefix imported paths with the environment base URL variable.
+
+    ``base_variable`` is normally ``{{baseUrl}}`` but may be any server variable
+    declared by the spec (e.g. ``{{adminurl}}``) so multi-gateway APIs import with
+    the correct host placeholder.
+    """
     normalized_path = _path_only(path)
-    return f'{BASE_URL_VARIABLE}{normalized_path}'
+    return f'{base_variable}{normalized_path}'
 
 
 def _openapi(document):
@@ -81,6 +103,8 @@ def _openapi(document):
     requests = []
     info = document.get('info')
     document_name = str(info.get('title') or '').strip() if isinstance(info, dict) else ''
+    servers = document.get('servers') or []
+    default_base = _server_base_variable(servers[0]) if servers else BASE_URL_VARIABLE
     for path, path_item in document['paths'].items():
         if not isinstance(path_item, dict):
             continue
@@ -90,6 +114,8 @@ def _openapi(document):
             if method not in HTTP_METHODS or not isinstance(operation, dict):
                 continue
             parameters = path_parameters + [_resolve(document, p) for p in operation.get('parameters', [])]
+            op_servers = operation.get('servers') or []
+            base_variable = _server_base_variable(op_servers[0]) if op_servers else default_base
             params, headers, body = {}, {}, {}
             for parameter in parameters:
                 if not isinstance(parameter, dict) or not parameter.get('name'):
@@ -109,7 +135,7 @@ def _openapi(document):
             for name in _path_parameter_names(path):
                 params.setdefault(name, '')
             # OpenAPI 路径参数使用单花括号；保留原格式，避免被误当成环境变量。
-            url = _import_url(path)
+            url = _import_url(path, base_variable)
             request_body = _resolve(document, operation.get('requestBody', {}))
             content = request_body.get('content', {}) if isinstance(request_body, dict) else {}
             for content_type, media in content.items():

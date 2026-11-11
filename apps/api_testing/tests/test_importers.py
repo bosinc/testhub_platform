@@ -65,6 +65,48 @@ class CollectionImportParserTests(SimpleTestCase):
         self.assertEqual(item['body'], {'type': 'json', 'data': {'name': ''}})
         self.assertEqual(item['group'], 'Users')
 
+    def test_openapi_server_variable_is_used_as_base_url(self):
+        # A spec that declares a gateway via a server variable (e.g. an admin
+        # gateway) must keep that variable as the URL prefix instead of being
+        # forced onto the default {{baseUrl}}.
+        document = {
+            'openapi': '3.0.3',
+            'servers': [{'url': 'https://{adminurl}.katana-api.1m.app'}],
+            'paths': {
+                '/post/v2/{postId}/relate-products': {
+                    'post': {'summary': 'Relate products', 'tags': ['Admin']},
+                },
+            },
+        }
+
+        [item] = parse_collection(json.dumps(document).encode(), 'openapi.json')
+
+        self.assertEqual(item['url'], '{{adminurl}}/post/v2/{postId}/relate-products')
+        self.assertEqual(item['group'], 'Admin')
+
+    def test_openapi_operation_level_server_overrides_top_level(self):
+        # An operation may declare its own server that overrides the document
+        # level one, so a public API and an admin gateway can coexist.
+        document = {
+            'openapi': '3.0.3',
+            'servers': [{'url': 'https://release.katana-api.1m.app'}],
+            'paths': {
+                '/products/{productId}': {
+                    'get': {'summary': 'Public product', 'tags': ['Products']},
+                    'post': {
+                        'summary': 'Admin update', 'tags': ['Admin'],
+                        'servers': [{'url': 'https://{adminurl}.katana-api.1m.app'}],
+                    },
+                },
+            },
+        }
+
+        items = parse_collection(json.dumps(document).encode(), 'openapi.json')
+        by_name = {i['name']: i for i in items}
+
+        self.assertEqual(by_name['Public product']['url'], '{{baseUrl}}/products/{productId}')
+        self.assertEqual(by_name['Admin update']['url'], '{{adminurl}}/products/{productId}')
+
     def test_swagger_v2_body_parameter_is_imported(self):
         document = {
             'swagger': '2.0', 'host': 'api.example.test', 'schemes': ['https'],
