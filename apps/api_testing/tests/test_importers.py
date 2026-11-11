@@ -94,6 +94,151 @@ class CollectionImportParserTests(SimpleTestCase):
         self.assertEqual(item['url'], '{{baseUrl}}/promotions/{merchantId}/{promotionId}/detail')
         self.assertEqual(item['params'], {'merchantId': '', 'promotionId': ''})
 
+    def test_openapi_embedded_server_variable_is_kept_as_full_template(self):
+        # A sub-domain server variable (e.g. an admin gateway) must be preserved
+        # inside the URL template, not dropped into a bare prefix. The execution
+        # engine replaces {{var}} tokens globally, so https://{{adminurl}}.x.com
+        # resolves correctly when the environment defines `adminurl`.
+        document = {
+            'openapi': '3.0.3',
+            'servers': [{'url': 'https://{adminurl}.katana-api.1m.app'}],
+            'paths': {
+                '/post/v2/{postId}/relate-products': {
+                    'post': {'summary': 'Relate products', 'tags': ['Admin']},
+                },
+            },
+        }
+
+        [item] = parse_collection(json.dumps(document).encode(), 'openapi.json')
+
+        self.assertEqual(
+            item['url'],
+            'https://{{adminurl}}.katana-api.1m.app/post/v2/{postId}/relate-products',
+        )
+        self.assertEqual(item['group'], 'Admin')
+
+    def test_openapi_whole_netloc_server_variable_becomes_template(self):
+        document = {
+            'openapi': '3.0.3',
+            'servers': [{'url': 'https://{gateway}'}],
+            'paths': {'/users': {'get': {'summary': 'List', 'tags': ['Users']}}},
+        }
+
+        [item] = parse_collection(json.dumps(document).encode(), 'openapi.json')
+
+        self.assertEqual(item['url'], 'https://{{gateway}}/users')
+
+    def test_openapi_path_segment_server_variable_is_kept(self):
+        document = {
+            'openapi': '3.0.3',
+            'servers': [{'url': 'https://api.example.com/{version}'}],
+            'paths': {'/users': {'get': {}}},
+        }
+
+        [item] = parse_collection(json.dumps(document).encode(), 'openapi.json')
+
+        self.assertEqual(item['url'], 'https://api.example.com/{{version}}/users')
+
+    def test_openapi_multi_variable_server_is_kept(self):
+        document = {
+            'openapi': '3.0.3',
+            'servers': [{'url': 'https://{region}.{env}.example.com'}],
+            'paths': {'/users': {'get': {}}},
+        }
+
+        [item] = parse_collection(json.dumps(document).encode(), 'openapi.json')
+
+        self.assertEqual(item['url'], 'https://{{region}}.{{env}}.example.com/users')
+
+    def test_openapi_server_with_base_path_is_kept(self):
+        document = {
+            'openapi': '3.0.3',
+            'servers': [{'url': 'https://{tenant}.example.com/api/v1'}],
+            'paths': {'/users': {'get': {}}},
+        }
+
+        [item] = parse_collection(json.dumps(document).encode(), 'openapi.json')
+
+        self.assertEqual(item['url'], 'https://{{tenant}}.example.com/api/v1/users')
+
+    def test_openapi_path_item_server_is_respected(self):
+        # OpenAPI precedence is operation > pathItem > document. A path item may
+        # declare its own servers that override the document level ones.
+        document = {
+            'openapi': '3.0.3',
+            'servers': [{'url': 'https://release.example.test'}],
+            'paths': {
+                '/public': {'get': {'summary': 'Public', 'tags': ['Public']}},
+                '/admin': {
+                    'servers': [{'url': 'https://{adminurl}.katana-api.1m.app'}],
+                    'get': {'summary': 'Admin', 'tags': ['Admin']},
+                },
+            },
+        }
+
+        items = {i['name']: i for i in parse_collection(json.dumps(document).encode(), 'openapi.json')}
+
+        self.assertEqual(items['Public']['url'], '{{baseUrl}}/public')
+        self.assertEqual(items['Admin']['url'], 'https://{{adminurl}}.katana-api.1m.app/admin')
+
+    def test_openapi_operation_level_server_overrides_path_item_and_document(self):
+        document = {
+            'openapi': '3.0.3',
+            'servers': [{'url': 'https://release.example.test'}],
+            'paths': {
+                '/products/{productId}': {
+                    'servers': [{'url': 'https://{pathurl}.example.com'}],
+                    'get': {'summary': 'Path-level product', 'tags': ['Products']},
+                    'post': {
+                        'summary': 'Admin update', 'tags': ['Admin'],
+                        'servers': [{'url': 'https://{adminurl}.katana-api.1m.app'}],
+                    },
+                },
+            },
+        }
+
+        items = {i['name']: i for i in parse_collection(json.dumps(document).encode(), 'openapi.json')}
+
+        self.assertEqual(items['Path-level product']['url'], 'https://{{pathurl}}.example.com/products/{productId}')
+        self.assertEqual(items['Admin update']['url'], 'https://{{adminurl}}.katana-api.1m.app/products/{productId}')
+
+    def test_malformed_servers_object_falls_back_to_base_url(self):
+        # Spec authors occasionally write `servers` as an object instead of an
+        # array. This must not raise (which would surface as a 500); it should
+        # fall back to {{baseUrl}}.
+        document = {
+            'openapi': '3.0.3',
+            'servers': {'url': 'https://{adminurl}.katana-api.1m.app'},
+            'paths': {'/users': {'get': {}}},
+        }
+
+        [item] = parse_collection(json.dumps(document).encode(), 'openapi.json')
+
+        self.assertEqual(item['url'], '{{baseUrl}}/users')
+
+    def test_import_preview_accepts_malformed_servers_without_500(self):
+        # A `servers` object (instead of an array) must not crash the preview with
+        # a 500; it should fall back to {{baseUrl}} and return 200.
+        document = {
+            'openapi': '3.0.3',
+            'servers': {'url': 'https://{adminurl}.katana-api.1m.app'},
+            'paths': {'/users': {'get': {'summary': 'Users'}}},
+        }
+        view = ApiRequestViewSet.as_view({'post': 'import_preview'})
+        user = SimpleNamespace(is_authenticated=True, is_anonymous=False)
+        factory = APIRequestFactory()
+        request = factory.post(
+            '/api/api-testing/requests/import-preview/',
+            {'file': SimpleUploadedFile('openapi.json', json.dumps(document).encode())},
+            format='multipart',
+        )
+        force_authenticate(request, user=user)
+
+        response = view(request)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['groups'][0]['items'][0]['url'], '{{baseUrl}}/users')
+
     def test_postman_collection_preserves_nested_folder_and_request_values(self):
         document = {
             'info': {'schema': 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json'},

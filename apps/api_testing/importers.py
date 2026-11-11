@@ -8,6 +8,7 @@ from urllib.parse import parse_qsl, urlsplit, urlunsplit
 HTTP_METHODS = {'GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'}
 PATH_PARAMETER_RE = re.compile(r'(?<!\{)\{([^{}]+)\}(?!\})')
 BASE_URL_VARIABLE = '{{baseUrl}}'
+SERVER_VARIABLE_RE = re.compile(r'\{([A-Za-z_][A-Za-z0-9_]*)\}')
 
 
 def _resolve(document, value, depth=0):
@@ -69,10 +70,43 @@ def _path_parameter_names(path):
     return names
 
 
-def _import_url(path):
-    """Prefix imported paths with the standard environment base URL variable."""
+def _server_url_template(server):
+    """Return the URL template an OpenAPI server should produce on import.
+
+    TestHub resolves a request at execution time by replacing every ``{{name}}``
+    token in the URL with the active environment's variable value, so a server
+    variable can stay embedded in the URL (e.g. as a sub-domain or base path)
+    and still resolve correctly. We therefore keep the full server URL as the
+    request prefix and convert OpenAPI ``{var}`` placeholders into TestHub
+    ``{{var}}`` placeholders.
+
+    A server without any variable (a concrete host) falls back to the classic
+    ``{{baseUrl}}`` prefix so existing imports and environment-driven hosts are
+    unchanged. A malformed/unusable server also falls back to ``{{baseUrl}}``.
+    """
+    url = server.get('url', '') if isinstance(server, dict) else ''
+    if not isinstance(url, str) or not url:
+        return BASE_URL_VARIABLE
+    if SERVER_VARIABLE_RE.search(url):
+        # Keep the whole template; convert {var} -> {{var}} so the execution
+        # engine can resolve the variable wherever it appears in the URL.
+        return SERVER_VARIABLE_RE.sub(lambda m: '{{' + m.group(1) + '}}', url)
+    return BASE_URL_VARIABLE
+
+
+def _import_url(path, base_template=BASE_URL_VARIABLE):
+    """Build the imported request URL.
+
+    ``base_template`` is either a full server URL template (contains a scheme,
+    e.g. ``https://{{adminurl}}.example.com``) or the classic ``{{baseUrl}}``
+    placeholder. A full template is joined with the request path; the classic
+    placeholder is used verbatim as a prefix.
+    """
     normalized_path = _path_only(path)
-    return f'{BASE_URL_VARIABLE}{normalized_path}'
+    if '://' in base_template:
+        # Join the server template with the request path, avoiding a double slash.
+        return base_template.rstrip('/') + normalized_path
+    return f'{base_template}{normalized_path}'
 
 
 def _openapi(document):
@@ -81,15 +115,22 @@ def _openapi(document):
     requests = []
     info = document.get('info')
     document_name = str(info.get('title') or '').strip() if isinstance(info, dict) else ''
+    servers = document.get('servers') or []
+    default_template = _server_url_template(servers[0]) if isinstance(servers, list) and servers else BASE_URL_VARIABLE
     for path, path_item in document['paths'].items():
         if not isinstance(path_item, dict):
             continue
         path_parameters = [_resolve(document, p) for p in path_item.get('parameters', [])]
+        # OpenAPI precedence is operation > pathItem > document.
+        path_servers = path_item.get('servers') or []
+        path_template = _server_url_template(path_servers[0]) if isinstance(path_servers, list) and path_servers else default_template
         for method, operation in path_item.items():
             method = method.upper()
             if method not in HTTP_METHODS or not isinstance(operation, dict):
                 continue
             parameters = path_parameters + [_resolve(document, p) for p in operation.get('parameters', [])]
+            op_servers = operation.get('servers') or []
+            base_template = _server_url_template(op_servers[0]) if isinstance(op_servers, list) and op_servers else path_template
             params, headers, body = {}, {}, {}
             for parameter in parameters:
                 if not isinstance(parameter, dict) or not parameter.get('name'):
@@ -109,7 +150,7 @@ def _openapi(document):
             for name in _path_parameter_names(path):
                 params.setdefault(name, '')
             # OpenAPI 路径参数使用单花括号；保留原格式，避免被误当成环境变量。
-            url = _import_url(path)
+            url = _import_url(path, base_template)
             request_body = _resolve(document, operation.get('requestBody', {}))
             content = request_body.get('content', {}) if isinstance(request_body, dict) else {}
             for content_type, media in content.items():
