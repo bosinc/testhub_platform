@@ -4,13 +4,16 @@
  */
 export const normalizeAssertion = (assertion = {}) => {
   const { value, ...normalized } = assertion
-  return {
+  const result = {
     ...normalized,
     expected: assertion.expected ?? value ?? (
       assertion.type === 'status_code' ? 200 :
         assertion.type === 'response_time' ? 1000 : ''
     )
   }
+  // JSONPath 断言的操作符缺省为 equals：与历史数据（无 operator 字段）行为一致
+  if (result.type === 'json_path' && !result.operator) result.operator = 'equals'
+  return result
 }
 
 export const normalizeAssertions = (assertions = []) => (
@@ -34,6 +37,7 @@ export const resetAssertionFields = (assertion) => {
   } else if (assertion.type === 'json_path') {
     assertion.json_path = ''
     assertion.expected = ''
+    if (!assertion.operator) assertion.operator = 'equals'
   } else if (assertion.type === 'header') {
     assertion.header_name = ''
     assertion.expected_value = ''

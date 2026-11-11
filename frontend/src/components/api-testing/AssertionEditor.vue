@@ -53,6 +53,19 @@
               :placeholder="$t('apiTesting.interface.maxResponseTime')"
             />
             <template v-else-if="assertion.type === 'json_path'">
+              <el-select
+                v-model="assertion.operator"
+                class="assertion-operator"
+                size="small"
+                @change="resetOperator(assertion)"
+              >
+                <el-option
+                  v-for="option in operatorOptions"
+                  :key="option.value"
+                  :label="$t(option.label)"
+                  :value="option.value"
+                />
+              </el-select>
               <el-input
                 v-model="assertion.json_path"
                 :placeholder="$t('apiTesting.interface.jsonPathExample')"
@@ -60,6 +73,7 @@
                 class="assertion-input"
               />
               <AssertionValueInput
+                v-if="operatorNeedsValue(assertion)"
                 v-model="assertion.expected"
                 :placeholder="$t('apiTesting.interface.expectedValue')"
                 :show-helpers="showHelpers"
@@ -69,6 +83,9 @@
                 @data-factory="emitHelper('data-factory', $event)"
                 @variable-helper="emitHelper('variable-helper', $event)"
               />
+              <span v-else class="assertion-hint">
+                {{ $t('apiTesting.interface.operatorNoValue') }}
+              </span>
             </template>
             <template v-else-if="assertion.type === 'header'">
               <el-input
@@ -161,6 +178,45 @@ const removeAssertion = (index) => {
 const resetAssertion = assertion => resetAssertionFields(assertion)
 const emitHelper = (eventName, payload) => emit(eventName, payload)
 
+// JSONPath 断言的操作符：语义与源测试框架的 expect() DSL 一一对应。
+// 说明：one_of（多值集合）仅支持通过 API 写入，界面不提供，避免出现半成品输入控件。
+const operatorOptions = [
+  { value: 'equals', label: 'apiTesting.interface.assertionOperators.equals' },
+  { value: 'not_equals', label: 'apiTesting.interface.assertionOperators.notEquals' },
+  { value: 'exists', label: 'apiTesting.interface.assertionOperators.exists' },
+  { value: 'not_exists', label: 'apiTesting.interface.assertionOperators.notExists' },
+  { value: 'is_not_empty', label: 'apiTesting.interface.assertionOperators.isNotEmpty' },
+  { value: 'is_empty', label: 'apiTesting.interface.assertionOperators.isEmpty' },
+  { value: 'is_string', label: 'apiTesting.interface.assertionOperators.isString' },
+  { value: 'is_number', label: 'apiTesting.interface.assertionOperators.isNumber' },
+  { value: 'is_boolean', label: 'apiTesting.interface.assertionOperators.isBoolean' },
+  { value: 'is_array', label: 'apiTesting.interface.assertionOperators.isArray' },
+  { value: 'is_object', label: 'apiTesting.interface.assertionOperators.isObject' },
+  { value: 'includes', label: 'apiTesting.interface.assertionOperators.includes' },
+  { value: 'not_includes', label: 'apiTesting.interface.assertionOperators.notIncludes' },
+  { value: 'contains', label: 'apiTesting.interface.assertionOperators.contains' },
+  { value: 'not_contains', label: 'apiTesting.interface.assertionOperators.notContains' },
+  { value: 'at_least', label: 'apiTesting.interface.assertionOperators.atLeast' },
+  { value: 'greater_than', label: 'apiTesting.interface.assertionOperators.greaterThan' },
+  { value: 'less_than', label: 'apiTesting.interface.assertionOperators.lessThan' },
+  { value: 'close_to', label: 'apiTesting.interface.assertionOperators.closeTo' },
+  { value: 'length', label: 'apiTesting.interface.assertionOperators.length' },
+  { value: 'matches', label: 'apiTesting.interface.assertionOperators.matches' }
+]
+
+// 这些操作符只判定取值本身，不需要期望值
+const NO_VALUE_OPERATORS = new Set([
+  'exists', 'not_exists',
+  'is_not_empty', 'is_empty',
+  'is_string', 'is_number', 'is_boolean', 'is_array', 'is_object'
+])
+
+const operatorNeedsValue = assertion => !NO_VALUE_OPERATORS.has(assertion.operator || 'equals')
+
+const resetOperator = assertion => {
+  if (!operatorNeedsValue(assertion)) assertion.expected = ''
+}
+
 const valuePlaceholder = type => (
   type === 'contains'
     ? 'apiTesting.interface.expectedContains'
@@ -235,6 +291,18 @@ const valuePlaceholder = type => (
 
 .assertion-input {
   margin-bottom: 12px;
+}
+
+.assertion-operator {
+  width: 100%;
+  margin-bottom: 8px;
+}
+
+.assertion-hint {
+  display: block;
+  margin-bottom: 12px;
+  font-size: 12px;
+  color: #909399;
 }
 
 .assertion-value-input {
