@@ -53,7 +53,6 @@ class ConfirmFlowBase(TestCase):
             'project_id': self.project.id,
             'data': {
                 'title': 'MCP 创建的用例',
-                'expected_result': '成功',
                 'steps': [{'action': '打开页面', 'expected': '页面可见'}],
             },
         }
@@ -77,10 +76,10 @@ class ConfirmTokenFlowTest(ConfirmFlowBase):
         pending = verify_pending(result['confirm_token'], self.user)
         exec_result = consume_pending(pending, self.user)
 
-        # 动作真实执行：功能用例落库（steps 数组按文本落库）
+        # 动作真实执行：功能用例落库（步骤与预期结果一一对应）
         case = FunctionalTestCase.objects.get(project=self.project)
         self.assertEqual(case.title, 'MCP 创建的用例')
-        self.assertIn('打开页面', case.steps)
+        self.assertIn('打开页面', [step.action for step in case.step_details.all()])
         self.assertEqual(exec_result['testcase_id'], case.id)
 
         # 状态置为 consumed
@@ -200,7 +199,7 @@ class ConfirmActionErrorTest(ConfirmFlowBase):
         foreign_project = Project.objects.create(name='别人项目', owner=self.other)
         result = create_preview('confirm_create_testcase', {
             'project_id': foreign_project.id,
-            'data': {'title': 'x', 'expected_result': 'y'},
+            'data': {'title': 'x'},
         }, self.user)
         pending = verify_pending(result['confirm_token'], self.user)
         with self.assertRaises(ConfirmError) as cm:

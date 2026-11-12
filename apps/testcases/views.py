@@ -33,6 +33,42 @@ class TestCaseImportRecordPagination(pagination.PageNumberPagination):
     max_page_size = 100
 
 
+# 优先级在数据库中是字符串枚举，字典序（critical < high < low < medium）与业务含义不符，
+# 因此按「低 → 中 → 高 → 紧急」的语义顺序排序。
+PRIORITY_SORT_ORDER = ['low', 'medium', 'high', 'critical']
+
+
+class TestCaseOrderingFilter(filters.OrderingFilter):
+    """测试用例列表排序：priority 走语义顺序，其余字段按普通字段排序。"""
+
+    def filter_queryset(self, request, queryset, view):
+        ordering = self.get_ordering(request, queryset, view)
+        if not ordering:
+            return queryset
+        order_by = []
+        fields = [term.lstrip('-') for term in ordering]
+        for term in ordering:
+            field = term.lstrip('-')
+            if field == 'priority':
+                queryset = queryset.annotate(
+                    _priority_rank=models.Case(
+                        *[
+                            models.When(priority=value, then=models.Value(index))
+                            for index, value in enumerate(PRIORITY_SORT_ORDER)
+                        ],
+                        default=models.Value(len(PRIORITY_SORT_ORDER)),
+                        output_field=models.IntegerField(),
+                    )
+                )
+                order_by.append(f'-_priority_rank' if term.startswith('-') else '_priority_rank')
+            else:
+                order_by.append(term)
+        # 追加主键作为兜底排序键，避免同值记录在分页间抖动
+        if 'id' not in fields:
+            order_by.append('id')
+        return queryset.order_by(*order_by)
+
+
 def get_user_accessible_projects(user):
     return Project.objects.filter(
         models.Q(owner=user) | models.Q(members=user)
@@ -282,10 +318,10 @@ class TestCaseListCreateView(generics.ListCreateAPIView):
     queryset = TestCase.objects.all()
     permission_classes = [permissions.IsAuthenticated]
     pagination_class = TestCasePagination
-    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, TestCaseOrderingFilter]
     filterset_fields = ['priority', 'test_type']
     search_fields = ['title', 'description']
-    ordering_fields = ['created_at', 'updated_at', 'priority']
+    ordering_fields = ['id', 'created_at', 'updated_at', 'priority']
     ordering = ['-created_at']
 
     def get_serializer_class(self):
@@ -301,7 +337,7 @@ class TestCaseListCreateView(generics.ListCreateAPIView):
         ).select_related(
             'author', 'assignee', 'project'
         ).prefetch_related(
-            'versions', 'module'
+            'versions', 'module', 'step_details'
         ).distinct()
         # 支持多项目过滤：project=1,2,3（单值 project=1 同样兼容）
         project_param = self.request.query_params.get('project')

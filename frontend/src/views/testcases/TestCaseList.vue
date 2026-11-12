@@ -175,9 +175,10 @@
           style="width: 100%"
           height="100%"
           @selection-change="handleSelectionChange"
-          @select-all="handleSelectAll">
+          @select-all="handleSelectAll"
+          @sort-change="handleSortChange">
           <el-table-column type="selection" width="30" />
-          <el-table-column prop="id" :label="$t('testcase.caseId')" width="60" />
+          <el-table-column prop="id" :label="$t('testcase.caseId')" width="90" sortable="custom" />
           <el-table-column prop="title" :label="$t('testcase.caseTitle')" min-width="360">
             <template #default="{ row }">
               <el-tooltip :content="row.title" placement="top" :show-after="500">
@@ -202,7 +203,7 @@
               />
             </template>
           </el-table-column>
-          <el-table-column prop="priority" :label="$t('testcase.priority')" width="80">
+          <el-table-column prop="priority" :label="$t('testcase.priority')" width="100" sortable="custom">
             <template #default="{ row }">
               <el-tag :class="`priority-tag ${row.priority}`">{{ getPriorityText(row.priority) }}</el-tag>
             </template>
@@ -213,7 +214,7 @@
             </template>
           </el-table-column>
           <el-table-column prop="author.username" :label="$t('testcase.maintainer')" width="100" />
-          <el-table-column prop="updated_at" :label="$t('testcase.updatedAt')" width="150">
+          <el-table-column prop="updated_at" :label="$t('testcase.updatedAt')" width="170" sortable="custom">
             <template #default="{ row }">
               {{ formatDate(row.updated_at) }}
             </template>
@@ -267,6 +268,14 @@
       <el-form label-width="100px"><el-form-item :label="$t('testcase.targetModule')"><el-tree-select v-model="moveTargetModule" :data="moveModuleOptions" node-key="id" check-strictly default-expand-all :render-after-expand="false" style="width: 100%" :placeholder="$t('testcase.selectTargetModule')" /></el-form-item></el-form>
       <template #footer><el-button @click="moveDialogVisible = false">{{ $t('common.cancel') }}</el-button><el-button type="primary" :loading="isMoving" @click="confirmMove">{{ movingModule ? $t('testcase.moveModule') : $t('testcase.moveCases') }}</el-button></template>
     </el-dialog>
+
+    <!-- 新建 / 编辑用例：共用弹窗组件，不再跳转到独立页面 -->
+    <TestCaseFormDialog
+      v-model="formDialogVisible"
+      :test-case-id="editingCaseId"
+      :project-id="formDialogProjectId"
+      @saved="onCaseFormSaved"
+    />
 
     <el-dialog
       v-model="importDialogVisible"
@@ -347,14 +356,20 @@ import { ElMessage, ElMessageBox, ElLoading } from 'element-plus'
 import { Plus, Search, Download, Delete, Edit, Upload, Folder, FolderOpened, MoreFilled, Loading } from '@element-plus/icons-vue'
 import ResizableSplitPane from '@/components/ResizableSplitPane.vue'
 import AutomationCaseLinks from '@/components/AutomationCaseLinks.vue'
+import TestCaseFormDialog from '@/components/TestCaseFormDialog.vue'
 import api from '@/utils/api'
 import { deleteTestCase as deleteTestCaseApi, bulkDeleteTestCases as bulkDeleteTestCasesApi, deleteTestCaseModule as deleteTestCaseModuleApi } from '@/api/testcases'
 import dayjs from 'dayjs'
 import * as XLSX from 'xlsx'
 import { getPreferredProjectId, rememberSelectedProject } from '@/utils/projectSelection'
+import { formatStepPairs } from '@/utils/testcaseSteps'
 
 const { t, locale } = useI18n()
 const router = useRouter()
+// 新建 / 编辑用例弹窗状态：testCaseId 为空表示新建
+const formDialogVisible = ref(false)
+const editingCaseId = ref(null)
+const formDialogProjectId = ref(null)
 const loading = ref(false)
 const sidebarWidth = ref(280)
 const moduleTree = ref([])
@@ -412,6 +427,8 @@ const priorityFilter = ref('')
 const maintainerFilter = ref('')
 // 创建日期范围筛选：['YYYY-MM-DD', 'YYYY-MM-DD']
 const dateRange = ref(null)
+// 表头排序状态：prop 为后端可排序字段（id / priority / updated_at），order 为 ascending / descending
+const sortParams = ref({ prop: '', order: '' })
 const selectedTestCases = ref([])
 // 实际已选条数：表头全选模式下代表"全部匹配用例"（含尚未滚动加载出来的），否则为已勾选行数
 const selectedCount = computed(() => (selectAllMode.value ? total.value : selectedTestCases.value.length))
@@ -440,6 +457,9 @@ const buildListParams = (page, size) => {
   if (Array.isArray(dateRange.value) && dateRange.value.length === 2) {
     params.date_from = dateRange.value[0]
     params.date_to = dateRange.value[1]
+  }
+  if (sortParams.value.prop && sortParams.value.order) {
+    params.ordering = `${sortParams.value.order === 'ascending' ? '' : '-'}${sortParams.value.prop}`
   }
   return params
 }
@@ -562,6 +582,12 @@ const handleSearch = () => {
 }
 
 const handleFilter = () => {
+  fetchTestCases()
+}
+
+// 表头排序变化：排序由后端完成（列表为分页 + 滚动加载，前端排序只能覆盖已加载数据）
+const handleSortChange = ({ prop, order }) => {
+  sortParams.value = { prop: prop || '', order: order || '' }
   fetchTestCases()
 }
 
@@ -694,12 +720,18 @@ const goToTestCase = (id) => {
 }
 
 const goToCreateTestCase = () => {
-  const selectedProject = projectFilter.value || moduleProjectId.value || getPreferredProjectId(projects.value)
-  router.push({ path: '/ai-generation/testcases/create', query: selectedProject ? { project_id: selectedProject } : {} })
+  formDialogProjectId.value = projectFilter.value || moduleProjectId.value || getPreferredProjectId(projects.value) || null
+  editingCaseId.value = null
+  formDialogVisible.value = true
 }
 
 const editTestCase = (testcase) => {
-  router.push(`/ai-generation/testcases/${testcase.id}/edit`)
+  editingCaseId.value = testcase.id
+  formDialogVisible.value = true
+}
+
+const onCaseFormSaved = async () => {
+  await Promise.all([fetchTestCases(), loadModuleTree()])
 }
 
 const deleteTestCase = async (testcase) => {
@@ -923,13 +955,14 @@ const exportToExcel = async () => {
     ]
 
     testCasesToExport.forEach((testcase, index) => {
+      const { stepsText, expectedText } = formatStepPairs(testcase.steps || [])
       worksheetData.push([
         testcase.id,
         ...Array.from({ length: moduleLevelCount }, (_, level) => modulePaths[index][level] || ''),
         testcase.title || '',
         convertBrToNewline(testcase.preconditions || ''),
-        convertBrToNewline(testcase.steps || ''),
-        convertBrToNewline(testcase.expected_result || ''),
+        stepsText,
+        expectedText,
         getPriorityText(testcase.priority),
         getTypeText(testcase.test_type),
         testcase.author?.username || '',

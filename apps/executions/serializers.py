@@ -18,14 +18,14 @@ class TestCaseExecutionSerializer(serializers.ModelSerializer):
     assignee = UserSimpleSerializer(read_only=True)
     project_name = serializers.CharField(source='project.name', read_only=True)
     module = TestCaseModuleSimpleSerializer(read_only=True)
-    step_details = TestCaseStepSerializer(many=True, read_only=True)
+    steps = TestCaseStepSerializer(source='step_details', many=True, read_only=True)
 
     class Meta:
         model = TestCase
         fields = (
             'id', 'title', 'description', 'notes', 'preconditions', 'steps',
-            'expected_result', 'priority', 'test_type', 'author', 'assignee',
-            'project_name', 'module', 'step_details'
+            'priority', 'test_type', 'author', 'assignee',
+            'project_name', 'module'
         )
 
 class TestRunCaseSimpleSerializer(serializers.ModelSerializer):

@@ -117,19 +117,9 @@ const routes = [
                 component: () => import('@/views/testcases/TestCaseImportRecordList.vue')
             },
             {
-                path: 'testcases/create',
-                name: 'CreateTestCase',
-                component: () => import('@/views/testcases/TestCaseForm.vue')
-            },
-            {
                 path: 'testcases/:id',
                 name: 'TestCaseDetail',
                 component: () => import('@/views/testcases/TestCaseDetail.vue')
-            },
-            {
-                path: 'testcases/:id/edit',
-                name: 'EditTestCase',
-                component: () => import('@/views/testcases/TestCaseEdit.vue')
             },
             {
                 path: 'versions',

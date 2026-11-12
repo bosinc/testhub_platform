@@ -15,6 +15,7 @@ export default {
   closePlan: '关闭',
   activatePlan: '激活',
   viewHistory: '历史',
+  editCase: '编辑用例',
   noRuns: '暂无测试执行记录',
 
   // Table columns
@@ -43,6 +44,7 @@ export default {
   steps: '操作步骤',
   expectedResult: '预期结果',
   testcaseDescription: '用例描述',
+  testcaseNotes: '用例备注',
   saveAndNext: '保存并下一条',
   priorityLow: '低',
   priorityMedium: '中',

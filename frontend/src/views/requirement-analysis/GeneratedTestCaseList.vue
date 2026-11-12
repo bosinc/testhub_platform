@@ -361,14 +361,7 @@
             <div class="form-row">
               <div class="form-group">
                 <label>{{ $t('generatedTestCases.operationSteps') }}</label>
-                <textarea v-model="adoptForm.steps" rows="6" :placeholder="$t('generatedTestCases.operationStepsPlaceholder')"></textarea>
-              </div>
-            </div>
-
-            <div class="form-row">
-              <div class="form-group">
-                <label>{{ $t('generatedTestCases.expectedResult') }}</label>
-                <textarea v-model="adoptForm.expected_result" rows="3" :placeholder="$t('generatedTestCases.expectedResultPlaceholder')"></textarea>
+                <TestCaseStepEditor v-model="adoptForm.steps" />
               </div>
             </div>
 
@@ -388,10 +381,13 @@
 <script>
 import api from '@/utils/api'
 import { countTestCases } from '@/utils/testCaseParser'
+import { normalizeSteps, parseStepPairs } from '@/utils/testcaseSteps'
+import TestCaseStepEditor from '@/components/TestCaseStepEditor.vue'
 import { ElMessage } from 'element-plus'
 
 export default {
   name: 'GeneratedTestCaseList',
+  components: { TestCaseStepEditor },
   data() {
     return {
       isLoading: false,
@@ -412,8 +408,7 @@ export default {
         test_type: 'functional',
         status: 'draft',
         preconditions: '',
-        steps: '',
-        expected_result: '',
+        steps: [],
         version_id: null // 改为单选
       },
       currentAdoptingTask: null,
@@ -762,8 +757,7 @@ export default {
         test_type: 'functional',
         status: 'draft',
         preconditions: testCase.precondition || '',
-        steps: testCase.test_steps || '',
-        expected_result: testCase.expected_result || '',
+        steps: parseStepPairs(testCase.test_steps || '', testCase.expected_result || ''),
         version_id: null // 改为单选
       }
       
@@ -809,7 +803,8 @@ export default {
         return
       }
 
-      if (!this.adoptForm.expected_result.trim()) {
+      const steps = normalizeSteps(this.adoptForm.steps)
+      if (!steps.length) {
         alert(this.$t('generatedTestCases.enterExpectedResult'))
         return
       }
@@ -826,8 +821,7 @@ export default {
           test_type: this.adoptForm.test_type,
           status: this.adoptForm.status,
           preconditions: this.adoptForm.preconditions,
-          steps: this.adoptForm.steps,
-          expected_result: this.adoptForm.expected_result,
+          steps,
           version_ids: this.adoptForm.version_id ? [this.adoptForm.version_id] : []
         }
         

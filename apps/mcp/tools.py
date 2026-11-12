@@ -447,11 +447,13 @@ def list_testcase_modules(ctx: Context, project_id: int) -> dict:
 def get_testcase(ctx: Context, testcase_id: int) -> dict:
     """获取单个功能测试用例的完整内容（含步骤、预期结果与自动化关联）。
 
-    返回 {id, title, description, notes, preconditions, steps, expected_result,
-    priority, status, test_type, tags, project_id, module_id, module_path,
-    author, assignee, version_ids, step_details: [{step_number, action, expected}],
+    返回 {id, title, description, notes, preconditions,
+    steps: [{id, sort_order, action, expected}], priority, status, test_type, tags,
+    project_id, module_id, module_path, author, assignee, version_ids,
     automation_links: [{type, object_id, target_name, target_exists, accessible}],
     has_ui_automation, has_api_automation, created_at, updated_at}。
+    步骤与预期结果一一对应，按 sort_order 排序；步骤 id 可直接回传给
+    preview_update_testcase 做按主键增量更新（不带 id 的视为新增）。
     生成 UI/接口自动化用例前用它读取步骤与预期结果。
     """
     def run(user):
@@ -479,8 +481,9 @@ def get_testcase(ctx: Context, testcase_id: int) -> dict:
             'description': case.description,
             'notes': case.notes,
             'preconditions': case.preconditions,
-            'steps': case.steps,
-            'expected_result': case.expected_result,
+            'steps': [{'id': step.id, 'sort_order': step.sort_order,
+                       'action': step.action, 'expected': step.expected}
+                      for step in case.step_details.all()],
             'priority': case.priority,
             'status': case.status,
             'test_type': case.test_type,
@@ -491,9 +494,6 @@ def get_testcase(ctx: Context, testcase_id: int) -> dict:
             'author': case.author.username if case.author else '',
             'assignee': case.assignee.username if case.assignee else '',
             'version_ids': list(case.versions.values_list('id', flat=True)),
-            'step_details': [{'step_number': step.step_number, 'action': step.action,
-                              'expected': step.expected}
-                             for step in case.step_details.all()],
             'automation_links': links,
             'has_ui_automation': any(l['type'] == 'ui_test_case' and l['target_exists']
                                      for l in links),
@@ -1491,11 +1491,12 @@ def preview_update_testcase(ctx: Context, testcase_id: int, data: dict) -> dict:
 
     生成影响预览并返回 confirm_token（5 分钟有效），本步骤不修改数据。
     data 为需要更新的字段集合：{title?, description?, notes?, preconditions?,
-    steps?（文本或 [{action, expected}]）, expected_result?,
+    steps?: [{id?, sort_order?, action, expected}]（按主键增量同步：带 id 的原地更新、
+    不带 id 的新建、未提交的删除；数组顺序即展示顺序；单条步骤的 action 与 expected
+    可以只填一项）,
     priority?（low/medium/high/critical，或中文 低/中/高/紧急）, status?, test_type?, tags?,
     module_id? 或 module_path?（「父模块/子模块」）, create_missing?,
-    assignee_id?, version_ids?,
-    step_details?: [{action, expected}]}；step_details 会整体覆盖原有结构化步骤。
+    assignee_id?, version_ids?}。
     """
     arguments = {'testcase_id': testcase_id, 'data': data or {}}
     return _run_tool(ctx, 'preview_update_testcase', arguments,
@@ -1573,12 +1574,12 @@ def preview_create_testcase(ctx: Context, project_id: int, data: dict) -> dict:
     生成影响预览并返回 confirm_token（5 分钟有效），本步骤不落库；
     确认创建请调用 confirm_create_testcase。
 
-    data 结构：{title, description?, notes?, preconditions?, expected_result?,
-    steps?（文本，或 [{action, expected}] 自动拼接为文本）,
+    data 结构：{title, description?, notes?, preconditions?,
+    steps: [{action, expected}]（必填，一条步骤对应一条预期结果，数组顺序即展示顺序；
     priority?（low/medium/high/critical，或中文 低/中/高/紧急）, status?, test_type?,
     tags?: [str], module_id? 或 module_path?（「父模块/子模块」，只知名称时用路径）,
     create_missing?（末级模块不存在时是否自动创建，默认 false）, assignee_id?,
-    version_ids?: [int], step_details?: [{action, expected}]（结构化步骤）}
+    version_ids?: [int]}
     """
     arguments = {'project_id': project_id, 'data': data or {}}
     return _run_tool(ctx, 'preview_create_testcase', arguments,

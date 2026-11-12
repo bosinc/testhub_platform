@@ -107,11 +107,13 @@ _TOOLS = [
         domain='testcases',
         summary='获取单个功能用例的完整内容与自动化关联',
         description='获取单个功能测试用例的完整内容：标题、描述、备注、前置条件、'
-                    '操作步骤（文本 steps 与结构化 step_details）、预期结果、优先级、状态、'
+                    '操作步骤（steps: [{id, sort_order, action, expected}]，步骤与预期结果一一对应）、'
+                    '优先级、状态、'
                     '测试类型、标签、模块路径、作者/指派人、关联版本，'
                     '以及 automation_links（含 target_name/target_exists（结构有效性）'
                     '/accessible（权限可见性））与 has_ui_automation / has_api_automation'
                     '（仅统计 target_exists 为真的关联）。'
+                    'steps 里的 id 可原样回传给 preview_update_testcase 实现按主键增量更新。'
                     '生成 UI/接口自动化用例前用它读取步骤与预期结果。',
         examples=({'testcase_id': 101},),
     ),
@@ -419,17 +421,18 @@ _TOOLS = [
         domain='testcases',
         summary='预览创建功能测试用例（危险操作第一步）',
         description='危险操作第一步：生成创建功能测试用例的影响预览并返回 confirm_token（5 分钟有效）。'
-                    'data 结构：{title, description?, notes?, preconditions?, expected_result?, '
-                    'steps?（文本或 [{action, expected}]), '
+                    'data 结构：{title, description?, notes?, preconditions?, '
+                    'steps（[{action, expected}]，必填，一条步骤对应一条预期结果；'
+                    '单条步骤的 action 与 expected 可以只填一项；'
                     'priority?（low/medium/high/critical，或中文 低/中/高/紧急）, '
                     'status?, test_type?, tags?, module_id? 或 module_path?'
                     '（「父模块/子模块」路径，只知模块名时用它；路径天然消除同名歧义）, '
                     'create_missing?（末级模块不存在时是否自动创建，默认 false）, '
-                    'assignee_id?, version_ids?, step_details?}。'
+                    'assignee_id?, version_ids?}。'
                     '本步骤不落库，确认创建请调用 confirm_create_testcase。',
         read_only=False, idempotent=False, paired_with='confirm_create_testcase',
         examples=({'project_id': 1,
-                   'data': {'title': '登录成功', 'expected_result': '跳转到首页', 'priority': 'high',
+                   'data': {'title': '登录成功', 'priority': 'high',
                             'module_id': 3, 'tags': ['登录'],
                             'steps': [{'action': '输入账号密码并点击登录', 'expected': '登录成功'}]}},),
     ),
@@ -606,11 +609,12 @@ _TOOLS = [
         summary='预览更新功能测试用例（危险操作第一步）',
         description='危险操作第一步：生成更新功能测试用例的影响预览并返回 confirm_token（5 分钟有效）。'
                     'data 为需要更新的字段集合（未提供的字段保持不变）：{title?, description?, '
-                    'notes?, preconditions?, steps?, expected_result?, '
+                    'notes?, preconditions?, steps?: [{id?, sort_order?, action, expected}], '
                     'priority?（low/medium/high/critical，或中文 低/中/高/紧急）, status?, '
                     'test_type?, tags?, module_id? 或 module_path?（「父模块/子模块」）, '
-                    'create_missing?, assignee_id?, version_ids?, step_details?}。'
-                    'step_details 会整体覆盖原结构化步骤。本步骤不修改数据。',
+                    'create_missing?, assignee_id?, version_ids?}。'
+                    '传入 steps 时按主键增量同步：带 id 的原地更新、不带 id 的新建、'
+                    '未提交的旧步骤删除；数组顺序即展示顺序。本步骤不修改数据。',
         read_only=False, idempotent=False, paired_with='confirm_update_testcase',
         examples=({'testcase_id': 101,
                    'data': {'priority': 'high', 'status': 'active', 'tags': ['回归']}},),

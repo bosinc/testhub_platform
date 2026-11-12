@@ -86,8 +86,7 @@ class ListTestcasesToolTest(ToolBase):
 
     def test_returns_light_fields(self):
         FunctionalTestCase.objects.create(
-            project=self.project, title='用例A',
-            expected_result='ok', author=self.user)
+            project=self.project, title='用例A', author=self.user)
         result = mcp_tools.list_testcases(self.ctx, project_id=self.project.id)
         self.assertEqual(result['total'], 1)
         item = result['items'][0]
@@ -108,7 +107,7 @@ class PreviewConfirmToolTest(ToolBase):
     def test_preview_and_confirm_create_testcase(self):
         preview = mcp_tools.preview_create_testcase(
             self.ctx, project_id=self.project.id,
-            data={'title': '工具创建', 'expected_result': 'ok'})
+            data={'title': '工具创建'})
         self.assertIn('confirm_token', preview)
 
         result = mcp_tools.confirm_create_testcase(self.ctx, preview['confirm_token'])
@@ -157,8 +156,7 @@ class ArgsBriefMaskingTest(ToolBase):
     def test_args_brief_masks_sensitive_fields(self):
         mcp_tools.preview_create_testcase(
             self.ctx, project_id=self.project.id,
-            data={'title': '脱敏用例', 'expected_result': 'ok',
-                  'password': 'p@ssw0rd', 'api_token': 'tk-123'})
+            data={'title': '脱敏用例', 'password': 'p@ssw0rd', 'api_token': 'tk-123'})
         log = McpCallLog.objects.filter(tool_name='preview_create_testcase').first()
         self.assertIsNotNone(log)
         self.assertIn('***', log.args_brief)
@@ -172,7 +170,7 @@ class ApprovalStatusToolTest(ToolBase):
     def _preview(self, title='轮询用例'):
         return mcp_tools.preview_create_testcase(
             self.ctx, project_id=self.project.id,
-            data={'title': title, 'expected_result': 'ok'})
+            data={'title': title})
 
     def test_poll_flow_after_confirm(self):
         token = self._preview()['confirm_token']
@@ -194,7 +192,7 @@ class HumanApprovalToolTest(ToolBase):
     def _preview(self, title='轮询用例'):
         return mcp_tools.preview_create_testcase(
             self.ctx, project_id=self.project.id,
-            data={'title': title, 'expected_result': 'ok'})
+            data={'title': title})
 
     @override_settings(MCP_HUMAN_APPROVAL=True)
     def test_confirm_blocks_until_console_approves(self):

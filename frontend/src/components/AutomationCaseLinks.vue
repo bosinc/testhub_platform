@@ -51,7 +51,7 @@
       v-model:visible="automationMenuVisible"
       trigger="click"
       placement="bottom-start"
-      :width="300"
+      :width="220"
       :teleported="true"
       popper-class="automation-case-menu-popper"
       @show="createMenuExpanded = false"

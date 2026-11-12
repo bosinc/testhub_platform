@@ -2,6 +2,7 @@ export default {
   confirm: '确定',
   cancel: '取消',
   save: '保存',
+  operation: '操作',
   delete: '删除',
   edit: '编辑',
   add: '添加',

@@ -2,6 +2,7 @@ export default {
   confirm: 'Confirm',
   cancel: 'Cancel',
   save: 'Save',
+  operation: 'Actions',
   delete: 'Delete',
   edit: 'Edit',
   add: 'Add',

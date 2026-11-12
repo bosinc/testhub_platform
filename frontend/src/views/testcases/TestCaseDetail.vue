@@ -37,10 +37,8 @@
           <div class="text-content" v-html="testcase.preconditions || $t('testcase.none')"></div>
         </el-descriptions-item>
         <el-descriptions-item :label="$t('testcase.steps')" :span="2">
-          <div class="text-content" v-html="testcase.steps || $t('testcase.none')"></div>
-        </el-descriptions-item>
-        <el-descriptions-item :label="$t('testcase.expectedResult')" :span="2">
-          <div class="text-content" v-html="testcase.expected_result || $t('testcase.none')"></div>
+          <TestCaseStepEditor v-if="testcase.steps && testcase.steps.length" :model-value="testcase.steps" readonly />
+          <span v-else>{{ $t('testcase.none') }}</span>
         </el-descriptions-item>
         <el-descriptions-item :label="$t('testcase.notes')" :span="2">
           <div v-if="safeNotes" class="notes-content" v-html="safeNotes" @mousedown.capture="previewNoteImage" @click="previewNoteImage" @dblclick="previewNoteImage"></div>
@@ -48,6 +46,13 @@
         </el-descriptions-item>
       </el-descriptions>
     </div>
+
+    <!-- 编辑用例改为弹窗展示公共组件，不再跳转到编辑页 -->
+    <TestCaseFormDialog
+      v-model="editDialogVisible"
+      :test-case-id="route.params.id"
+      @saved="fetchTestCase"
+    />
 
     <el-dialog v-model="imagePreviewVisible" title="图片预览" width="80%" append-to-body>
       <img v-if="previewImageUrl" class="image-preview" :src="previewImageUrl" alt="备注图片预览" />
@@ -57,16 +62,18 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 import api from '@/utils/api'
 import dayjs from 'dayjs'
+import TestCaseStepEditor from '@/components/TestCaseStepEditor.vue'
+import TestCaseFormDialog from '@/components/TestCaseFormDialog.vue'
 
 const { t } = useI18n()
 const route = useRoute()
-const router = useRouter()
 const testcase = ref(null)
+const editDialogVisible = ref(false)
 const imagePreviewVisible = ref(false)
 const previewImageUrl = ref('')
 
@@ -117,7 +124,7 @@ const fetchTestCase = async () => {
 }
 
 const editTestCase = () => {
-  router.push(`/ai-generation/testcases/${route.params.id}/edit`)
+  editDialogVisible.value = true
 }
 
 const getPriorityText = (priority) => {

@@ -61,8 +61,6 @@ class TestCase(models.Model):
     description = models.TextField(blank=True, verbose_name='用例描述')
     notes = models.TextField(blank=True, verbose_name='备注')
     preconditions = models.TextField(blank=True, verbose_name='前置条件')
-    steps = models.TextField(blank=True, max_length=1000, verbose_name='操作步骤')
-    expected_result = models.TextField(verbose_name='预期结果')
     priority = models.CharField(max_length=20, choices=PRIORITY_CHOICES, default='medium', verbose_name='优先级')
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='draft', verbose_name='状态')
     test_type = models.CharField(max_length=20, choices=TYPE_CHOICES, default='functional', verbose_name='测试类型')
@@ -126,18 +124,21 @@ class TestCaseAutomationLink(models.Model):
         return f'{self.test_case_id}:{self.case_type}:{self.object_id}'
 
 class TestCaseStep(models.Model):
-    """测试用例步骤"""
+    """测试用例步骤：一条操作步骤对应一条预期结果，顺序由 sort_order 决定。"""
     testcase = models.ForeignKey(TestCase, on_delete=models.CASCADE, related_name='step_details')
-    step_number = models.PositiveIntegerField(verbose_name='步骤序号')
-    action = models.TextField(verbose_name='操作')
+    sort_order = models.PositiveIntegerField(default=0, verbose_name='排序')
+    action = models.TextField(verbose_name='步骤描述')
     expected = models.TextField(verbose_name='预期结果')
-    
+
     class Meta:
         db_table = 'testcase_steps'
-        unique_together = ['testcase', 'step_number']
-        ordering = ['step_number']
+        ordering = ['sort_order', 'id']
+        indexes = [models.Index(fields=['testcase', 'sort_order'], name='testcase_step_order_idx')]
         verbose_name = '测试用例步骤'
         verbose_name_plural = '测试用例步骤'
+
+    def __str__(self):
+        return f'{self.testcase_id}#{self.sort_order}'
 
 class TestCaseAttachment(models.Model):
     """测试用例附件"""

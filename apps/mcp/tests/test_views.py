@@ -28,7 +28,7 @@ class McpRestBase(TestCase):
     def _make_pending(self):
         return create_preview('confirm_create_testcase', {
             'project_id': self.project.id,
-            'data': {'title': 'REST 用例', 'expected_result': 'ok'},
+            'data': {'title': 'REST 用例'},
         }, self.user)
 
 

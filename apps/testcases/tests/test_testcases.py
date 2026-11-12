@@ -49,8 +49,11 @@ class TestCaseApiTests(APITestCase):
             'title': '登录功能验证',
             'description': '验证正常登录流程',
             'preconditions': '用户已注册',
-            'steps': '1. 打开登录页\n2. 输入账号密码\n3. 点击登录',
-            'expected_result': '登录成功进入首页',
+            'steps': [
+                {'action': '打开登录页', 'expected': '登录页正常展示'},
+                {'action': '输入账号密码', 'expected': '输入框正常回显'},
+                {'action': '点击登录', 'expected': '登录成功进入首页'},
+            ],
             'priority': 'high',
             'test_type': 'functional',
             'project_id': self.project.id,
@@ -64,7 +67,7 @@ class TestCaseApiTests(APITestCase):
         """列表查询支持分页"""
         for i in range(15):
             TCModel.objects.create(
-                title=f'用例{i}', expected_result='通过', project=self.project, author=self.user,
+                title=f'用例{i}', project=self.project, author=self.user,
             )
 
         response = self.client.get(self.list_url, {'page': 1, 'page_size': 5})
@@ -75,19 +78,19 @@ class TestCaseApiTests(APITestCase):
     def test_retrieve_testcase_detail(self):
         """获取用例详情"""
         tc = TCModel.objects.create(
-            title='详情测试', expected_result='通过', project=self.project, author=self.user,
+            title='详情测试', project=self.project, author=self.user,
         )
-        TestCaseStep.objects.create(testcase=tc, step_number=1, action='点击按钮', expected='跳转')
+        TestCaseStep.objects.create(testcase=tc, sort_order=0, action='点击按钮', expected='跳转')
         detail_url = tc_detail_url(tc.id)
         response = self.client.get(detail_url)
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['title'], '详情测试')
-        self.assertEqual(len(response.data['step_details']), 1)
+        self.assertEqual(len(response.data['steps']), 1)
 
     def test_update_testcase(self):
         """更新测试用例"""
         tc = TCModel.objects.create(
-            title='旧标题', expected_result='通过', project=self.project, author=self.user,
+            title='旧标题', project=self.project, author=self.user,
         )
         detail_url = tc_detail_url(tc.id)
         response = self.client.patch(detail_url, {'title': '新标题'}, format='json')
@@ -98,7 +101,7 @@ class TestCaseApiTests(APITestCase):
     def test_delete_testcase(self):
         """删除测试用例"""
         tc = TCModel.objects.create(
-            title='待删除', expected_result='通过', project=self.project, author=self.user,
+            title='待删除', project=self.project, author=self.user,
         )
         detail_url = tc_detail_url(tc.id)
         response = self.client.delete(detail_url)
@@ -108,10 +111,10 @@ class TestCaseApiTests(APITestCase):
     def test_search_testcase_by_title(self):
         """按标题搜索用例"""
         TCModel.objects.create(
-            title='支付流程验证', expected_result='通过', project=self.project, author=self.user,
+            title='支付流程验证', project=self.project, author=self.user,
         )
         TCModel.objects.create(
-            title='登录流程验证', expected_result='通过', project=self.project, author=self.user,
+            title='登录流程验证', project=self.project, author=self.user,
         )
         response = self.client.get(self.list_url, {'search': '支付'})
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -121,10 +124,10 @@ class TestCaseApiTests(APITestCase):
     def test_filter_by_priority(self):
         """按优先级过滤用例"""
         TCModel.objects.create(
-            title='高优用例', expected_result='通过', project=self.project, author=self.user, priority='high',
+            title='高优用例', project=self.project, author=self.user, priority='high',
         )
         TCModel.objects.create(
-            title='低优用例', expected_result='通过', project=self.project, author=self.user, priority='low',
+            title='低优用例', project=self.project, author=self.user, priority='low',
         )
         response = self.client.get(self.list_url, {'priority': 'high'})
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -134,7 +137,7 @@ class TestCaseApiTests(APITestCase):
     def test_only_project_members_see_testcases(self):
         """非项目成员无法看到用例"""
         TCModel.objects.create(
-            title='内部用例', expected_result='通过', project=self.project, author=self.user,
+            title='内部用例', project=self.project, author=self.user,
         )
         self.client.force_authenticate(self.other_user)
         response = self.client.get(self.list_url)
@@ -260,7 +263,7 @@ class TestCaseModuleApiTests(APITestCase):
     def test_module_filter_includes_descendants_and_cases_can_move_to_unassigned(self):
         parent = self.create_module(name='父模块')
         child = self.create_module(parent=parent, name='子模块')
-        case = TCModel.objects.create(title='子模块用例', expected_result='通过', project=self.project, author=self.user, module=child)
+        case = TCModel.objects.create(title='子模块用例', project=self.project, author=self.user, module=child)
         response = self.client.get(TC_LIST_URL, {'project': self.project.id, 'module': parent.id, 'include_children': 'true'})
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['count'], 1)
@@ -274,9 +277,9 @@ class TestCaseModuleApiTests(APITestCase):
 class TestCaseImportTemplateTests(APITestCase):
     def test_template_matches_module_columns_and_case_fields(self):
         workbook = load_workbook(TestCaseImportTemplateService.build_template(), read_only=True)
-        headers = list(next(workbook['用例导入模板'].iter_rows(min_row=1, max_row=1, values_only=True)))
+        headers = list(next(workbook.worksheets[0].iter_rows(min_row=1, max_row=1, values_only=True)))
         self.assertEqual(headers[:3], [f'{level}级模块' for level in ('一', '二', '三')])
-        self.assertEqual(headers[3:], ['用例名称', '优先级', '测试类型', '前置条件', '步骤描述', '预期结果', '备注', '维护人'])
+        self.assertEqual(headers[3:], ['用例标题', '优先级', '测试类型', '前置条件', '操作步骤', '预期结果', '备注', '维护人'])
 
 
 class TestCaseModuleImportTests(APITestCase):
@@ -356,7 +359,7 @@ class TestCaseModuleImportTests(APITestCase):
         workbook = Workbook()
         worksheet = workbook.active
         worksheet.title = '用例导入模板'
-        headers = ['步骤描述', '二级模块', '用例名称', '优先级', '测试类型', '前置条件', '预期结果', '备注', '维护人', '一级模块']
+        headers = ['操作步骤', '二级模块', '用例标题', '优先级', '测试类型', '前置条件', '预期结果', '备注', '维护人', '一级模块']
         worksheet.append(headers)
         worksheet.append(['步骤描述', '子模块', '可调换顺序用例', '高', '功能测试', '', '预期结果', '', '', '父模块'])
         output = BytesIO()
@@ -373,10 +376,81 @@ class TestCaseModuleImportTests(APITestCase):
 
         self.assertEqual((summary.success_count, summary.failed_count), (1, 0))
         testcase = TCModel.objects.get(title='可调换顺序用例')
-        self.assertEqual(testcase.steps, '步骤描述')
+        self.assertEqual(
+            list(testcase.step_details.values_list('action', 'expected')),
+            [('步骤描述', '预期结果')],
+        )
         self.assertEqual(testcase.priority, 'high')
         self.assertEqual(testcase.module.name, '子模块')
         self.assertEqual(testcase.module.parent.name, '父模块')
+
+    def test_import_reads_first_sheet_regardless_of_name(self):
+        """工作表名称不限：始终读取第一个 sheet，后续 sheet 全部忽略。"""
+        workbook = Workbook()
+        worksheet = workbook.active
+        worksheet.title = '随意命名的工作表'
+        worksheet.append(TestCaseImportTemplateService.HEADERS)
+        worksheet.append([''] * 3 + ['首个工作表用例', '中', '功能测试', '', '#打开页面', '#页面展示', '', ''])
+        # 旧逻辑会按名称读取这张表，用干扰数据验证它确实被忽略
+        other = workbook.create_sheet('用例导入模板')
+        other.append(['干扰数据'])
+        other.append(['不应被导入'])
+        output = BytesIO()
+        workbook.save(output)
+
+        with TemporaryDirectory() as media_root, override_settings(MEDIA_ROOT=media_root):
+            record = TestCaseImportRecord.objects.create(
+                import_no='IMP_IMPORT_FIRST_SHEET',
+                project=self.project,
+                created_by=self.user,
+            )
+            record.import_file.save('arbitrary-sheet.xlsx', ContentFile(output.getvalue()), save=True)
+            summary = TestCaseExcelImportService.import_record(record)
+
+        self.assertEqual((summary.success_count, summary.failed_count), (1, 0))
+        self.assertTrue(TCModel.objects.filter(title='首个工作表用例').exists())
+        self.assertFalse(TCModel.objects.filter(title='不应被导入').exists())
+
+    def test_import_rejects_legacy_header_names(self):
+        """旧表头「用例名称」「用例描述」「步骤描述」不再兼容，必须改用模板新表头。"""
+        variants = [('用例名称', '步骤描述'), ('用例描述', '操作步骤'), ('用例名称', '操作步骤')]
+        for index, (title_header, steps_header) in enumerate(variants):
+            headers = list(TestCaseImportTemplateService.HEADERS)
+            headers[3] = title_header
+            headers[7] = steps_header
+            workbook = Workbook()
+            workbook.active.append(headers)
+            workbook.active.append([''] * 3 + ['旧表头用例', '中', '功能测试', '', '#点击按钮', '#按钮响应', '', ''])
+            output = BytesIO()
+            workbook.save(output)
+
+            with TemporaryDirectory() as media_root, override_settings(MEDIA_ROOT=media_root):
+                record = TestCaseImportRecord.objects.create(
+                    import_no=f'IMP_IMPORT_LEGACY_HEADERS_{index}',
+                    project=self.project,
+                    created_by=self.user,
+                )
+                record.import_file.save(f'legacy-headers-{index}.xlsx', ContentFile(output.getvalue()), save=True)
+                with self.assertRaises(ValueError) as context:
+                    TestCaseExcelImportService.import_record(record)
+
+            self.assertIn('表头不匹配', str(context.exception), (title_header, steps_header))
+            self.assertFalse(TCModel.objects.filter(title='旧表头用例').exists())
+
+    def test_downloaded_template_is_importable(self):
+        """下载的模板（首个工作表 + 填写说明）示例行可直接导入。"""
+        template = TestCaseImportTemplateService.build_template()
+        with TemporaryDirectory() as media_root, override_settings(MEDIA_ROOT=media_root):
+            record = TestCaseImportRecord.objects.create(
+                import_no='IMP_IMPORT_DOWNLOADED_TEMPLATE',
+                project=self.project,
+                created_by=self.user,
+            )
+            record.import_file.save('template.xlsx', ContentFile(template.getvalue()), save=True)
+            summary = TestCaseExcelImportService.import_record(record)
+
+        self.assertEqual((summary.success_count, summary.failed_count), (1, 0))
+        self.assertTrue(TCModel.objects.filter(title='用户登录成功校验').exists())
 
 
 class TestCaseAutomationLinkTests(APITestCase):
@@ -385,7 +459,6 @@ class TestCaseAutomationLinkTests(APITestCase):
         self.workspace_project = Project.objects.create(name='自动化关联项目', owner=self.user)
         self.test_case = TCModel.objects.create(
             title='正式登录用例',
-            expected_result='登录成功',
             project=self.workspace_project,
             author=self.user,
         )

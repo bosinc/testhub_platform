@@ -221,7 +221,7 @@
                     class="execution-table"
                     :row-class-name="rowClassName"
                     @selection-change="selection => handleSelectionChange(run, selection)"
-                    @row-click="openCaseExecution"
+                    @row-click="(row, column, event) => openCaseExecution(run, row, column, event)"
                     :row-key="(row) => row.id">
                     <el-table-column type="selection" width="30" />
                     <el-table-column :label="$t('execution.testcaseId')" width="60">
@@ -389,11 +389,11 @@
               :icon="ArrowUp"
               :disabled="currentCaseIndex <= 0"
               @click="navigateCase(-1)" />
-            <span class="case-dialog-count">{{ currentCaseIndex + 1 }} / {{ allCases.length }}</span>
+            <span class="case-dialog-count">{{ currentCaseIndex + 1 }} / {{ dialogCases.length }}</span>
             <el-button
               class="case-nav-button"
               :icon="ArrowDown"
-              :disabled="currentCaseIndex >= allCases.length - 1"
+              :disabled="currentCaseIndex >= dialogCases.length - 1"
               @click="navigateCase(1)" />
             <el-divider direction="vertical" />
             <el-button
@@ -420,9 +420,14 @@
               <div class="case-id">{{ $t('execution.testcaseId') }} {{ currentCase.testcase?.id }}</div>
               <h2>{{ currentCase.testcase?.title || currentCase.testcase }}</h2>
             </div>
-            <el-button link type="primary" :icon="Clock" @click="viewCaseHistory(currentCase)">
-              {{ $t('execution.viewHistory') }}
-            </el-button>
+            <div class="case-title-actions">
+              <el-button link type="primary" :icon="EditPen" @click="openCaseEditDialog(currentCase)">
+                {{ $t('execution.editCase') }}
+              </el-button>
+              <el-button link type="primary" :icon="Clock" @click="viewCaseHistory(currentCase)">
+                {{ $t('execution.viewHistory') }}
+              </el-button>
+            </div>
           </div>
           <div class="case-meta-grid">
             <div><span>{{ $t('execution.testcasePriority') }}</span>{{ getPriorityText(currentCase.testcase?.priority) }}</div>
@@ -436,11 +441,16 @@
           </div>
           <div class="case-section">
             <h3>{{ $t('execution.steps') }}</h3>
-            <p>{{ currentCase.testcase?.steps || $t('execution.noData') }}</p>
+            <TestCaseStepEditor
+              v-if="currentCase.testcase?.steps && currentCase.testcase.steps.length"
+              :model-value="currentCase.testcase.steps"
+              readonly
+            />
+            <p v-else>{{ $t('execution.noData') }}</p>
           </div>
           <div class="case-section">
-            <h3>{{ $t('execution.expectedResult') }}</h3>
-            <p>{{ currentCase.testcase?.expected_result || $t('execution.noData') }}</p>
+            <h3>{{ $t('execution.testcaseNotes') }}</h3>
+            <p>{{ currentCase.testcase?.notes || $t('execution.noData') }}</p>
           </div>
           <div v-if="currentCase.testcase?.description" class="case-section">
             <h3>{{ $t('execution.testcaseDescription') }}</h3>
@@ -470,6 +480,13 @@
         </aside>
       </div>
     </el-dialog>
+
+    <!-- 用例执行详情里直接编辑用例：复用新建/编辑的公共弹窗组件 -->
+    <TestCaseFormDialog
+      v-model="editCaseDialogVisible"
+      :test-case-id="editingCaseId"
+      @saved="onCaseEdited"
+    />
   </div>
 </template>
 
@@ -479,10 +496,12 @@ import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
-  Clock, Stamp, Folder, Files, FolderOpened, Search, Link, ArrowUp, ArrowDown
+  Clock, Stamp, Folder, Files, FolderOpened, Search, Link, ArrowUp, ArrowDown, EditPen
 } from '@element-plus/icons-vue'
 import ResizableSplitPane from '@/components/ResizableSplitPane.vue'
+import TestCaseStepEditor from '@/components/TestCaseStepEditor.vue'
 import TestCaseSelectorDialog from '@/components/TestCaseSelectorDialog.vue'
+import TestCaseFormDialog from '@/components/TestCaseFormDialog.vue'
 import { useUserStore } from '@/stores/user'
 import api from '@/utils/api'
 
@@ -494,6 +513,9 @@ const testPlan = ref({})
 const historyDialogVisible = ref(false)
 const currentCaseHistory = ref([])
 const caseExecutionDialogVisible = ref(false)
+// 执行详情弹窗内直接编辑用例
+const editCaseDialogVisible = ref(false)
+const editingCaseId = ref(null)
 const currentCaseIndex = ref(-1)
 const isDeleting = ref(false)
 const loaded = ref(false)
@@ -552,8 +574,11 @@ const batchRunId = ref(null)
 const allCases = computed(() => (testPlan.value.test_runs || []).flatMap(run =>
   (run.run_cases || []).map(runCase => ({ run, runCase }))
 ))
-const currentCase = computed(() => allCases.value[currentCaseIndex.value]?.runCase || null)
-const currentRun = computed(() => allCases.value[currentCaseIndex.value]?.run || null)
+// 执行详情弹窗的导航列表：打开弹窗时按当前表格的筛选/排序结果快照，
+// 之后不再随筛选条件变化（否则弹窗内改执行结果会让当前用例从列表里消失）
+const dialogCases = ref([])
+const currentCase = computed(() => dialogCases.value[currentCaseIndex.value]?.runCase || null)
+const currentRun = computed(() => dialogCases.value[currentCaseIndex.value]?.run || null)
 
 // 页面头部的整体状态：聚合所有 run 的进度
 const overallProgress = computed(() => {
@@ -794,6 +819,18 @@ const visibleCasesMap = computed(() => {
   return map
 })
 
+// 当前 run 是否处于筛选状态（模块 / 关键字 / 执行结果 / 执行人）
+const hasActiveListFilter = (run) => {
+  const ui = ensureUi(run)
+  return Boolean(ui.module || (ui.search || '').trim() || ui.status || ui.executor)
+}
+
+// 弹窗导航的数据源：有筛选时只在该 run 筛选后的用例里前后切换，否则保持全计划用例
+const buildDialogCases = (run) => {
+  if (!run || !hasActiveListFilter(run)) return allCases.value
+  return (visibleCasesMap.value[run.id] || []).map(runCase => ({ run, runCase }))
+}
+
 const refreshPlan = async () => {
   const response = await api.get(`/executions/plans/${route.params.id}/`)
   testPlan.value = response.data
@@ -949,6 +986,37 @@ const saveAllInRun = async (run) => {
   }
 }
 
+const openCaseEditDialog = runCase => {
+  const caseId = runCase?.testcase?.id
+  if (!caseId) return
+  editingCaseId.value = caseId
+  editCaseDialogVisible.value = true
+}
+
+// 用例保存成功后只同步用例展示字段：不能刷新整个计划，
+// 否则执行弹窗中尚未提交的状态 / 实际结果 / 备注会被冲掉。
+const onCaseEdited = detail => {
+  if (!detail?.id) return
+  const patch = {
+    title: detail.title,
+    description: detail.description,
+    notes: detail.notes,
+    preconditions: detail.preconditions,
+    steps: detail.steps || [],
+    priority: detail.priority,
+    test_type: detail.test_type,
+    author: detail.author,
+    module: detail.module
+  }
+  for (const run of testPlan.value.test_runs || []) {
+    for (const runCase of run.run_cases || []) {
+      if (!runCase.testcase || String(runCase.testcase.id) !== String(detail.id)) continue
+      Object.assign(runCase.testcase, patch)
+      if (detail.project?.name) runCase.testcase.project_name = detail.project.name
+    }
+  }
+}
+
 const viewCaseHistory = async (runCase) => {
   try {
     const response = await api.get(`/executions/run_cases/${runCase.id}/history/`)
@@ -960,18 +1028,21 @@ const viewCaseHistory = async (runCase) => {
 }
 
 // 点击用例行打开执行弹窗；复选框点击只改变批量选择状态。
-const openCaseExecution = (runCase, column, event) => {
+// 导航范围取当前表格可见数据（筛选后即筛选结果），保证弹窗里前后切换与列表一致。
+const openCaseExecution = (run, runCase, column, event) => {
   if (event.target.closest('.el-checkbox, .el-table__expand-icon')) return
-  const index = allCases.value.findIndex(item => item.runCase.id === runCase.id)
+  const list = buildDialogCases(run)
+  const index = list.findIndex(item => item.runCase.id === runCase.id)
   if (index < 0) return
+  dialogCases.value = list
   currentCaseIndex.value = index
   caseExecutionDialogVisible.value = true
 }
 
-// 在当前测试计划的全部执行用例中前后切换。
+// 在当前弹窗的用例列表中前后切换。
 const navigateCase = (offset) => {
   const nextIndex = currentCaseIndex.value + offset
-  if (nextIndex >= 0 && nextIndex < allCases.value.length) currentCaseIndex.value = nextIndex
+  if (nextIndex >= 0 && nextIndex < dialogCases.value.length) currentCaseIndex.value = nextIndex
 }
 
 // 弹窗保存沿用用例执行接口，保留最后操作人和执行时间。
@@ -983,7 +1054,7 @@ const saveCurrentAndNext = async () => {
   const saved = isRowDirty(currentCase.value)
     ? await saveRunCase(currentCase.value, currentRun.value)
     : true
-  if (saved && currentCaseIndex.value < allCases.value.length - 1) navigateCase(1)
+  if (saved && currentCaseIndex.value < dialogCases.value.length - 1) navigateCase(1)
 }
 
 // 处理选择变化（按 run 分别记录）
@@ -1890,6 +1961,14 @@ onMounted(() => {
   font-size: 19px;
   line-height: 1.45;
   overflow-wrap: anywhere;
+}
+
+.case-title-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
 .case-meta-grid {

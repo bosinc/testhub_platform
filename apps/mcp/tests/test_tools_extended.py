@@ -148,7 +148,7 @@ class CreateUiCaseToolTest(BaseFixture):
             project=self.ui_project, name='用户名输入框', element_type='INPUT',
             locator_strategy=self.strategy, locator_value='#username', created_by=self.user)
         self.formal_case = FunctionalTestCase.objects.create(
-            project=self.project, title='登录功能', expected_result='登录成功',
+            project=self.project, title='登录功能',
             author=self.user)
 
     def _create(self, replace_link=False, **overrides):
@@ -246,8 +246,7 @@ class CreateUiCaseToolTest(BaseFixture):
     def test_rejects_link_to_other_project_case(self):
         other_project = Project.objects.create(name='另一个统一项目', owner=self.user)
         other_case = FunctionalTestCase.objects.create(
-            project=other_project, title='别人项目的用例',
-            expected_result='ok', author=self.user)
+            project=other_project, title='别人项目的用例', author=self.user)
         preview = mcp_tools.preview_create_ui_case(
             self.ctx, project_id=self.ui_project.id,
             data={'name': '跨项目关联'},
@@ -259,8 +258,7 @@ class CreateUiCaseToolTest(BaseFixture):
         """关联校验失败必须整体回滚，不能留下孤立用例。"""
         other_project = Project.objects.create(name='另一个统一项目', owner=self.user)
         other_case = FunctionalTestCase.objects.create(
-            project=other_project, title='别人项目的用例',
-            expected_result='ok', author=self.user)
+            project=other_project, title='别人项目的用例', author=self.user)
         preview = mcp_tools.preview_create_ui_case(
             self.ctx, project_id=self.ui_project.id,
             data={'name': '不应存在的用例', 'steps': [
@@ -282,7 +280,7 @@ class CreateApiScenarioCaseToolTest(BaseFixture):
             url='https://api.example.com/orders', created_by=self.user,
             assertions=[{'type': 'status_code', 'expected': 200}])
         self.formal_case = FunctionalTestCase.objects.create(
-            project=self.project, title='下单功能', expected_result='下单成功',
+            project=self.project, title='下单功能',
             author=self.user)
 
     def test_creates_scenario_with_requests_and_link(self):
@@ -393,8 +391,7 @@ class CreateApiScenarioCaseToolTest(BaseFixture):
         """关联校验失败必须整体回滚，不能留下孤立场景用例与编排。"""
         other_project = Project.objects.create(name='另一个统一项目', owner=self.user)
         other_case = FunctionalTestCase.objects.create(
-            project=other_project, title='别人项目的用例',
-            expected_result='ok', author=self.user)
+            project=other_project, title='别人项目的用例', author=self.user)
         preview = mcp_tools.preview_create_api_scenario_case(
             self.ctx, project_id=self.api_project.id,
             data={'name': '不应存在的场景',
@@ -417,7 +414,7 @@ class CreateTestcaseToolTest(BaseFixture):
             project=self.project, name='短信登录', parent=self.login_module)
 
     def _create(self, **data):
-        payload = {'title': '登录成功', 'expected_result': '跳转首页'}
+        payload = {'title': '登录成功'}
         payload.update(data)
         preview = mcp_tools.preview_create_testcase(
             self.ctx, project_id=self.project.id, data=payload)
@@ -439,6 +436,32 @@ class CreateTestcaseToolTest(BaseFixture):
     def test_module_id_zero_means_unassigned(self):
         result = self._create(module_id=0)
         self.assertIsNone(result['module_id'])
+
+    def test_ignores_step_ids_on_create(self):
+        """新建用例时 steps 带 id 没有意义：忽略并回显，而不是报错。"""
+        result = self._create(steps=[
+            {'id': 999999, 'action': '第一步', 'expected': '预期一'},
+            {'id': 888888, 'action': '第二步', 'expected': '预期二'},
+        ])
+        case = FunctionalTestCase.objects.get(id=result['testcase_id'])
+        self.assertEqual(result['steps_created'], 2)
+        self.assertEqual(result['steps_ignored_ids'], [999999, 888888])
+        self.assertEqual(
+            list(case.step_details.values_list('action', flat=True)),
+            ['第一步', '第二步'])
+        # 落库的是数据库分配的主键，不是请求里带的 id
+        self.assertFalse(case.step_details.filter(id__in=[999999, 888888]).exists())
+
+    def test_create_ignores_duplicate_step_ids(self):
+        """新建时 id 会被丢弃，重复 id 不应阻断创建。"""
+        result = self._create(steps=[
+            {'id': 777, 'action': '第一步', 'expected': ''},
+            {'id': 777, 'action': '第二步', 'expected': ''},
+        ])
+        case = FunctionalTestCase.objects.get(id=result['testcase_id'])
+        self.assertEqual(result['steps_created'], 2)
+        self.assertEqual(result['steps_ignored_ids'], [777])
+        self.assertEqual(case.step_details.count(), 2)
 
     def test_rejects_module_from_other_project(self):
         """模块必须属于同一项目，跨项目模块整体拒绝且不落库。"""
@@ -470,8 +493,7 @@ class UpdateTestcaseToolTest(BaseFixture):
         from apps.testcases.models import TestCaseModule
         self.module = TestCaseModule.objects.create(project=self.project, name='登录模块')
         self.case = FunctionalTestCase.objects.create(
-            project=self.project, title='登录', expected_result='ok',
-            steps='1. 打开登录页', author=self.user)
+            project=self.project, title='登录', author=self.user)
 
     def test_updates_fields_with_project_priority(self):
         preview = mcp_tools.preview_update_testcase(
@@ -487,17 +509,88 @@ class UpdateTestcaseToolTest(BaseFixture):
         self.assertEqual(self.case.tags, ['回归', '登录'])
         self.assertEqual(self.case.module_id, self.module.id)
         self.assertEqual(self.case.notes, 'AI 生成')
-        self.assertIn('输入账号', self.case.steps)
+        self.assertIn('输入账号', [step.action for step in self.case.step_details.all()])
         self.assertIn('priority', result['updated_fields'])
+
+    def test_read_then_update_keeps_step_identity(self):
+        """get_testcase 返回的步骤 id 回传后走增量更新，主键不变。"""
+        from apps.testcases.models import TestCaseStep
+        step = TestCaseStep.objects.create(
+            testcase=self.case, sort_order=0, action='原步骤', expected='原预期')
+
+        detail = mcp_tools.get_testcase(self.ctx, testcase_id=self.case.id)
+        returned = next(item for item in detail['steps'] if item['id'] == step.id)
+
+        preview = mcp_tools.preview_update_testcase(
+            self.ctx, testcase_id=self.case.id,
+            data={'steps': [{'id': returned['id'], 'sort_order': 0,
+                             'action': '改后', 'expected': '改后预期'}]})
+        result = mcp_tools.confirm_update_testcase(self.ctx, preview['confirm_token'])
+
+        self.assertEqual(result['steps_updated'], 1)
+        step.refresh_from_db()
+        self.assertEqual((step.action, step.expected), ('改后', '改后预期'))
 
     def test_step_details_replaced(self):
         preview = mcp_tools.preview_update_testcase(
             self.ctx, testcase_id=self.case.id,
-            data={'step_details': [{'action': '点击登录', 'expected': '跳转首页'}]})
+            data={'steps': [{'action': '点击登录', 'expected': '跳转首页'}]})
         result = mcp_tools.confirm_update_testcase(self.ctx, preview['confirm_token'])
         self.assertEqual(result['steps_replaced'], 1)
         self.assertEqual(self.case.step_details.count(), 1)
         self.assertEqual(self.case.step_details.first().action, '点击登录')
+
+    def test_update_step_by_id_keeps_identity(self):
+        """带 id 的步骤原地更新，主键不变。"""
+        from apps.testcases.models import TestCaseStep
+        TestCaseStep.objects.create(
+            testcase=self.case, sort_order=0, action='旧步骤', expected='旧预期')
+        step_id = self.case.step_details.first().id
+
+        preview = mcp_tools.preview_update_testcase(
+            self.ctx, testcase_id=self.case.id,
+            data={'steps': [{'id': step_id, 'sort_order': 0,
+                             'action': '新步骤', 'expected': '新预期'}]})
+        result = mcp_tools.confirm_update_testcase(self.ctx, preview['confirm_token'])
+
+        self.assertEqual(result['steps_updated'], 1)
+        self.assertEqual(result['steps_replaced'], 1)
+        self.assertEqual(self.case.step_details.count(), 1)
+        step = self.case.step_details.first()
+        self.assertEqual(step.id, step_id)
+        self.assertEqual((step.action, step.expected), ('新步骤', '新预期'))
+
+    def test_foreign_step_id_rejected(self):
+        """不能借更新接口改写别的用例的步骤。"""
+        from apps.testcases.models import TestCaseStep
+        other = FunctionalTestCase.objects.create(
+            project=self.project, title='别的用例', author=self.user)
+        foreign = TestCaseStep.objects.create(
+            testcase=other, sort_order=0, action='别人的步骤', expected='')
+
+        preview = mcp_tools.preview_update_testcase(
+            self.ctx, testcase_id=self.case.id,
+            data={'steps': [{'id': foreign.id, 'action': '篡改', 'expected': ''}]})
+        with self.assertRaises(ToolError):
+            mcp_tools.confirm_update_testcase(self.ctx, preview['confirm_token'])
+        foreign.refresh_from_db()
+        self.assertEqual(foreign.action, '别人的步骤')
+
+    def test_duplicate_step_id_rejected(self):
+        """同一条步骤提交两次必须报错，不能静默覆盖。"""
+        from apps.testcases.models import TestCaseStep
+        step = TestCaseStep.objects.create(
+            testcase=self.case, sort_order=0, action='原步骤', expected='')
+
+        preview = mcp_tools.preview_update_testcase(
+            self.ctx, testcase_id=self.case.id,
+            data={'steps': [{'id': step.id, 'action': '覆盖一', 'expected': ''},
+                            {'id': step.id, 'action': '覆盖二', 'expected': ''}]})
+        with self.assertRaises(ToolError) as ctx:
+            mcp_tools.confirm_update_testcase(self.ctx, preview['confirm_token'])
+        self.assertIn('重复', str(ctx.exception))
+        step.refresh_from_db()
+        self.assertEqual(step.action, '原步骤')
 
     def test_p0_alias_rejected(self):
         """优先级只认项目枚举，P0-P3 写法必须报错。"""
@@ -513,16 +606,27 @@ class UpdateTestcaseToolTest(BaseFixture):
         """结构化步骤非法时，同批字段更新必须回滚。"""
         preview = mcp_tools.preview_update_testcase(
             self.ctx, testcase_id=self.case.id,
-            data={'title': '新标题', 'step_details': ['不是对象']})
+            data={'title': '新标题', 'steps': ['不是对象']})
         with self.assertRaises(ToolError):
             mcp_tools.confirm_update_testcase(self.ctx, preview['confirm_token'])
         self.case.refresh_from_db()
         self.assertEqual(self.case.title, '登录')
 
+    def test_over_length_step_rejected(self):
+        """MCP 与 REST 共用 2000 字符上限，不能绕过序列化器写超长步骤。"""
+        from apps.testcases.steps import STEP_TEXT_MAX_LENGTH
+        preview = mcp_tools.preview_update_testcase(
+            self.ctx, testcase_id=self.case.id,
+            data={'steps': [{'action': 'a' * (STEP_TEXT_MAX_LENGTH + 1), 'expected': ''}]})
+        with self.assertRaises(ToolError) as ctx:
+            mcp_tools.confirm_update_testcase(self.ctx, preview['confirm_token'])
+        self.assertIn(str(STEP_TEXT_MAX_LENGTH), str(ctx.exception))
+        self.assertEqual(self.case.step_details.count(), 0)
+
     def test_permission_denied(self):
         foreign_project = Project.objects.create(name='别人项目', owner=self.other)
         foreign_case = FunctionalTestCase.objects.create(
-            project=foreign_project, title='别人用例', expected_result='ok',
+            project=foreign_project, title='别人用例',
             author=self.other)
         preview = mcp_tools.preview_update_testcase(
             self.ctx, testcase_id=foreign_case.id, data={'title': '篡改'})
@@ -1051,13 +1155,30 @@ class PriorityResolutionTest(TestCase):
             mcp_actions._resolve_priority(
                 None, FunctionalTestCase.PRIORITY_CHOICES, 'medium'), 'medium')
 
-    def test_coerce_steps_text(self):
-        text = mcp_actions._coerce_steps_text([
+    def test_coerce_steps(self):
+        steps = mcp_actions._coerce_steps([
             {'action': '打开页面', 'expected': '页面加载'},
             {'action': '点击登录'},
         ])
-        self.assertEqual(text, '1. 打开页面 => 页面加载\n2. 点击登录')
-        self.assertEqual(mcp_actions._coerce_steps_text('原始文本'), '原始文本')
+        self.assertEqual(steps, [
+            {'action': '打开页面', 'expected': '页面加载'},
+            {'action': '点击登录', 'expected': ''},
+        ])
+        self.assertEqual(
+            mcp_actions._coerce_steps('#1.打开页面\n#2.点击登录'),
+            [{'action': '1.打开页面', 'expected': ''}, {'action': '2.点击登录', 'expected': ''}],
+        )
+
+    def test_coerce_steps_keeps_identity(self):
+        """id / sort_order 必须透传，供按主键增量保存使用。"""
+        steps = mcp_actions._coerce_steps([
+            {'id': 12, 'sort_order': 3, 'action': '打开页面', 'expected': '页面加载'},
+            {'action': '点击登录'},
+        ])
+        self.assertEqual(steps[0], {'id': 12, 'sort_order': 3,
+                                    'action': '打开页面', 'expected': '页面加载'})
+        self.assertNotIn('id', steps[1])
+        self.assertNotIn('sort_order', steps[1])
 
 
 class PriorityAliasEndToEndTest(BaseFixture):
@@ -1066,7 +1187,7 @@ class PriorityAliasEndToEndTest(BaseFixture):
     def test_create_functional_case_with_chinese_priority(self):
         preview = mcp_tools.preview_create_testcase(
             self.ctx, project_id=self.project.id,
-            data={'title': '中文优先级用例', 'expected_result': 'ok', 'priority': '紧急'})
+            data={'title': '中文优先级用例', 'priority': '紧急'})
         result = mcp_tools.confirm_create_testcase(self.ctx, preview['confirm_token'])
         self.assertEqual(result['priority'], 'critical')
         self.assertEqual(FunctionalTestCase.objects.get(id=result['testcase_id']).priority,
@@ -1261,14 +1382,14 @@ class TestCaseQueryToolTest(BaseFixture):
         self.child_module = TestCaseModule.objects.create(
             project=self.project, name='子模块', parent=self.login_module)
         self.linked_case = FunctionalTestCase.objects.create(
-            project=self.project, title='已关联 UI 的用例', expected_result='ok',
+            project=self.project, title='已关联 UI 的用例',
             author=self.user, module=self.login_module)
         self.unlinked_case = FunctionalTestCase.objects.create(
-            project=self.project, title='未关联的用例', expected_result='ok',
+            project=self.project, title='未关联的用例',
             author=self.user, module=self.child_module)
         self.loose_case = FunctionalTestCase.objects.create(
-            project=self.project, title='无模块用例', expected_result='ok', author=self.user)
-        TestCaseStep.objects.create(testcase=self.linked_case, step_number=1,
+            project=self.project, title='无模块用例', author=self.user)
+        TestCaseStep.objects.create(testcase=self.linked_case, sort_order=0,
                                     action='输入账号', expected='进入首页')
 
         self.ui_case = UiCase.objects.create(
@@ -1340,14 +1461,22 @@ class TestCaseQueryToolTest(BaseFixture):
     def test_get_testcase_returns_steps_and_links(self):
         result = mcp_tools.get_testcase(self.ctx, testcase_id=self.linked_case.id)
         self.assertEqual(result['module_path'], '登录')
-        self.assertEqual(result['step_details'][0]['action'], '输入账号')
+        self.assertEqual(result['steps'][0]['action'], '输入账号')
         self.assertTrue(result['has_ui_automation'])
         self.assertFalse(result['has_api_automation'])
+
+    def test_get_testcase_returns_step_ids(self):
+        """步骤 id 必须回传，否则调用方无法按主键增量更新。"""
+        result = mcp_tools.get_testcase(self.ctx, testcase_id=self.linked_case.id)
+        step = result['steps'][0]
+        self.assertIn('id', step)
+        self.assertTrue(
+            self.linked_case.step_details.filter(id=step['id']).exists())
 
     def test_get_testcase_permission_denied(self):
         foreign_project = Project.objects.create(name='别人项目', owner=self.other)
         foreign_case = FunctionalTestCase.objects.create(
-            project=foreign_project, title='别人用例', expected_result='ok',
+            project=foreign_project, title='别人用例',
             author=self.other)
         with self.assertRaises(ToolError):
             mcp_tools.get_testcase(self.ctx, testcase_id=foreign_case.id)
@@ -1560,7 +1689,7 @@ class AutomationLinkStaleToolTest(BaseFixture):
     def setUp(self):
         super().setUp()
         self.case = FunctionalTestCase.objects.create(
-            project=self.project, title='登录功能', expected_result='ok', author=self.user)
+            project=self.project, title='登录功能', author=self.user)
         self.ui_case = UiCase.objects.create(
             project=self.ui_project, name='登录-正常登录', created_by=self.user)
         TestCaseAutomationLink.objects.create(
@@ -1917,7 +2046,7 @@ class FolderPathCreationToolTest(BaseFixture):
 
     def test_update_testcase_by_module_path(self):
         case = FunctionalTestCase.objects.create(
-            project=self.project, title='待归档', expected_result='ok', author=self.user)
+            project=self.project, title='待归档', author=self.user)
         preview = mcp_tools.preview_update_testcase(
             self.ctx, testcase_id=case.id, data={'module_path': '登录/短信登录'})
         mcp_tools.confirm_update_testcase(self.ctx, preview['confirm_token'])

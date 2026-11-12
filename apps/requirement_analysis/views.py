@@ -23,6 +23,23 @@ class PassThroughRenderer(BaseRenderer):
         return data
 
 
+def create_case_with_steps(project, author, fields, steps_text, expected_text=''):
+    """在同一事务内创建测试用例与其结构化步骤。
+
+    AI 采纳的步骤同样走 apps.testcases.steps 的统一校验（操作描述必填、2000 字符上限），
+    校验不通过时抛 ValueError 且不留下半条用例。
+    """
+    from django.db import transaction
+    from apps.testcases.models import TestCase
+    from apps.testcases.steps import coerce_steps_payload, replace_steps
+
+    steps = coerce_steps_payload(steps_text, expected_text)
+    with transaction.atomic():
+        case = TestCase.objects.create(project=project, author=author, **fields)
+        replace_steps(case, steps)
+    return case
+
+
 from rest_framework.parsers import MultiPartParser, FormParser
 from django.http import JsonResponse, StreamingHttpResponse
 from django.views.decorators.csrf import csrf_exempt
@@ -2404,7 +2421,6 @@ class TestCaseGenerationTaskViewSet(viewsets.ModelViewSet):
 
             if test_cases:
                 try:
-                    from apps.testcases.models import TestCase
                     from apps.projects.models import Project
                     from django.db import models
 
@@ -2416,18 +2432,17 @@ class TestCaseGenerationTaskViewSet(viewsets.ModelViewSet):
 
                     adopted_count = 0
                     for test_case in test_cases:
-                        TestCase.objects.create(
-                            project=project,
-                            author=task.created_by,
-                            title=test_case.get('scenario', '测试用例'),
-                            description=test_case.get('scenario', ''),
-                            preconditions=test_case.get('precondition', ''),
-                            steps=test_case.get('steps', ''),
-                            expected_result=test_case.get('expected', ''),
-                            priority=self._map_priority(test_case.get('priority', '中')),
-                            test_type='functional',
-                            status='draft'
-                        )
+                        create_case_with_steps(
+                            project, task.created_by,
+                            {
+                                'title': test_case.get('scenario', '测试用例'),
+                                'description': test_case.get('scenario', ''),
+                                'preconditions': test_case.get('precondition', ''),
+                                'priority': self._map_priority(test_case.get('priority', '中')),
+                                'test_type': 'functional',
+                                'status': 'draft',
+                            },
+                            test_case.get('steps', ''), test_case.get('expected', ''))
                         adopted_count += 1
 
                     logger.info(f"成功导入 {adopted_count} 条测试用例到项目 {project.name}")
@@ -2509,7 +2524,6 @@ class TestCaseGenerationTaskViewSet(viewsets.ModelViewSet):
 
             # 导入到testcases应用（使用与单条采纳相同的逻辑）
             try:
-                from apps.testcases.models import TestCase
                 from apps.projects.models import Project
                 from django.db import models
 
@@ -2521,18 +2535,17 @@ class TestCaseGenerationTaskViewSet(viewsets.ModelViewSet):
 
                 adopted_count = 0
                 for test_case in test_cases:
-                    TestCase.objects.create(
-                        project=project,  # 使用统一的项目选择逻辑
-                        author=task.created_by,
-                        title=test_case.get('scenario', '测试用例'),
-                        description=test_case.get('scenario', ''),  # 使用scenario作为描述
-                        preconditions=test_case.get('precondition', ''),
-                        steps=test_case.get('steps', ''),
-                        expected_result=test_case.get('expected', ''),
-                        priority=self._map_priority(test_case.get('priority', '中')),
-                        test_type='functional',
-                        status='draft'
-                    )
+                    create_case_with_steps(
+                        project, task.created_by,
+                        {
+                            'title': test_case.get('scenario', '测试用例'),
+                            'description': test_case.get('scenario', ''),
+                            'preconditions': test_case.get('precondition', ''),
+                            'priority': self._map_priority(test_case.get('priority', '中')),
+                            'test_type': 'functional',
+                            'status': 'draft',
+                        },
+                        test_case.get('steps', ''), test_case.get('expected', ''))
                     adopted_count += 1
 
                 return Response({
@@ -2541,6 +2554,12 @@ class TestCaseGenerationTaskViewSet(viewsets.ModelViewSet):
                     'project_name': project.name
                 }, status=status.HTTP_200_OK)
 
+            except ValueError as step_error:
+                logger.warning(f"采纳测试用例的步骤校验未通过: {step_error}")
+                return Response(
+                    {'error': f'步骤校验未通过: {step_error}'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
             except Exception as import_error:
                 logger.error(f"导入测试用例失败: {import_error}")
                 return Response(
@@ -2570,7 +2589,6 @@ class TestCaseGenerationTaskViewSet(viewsets.ModelViewSet):
 
             # 导入到testcases应用
             try:
-                from apps.testcases.models import TestCase
                 from apps.projects.models import Project
                 from django.db import models
 
@@ -2582,18 +2600,17 @@ class TestCaseGenerationTaskViewSet(viewsets.ModelViewSet):
 
                 adopted_count = 0
                 for case_data in test_cases_data:
-                    TestCase.objects.create(
-                        project=project,  # 使用统一的项目选择逻辑
-                        author=task.created_by,
-                        title=case_data.get('title', '测试用例'),
-                        description=case_data.get('description', ''),
-                        preconditions=case_data.get('preconditions', ''),
-                        steps=case_data.get('steps', ''),
-                        expected_result=case_data.get('expected_result', ''),
-                        priority=case_data.get('priority', 'medium'),
-                        test_type=case_data.get('test_type', 'functional'),
-                        status=case_data.get('status', 'draft')
-                    )
+                    create_case_with_steps(
+                        project, task.created_by,
+                        {
+                            'title': case_data.get('title', '测试用例'),
+                            'description': case_data.get('description', ''),
+                            'preconditions': case_data.get('preconditions', ''),
+                            'priority': case_data.get('priority', 'medium'),
+                            'test_type': case_data.get('test_type', 'functional'),
+                            'status': case_data.get('status', 'draft'),
+                        },
+                        case_data.get('steps', ''), case_data.get('expected_result', ''))
                     adopted_count += 1
 
                 return Response({
@@ -2602,6 +2619,12 @@ class TestCaseGenerationTaskViewSet(viewsets.ModelViewSet):
                     'project_name': project.name
                 }, status=status.HTTP_200_OK)
 
+            except ValueError as step_error:
+                logger.warning(f"采纳选中测试用例的步骤校验未通过: {step_error}")
+                return Response(
+                    {'error': f'步骤校验未通过: {step_error}'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
             except Exception as import_error:
                 logger.error(f"导入选中测试用例失败: {import_error}")
                 return Response(

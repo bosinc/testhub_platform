@@ -113,23 +113,32 @@ def _resolve_priority(value, choices, default, field_label='data.priority'):
         f'（或对应中文: {"/".join(allowed.values())}）')
 
 
-def _coerce_steps_text(value):
-    """把步骤归一化为文本：列表按「序号. 操作 => 预期」拼接，字符串原样返回。"""
+def _coerce_steps(value):
+    """把步骤入参归一化为 [{id?, sort_order?, action, expected}]。
+    字符串按 `#` 拆分；数组元素可带 id / sort_order，用于按主键增量更新。
+    """
+    from apps.testcases.steps import parse_step_pairs
+
     if value is None:
-        return ''
+        return []
     if isinstance(value, str):
-        return value.strip()
-    if isinstance(value, (list, tuple)):
-        lines = []
-        for index, item in enumerate(value, 1):
-            if isinstance(item, dict):
-                action = str(item.get('action') or item.get('step') or '').strip()
-                expected = str(item.get('expected') or item.get('expected_result') or '').strip()
-                lines.append(f'{index}. {action}' + (f' => {expected}' if expected else ''))
-            else:
-                lines.append(f'{index}. {str(item).strip()}')
-        return '\n'.join(line for line in lines if line.strip())
-    return str(value).strip()
+        return parse_step_pairs(value, '')
+    if not isinstance(value, (list, tuple)):
+        raise McpActionError('data.steps 必须是数组或文本')
+    steps = []
+    for index, item in enumerate(value, 1):
+        if not isinstance(item, dict):
+            raise McpActionError(f'步骤 {index} 必须是对象')
+        step = {
+            'action': str(item.get('action') or item.get('step') or '').strip(),
+            'expected': str(item.get('expected') or '').strip(),
+        }
+        if item.get('id'):
+            step['id'] = item['id']
+        if item.get('sort_order') is not None:
+            step['sort_order'] = item['sort_order']
+        steps.append(step)
+    return steps
 
 
 def _resolve_locator_strategy(value):
@@ -731,13 +740,12 @@ def run_perf_scene_action(arguments: dict, user) -> dict:
 def _apply_testcase_fields(testcase, data: dict, project_id: int) -> dict:
     """把功能用例字段写入实例（创建/更新共用），返回变更字段名列表。
 
-    steps 支持文本或 [{action, expected}] 数组（自动拼接为文本）；
-    需要结构化步骤时使用 step_details。
+    步骤通过 `steps` 传入 [{action, expected}] 数组，由调用方整体替换。
     """
     from apps.testcases.models import TestCase, TestCaseModule
 
     changed = []
-    text_fields = ('title', 'description', 'notes', 'preconditions', 'expected_result')
+    text_fields = ('title', 'description', 'notes', 'preconditions')
     for field in text_fields:
         if field not in data:
             continue
@@ -749,10 +757,6 @@ def _apply_testcase_fields(testcase, data: dict, project_id: int) -> dict:
             value = value[:500]
         setattr(testcase, field, '' if value is None else str(value))
         changed.append(field)
-
-    if 'steps' in data:
-        testcase.steps = _coerce_steps_text(data.get('steps'))
-        changed.append('steps')
 
     if 'priority' in data:
         testcase.priority = _resolve_priority(
@@ -814,29 +818,36 @@ def _apply_testcase_fields(testcase, data: dict, project_id: int) -> dict:
     return changed
 
 
-def _replace_testcase_step_details(testcase, step_details):
-    """整体替换功能用例的结构化步骤（step_details），先校验后原子替换。"""
-    from django.db import transaction
-    from apps.testcases.models import TestCaseStep
+def _sync_testcase_step_details(testcase, steps, ignore_unknown_ids=False):
+    """按主键增量同步功能用例步骤（与预期结果一一对应）。
 
-    if not isinstance(step_details, (list, tuple)):
-        raise McpActionError('data.step_details 必须是数组')
-    prepared = []
-    for index, item in enumerate(step_details, 1):
-        if not isinstance(item, dict):
-            raise McpActionError(f'步骤 {index} 必须是对象')
-        prepared.append({
-            'step_number': index,
-            'action': str(item.get('action', '') or ''),
-            'expected': str(item.get('expected', '') or ''),
-        })
+    带 id 的原地更新、不带 id 的新建、未提交的删除；id 必须属于当前用例。
+    ``ignore_unknown_ids=True`` 用于新建用例：此时还没有任何步骤记录，
+    id 没有意义，直接忽略（并把被忽略的 id 回显给调用方），而不是报错。
+    """
+    from apps.testcases.steps import sync_steps, validate_step_payload
 
-    with transaction.atomic():
-        testcase.step_details.all().delete()
-        if prepared:
-            TestCaseStep.objects.bulk_create(
-                [TestCaseStep(testcase=testcase, **step) for step in prepared])
-    return len(prepared)
+    if not isinstance(steps, (list, tuple)):
+        raise McpActionError('data.steps 必须是数组')
+    prepared = _coerce_steps(steps)
+    valid_ids = set(testcase.step_details.values_list('id', flat=True))
+    ignored_ids = []
+    for item in prepared:
+        step_id = item.get('id')
+        if not step_id or step_id in valid_ids:
+            continue
+        if not ignore_unknown_ids:
+            raise McpActionError(f'步骤 {step_id} 不属于当前用例')
+        item.pop('id')
+        if step_id not in ignored_ids:
+            ignored_ids.append(step_id)
+    # 与 REST / Excel 导入共用同一套校验：操作描述必填、长度上限、id 唯一且归属当前用例。
+    errors = validate_step_payload(prepared, allowed_ids=valid_ids)
+    if errors:
+        raise McpActionError('；'.join(errors))
+    result = sync_steps(testcase, prepared)
+    result['ignored_ids'] = ignored_ids
+    return result
 
 
 def create_testcase_action(arguments: dict, user) -> dict:
@@ -863,9 +874,11 @@ def create_testcase_action(arguments: dict, user) -> dict:
         if version_ids:
             testcase.versions.set(version_ids)
 
-        steps_created = 0
-        if data.get('step_details'):
-            steps_created = _replace_testcase_step_details(testcase, data.get('step_details'))
+        steps_result = {'created': 0, 'updated': 0, 'deleted': 0, 'ignored_ids': []}
+        if 'steps' in data:
+            # 新建用例还没有步骤记录，传上来的 id 无意义，忽略并回显。
+            steps_result = _sync_testcase_step_details(
+                testcase, data.get('steps') or [], ignore_unknown_ids=True)
 
     return {
         'testcase_id': testcase.id,
@@ -875,7 +888,8 @@ def create_testcase_action(arguments: dict, user) -> dict:
         'test_type': testcase.test_type,
         'status': testcase.status,
         'module_id': testcase.module_id,
-        'steps_created': steps_created,
+        'steps_created': steps_result['created'],
+        'steps_ignored_ids': steps_result.get('ignored_ids') or [],
     }
 
 
@@ -1087,17 +1101,19 @@ def update_testcase_action(arguments: dict, user) -> dict:
             testcase.versions.set(data.get('version_ids') or [])
             changed.append('versions')
 
-        steps_replaced = 0
-        if 'step_details' in data:
-            steps_replaced = _replace_testcase_step_details(
-                testcase, data.get('step_details') or [])
+        steps_result = {'created': 0, 'updated': 0, 'deleted': 0}
+        if 'steps' in data:
+            steps_result = _sync_testcase_step_details(
+                testcase, data.get('steps') or [])
 
     return {
         'testcase_id': testcase.id,
         'title': testcase.title,
         'project_id': testcase.project_id,
         'updated_fields': changed,
-        'steps_replaced': steps_replaced,
+        'steps_replaced': steps_result['created'] + steps_result['updated'],
+        'steps_updated': steps_result['updated'],
+        'steps_deleted': steps_result['deleted'],
     }
 
 

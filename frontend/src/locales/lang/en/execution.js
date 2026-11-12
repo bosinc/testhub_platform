@@ -15,6 +15,7 @@ export default {
   closePlan: 'Close',
   activatePlan: 'Activate',
   viewHistory: 'History',
+  editCase: 'Edit Case',
   noRuns: 'No test runs yet',
 
   // Table columns
@@ -43,6 +44,7 @@ export default {
   steps: 'Steps',
   expectedResult: 'Expected Result',
   testcaseDescription: 'Case Description',
+  testcaseNotes: 'Case Notes',
   saveAndNext: 'Save & Next',
   priorityLow: 'Low',
   priorityMedium: 'Medium',

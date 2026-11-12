@@ -20,9 +20,12 @@ from apps.projects.models import Project
 from apps.versions.models import Version
 
 from .models import TestCase, TestCaseModule, TestCaseImportRecord
+from .steps import (normalize_steps, parse_step_pairs, replace_steps,
+                    validate_step_payload)
 
 
 TEMPLATE_VERSION = 'v1'
+# 生成模板时给第一个工作表的名称；导入时不再校验名称，只读取第一个工作表。
 TEMPLATE_SHEET_NAME = '用例导入模板'
 INSTRUCTION_SHEET_NAME = '填写说明'
 
@@ -39,24 +42,30 @@ class ImportSummary:
 class TestCaseImportTemplateService:
     HEADERS = [
         *[f'{level}级模块' for level in ('一', '二', '三')],
-        '用例名称', '优先级', '测试类型', '前置条件', '步骤描述', '预期结果', '备注', '维护人',
+        '用例标题', '优先级', '测试类型', '前置条件', '操作步骤', '预期结果', '备注', '维护人',
     ]
 
     SAMPLE_ROW = [
         *([''] * 3), '用户登录成功校验', '高', '功能测试', '用户已注册且账号状态正常',
-        '1. 打开登录页\n2. 输入正确用户名和密码\n3. 点击登录按钮', '页面跳转到首页，并显示登录成功信息', '', '',
+        '#打开登录页\n#输入正确用户名和密码\n#点击登录按钮',
+        '#登录页正常展示\n#用户名和密码输入成功\n#页面跳转到首页，并显示登录成功信息', '', '',
     ]
 
     INSTRUCTIONS = [
         ['模板版本', TEMPLATE_VERSION],
         ['说明', '请勿修改现有表头名称，按模板字段填写并上传；默认提供三级模块列。如需更深层级，可按“4级模块”至“8级模块”自行新增列，并连续填写父级路径'],
+        ['工作表', '导入时只读取 Excel 的第一个工作表，工作表名称不限；请把用例数据放在第一个工作表，其他工作表会被忽略'],
         ['默认处理', '模板中未提供的字段将使用系统默认值：描述为空、状态=draft(草稿)、标签=[]、指派人为空'],
-        ['用例名称', '必填，测试用例名称，建议唯一且明确'],
+        ['用例标题', '必填，测试用例标题，建议唯一且明确'],
         ['前置条件', '可选'],
-        ['步骤描述', '必填，支持多行文本'],
-        ['预期结果', '必填，支持多行文本'],
+        ['操作步骤', '必填。一行即一条用例；以 # 开头的一行表示一条步骤，一个 # 对应一条步骤，例如：#打开登录页。'
+                     '不以 # 开头的行是上一条步骤的续行（用于多行描述），行中间的 #（如 URL 里的 #/login）不会被当作分隔符；'
+                     '正文某一行本身以 # 开头时写成 \\#，以 \\ 开头时写成 \\\\；每条步骤不超过 2000 字符。'
+                     '单条步骤的操作描述与预期结果可以只填一项'],
+        ['预期结果', '同样以 # 开头表示一条预期结果，与“操作步骤”按 # 出现的先后顺序一一对应；'
+                     '数量少于步骤时，多出的步骤预期结果按空值处理；数量多于步骤时，多出的预期结果直接忽略'],
         ['一级模块至三级模块', '可选，逐级填写模块名称；全部留空时用例归入无所属模块。需要更深层级时，可自行新增“4级模块”至“8级模块”列，不能跳级填写'],
-        ['创建时间、更新时间', '如需导入原始时间，可在用例导入模板中自行添加“创建时间”和“更新时间”列；未添加或留空时由系统按现有逻辑自动设置'],
+        ['创建时间、更新时间', '如需导入原始时间，可在导入表格中自行添加“创建时间”和“更新时间”列；未添加或留空时由系统按现有逻辑自动设置'],
         ['优先级', '可选，支持中文或英文：低/中/高/紧急 或 low/medium/high/critical；默认 medium(中)'],
         ['测试类型', '可选，支持中文或英文：功能测试/集成测试/API测试/UI测试/性能测试/安全测试 或 functional/integration/api/ui/performance/security；默认 functional(功能测试)'],
         ['中英文示例', '优先级示例：高 或 high；测试类型示例：功能测试 或 functional'],
@@ -128,15 +137,13 @@ class TestCaseExcelImportService:
         'security': 'security', '安全测试': 'security',
     }
 
+    # 键为去掉空白后的表头文本；标题列与步骤列只接受模板新表头，不兼容任何旧写法。
     HEADER_ALIASES = {
-        '用例名称': 'title',
-        '用例标题*': 'title',
-        '标题*': 'title',
+        '用例标题': 'title',
         '前置条件': 'preconditions',
-        '步骤描述': 'steps',
-        '操作步骤*': 'steps',
-        '预期结果': 'expected_result',
-        '预期结果*': 'expected_result',
+        '操作步骤': 'steps',
+        '预期结果': 'expected',
+        '预期结果*': 'expected',
         '备注': 'notes',
         '优先级': 'priority',
         '测试类型': 'test_type',
@@ -153,7 +160,7 @@ class TestCaseExcelImportService:
         'test_type',
         'preconditions',
         'steps',
-        'expected_result',
+        'expected',
         'notes',
         'maintainer',
     ]
@@ -161,10 +168,10 @@ class TestCaseExcelImportService:
     @classmethod
     def import_record(cls, record: TestCaseImportRecord) -> ImportSummary:
         workbook = load_workbook(record.import_file.path)
-        if TEMPLATE_SHEET_NAME not in workbook.sheetnames:
-            raise ValueError(f'Excel 中缺少工作表: {TEMPLATE_SHEET_NAME}')
-
-        worksheet = workbook[TEMPLATE_SHEET_NAME]
+        # 不限制工作表名称：始终读取第一个工作表，其余工作表（如填写说明）忽略。
+        if not workbook.worksheets:
+            raise ValueError('Excel 中没有工作表')
+        worksheet = workbook.worksheets[0]
         raw_headers = [cls._normalize_header(cell.value) for cell in next(worksheet.iter_rows(min_row=1, max_row=1))]
         header_entries = [
             (column_index, cls.HEADER_ALIASES.get(header))
@@ -226,7 +233,7 @@ class TestCaseExcelImportService:
                 version.name: version
                 for version in Version.objects.filter(projects=project).distinct()
             } if project else {}
-            error_messages.extend(cls._validate_row(row_data, version_map))
+            error_messages.extend(cls._validate_row(row_data, version_map, row_number=index))
             imported_timestamps = {}
             for field, label in (('created_at', '创建时间'), ('updated_at', '更新时间')):
                 value = row_data.get(field)
@@ -261,8 +268,6 @@ class TestCaseExcelImportService:
                     description='',
                     notes=row_data.get('notes', ''),
                     preconditions=row_data.get('preconditions', ''),
-                    steps=row_data['steps'],
-                    expected_result=row_data['expected_result'],
                     priority=cls.PRIORITY_MAP.get(row_data.get('priority', '').lower(), 'medium'),
                     status='draft',
                     test_type=cls.TEST_TYPE_MAP.get(row_data.get('test_type', '').lower(), 'functional'),
@@ -270,6 +275,8 @@ class TestCaseExcelImportService:
                     author=maintainer or record.created_by,
                     assignee=None,
                 )
+                replace_steps(testcase, parse_step_pairs(
+                    row_data.get('steps'), row_data.get('expected')))
                 if imported_timestamps:
                     # auto_now overrides updated_at during save, so preserve imported values with a direct update.
                     TestCase.objects.filter(pk=testcase.pk).update(**imported_timestamps)
@@ -320,14 +327,20 @@ class TestCaseExcelImportService:
         return f'IMP_{timezone.now().strftime("%Y%m%d%H%M%S")}_{uuid.uuid4().hex[:6].upper()}'
 
     @classmethod
-    def _validate_row(cls, row_data: Dict[str, str], version_map: Dict[str, Version]) -> List[str]:
+    def _validate_row(cls, row_data: Dict[str, str], version_map: Dict[str, Version],
+                      row_number: Optional[int] = None) -> List[str]:
         errors = []
         if not row_data.get('title'):
             errors.append('标题不能为空')
-        if not row_data.get('steps'):
-            errors.append('操作步骤不能为空')
-        if not row_data.get('expected_result'):
-            errors.append('预期结果不能为空')
+        # 步骤校验与 REST / MCP 共用同一套规则（长度上限、id 唯一），
+        # 单条步骤的操作描述或预期结果可以为空，整行全空才算未填写。
+        step_pairs = normalize_steps(parse_step_pairs(
+            row_data.get('steps'), row_data.get('expected')))
+        if not step_pairs:
+            errors.append('至少填写一条步骤（操作描述与预期结果至少填一项）')
+        else:
+            prefix = f'第 {row_number} 行' if row_number else ''
+            errors.extend(f'{prefix}{message}' for message in validate_step_payload(step_pairs))
 
         priority = row_data.get('priority', '')
         if priority and priority.lower() not in cls.PRIORITY_MAP and priority not in cls.PRIORITY_MAP:

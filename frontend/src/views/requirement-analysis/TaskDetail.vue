@@ -271,6 +271,7 @@
 <script>
 import api from '@/utils/api'
 import { parseTestCases as parseGeneratedTestCases } from '@/utils/testCaseParser'
+import { parseStepPairs } from '@/utils/testcaseSteps'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { DocumentCopy } from '@element-plus/icons-vue'
 import * as XLSX from 'xlsx'
@@ -472,8 +473,7 @@ export default {
           title: testCase.scenario || `Test Case ${index + 1}`,
           description: testCase.scenario || '',
           preconditions: testCase.precondition || '',
-          steps: testCase.steps || '',
-          expected_result: testCase.expected || '',
+          steps: parseStepPairs(testCase.steps || '', testCase.expected || ''),
           priority: this.mapPriority(testCase.priority),
           test_type: 'functional',
           status: 'draft'
@@ -724,8 +724,7 @@ export default {
           title: testCase.scenario || `测试用例${index + 1}`,
           description: testCase.scenario || '',
           preconditions: testCase.precondition || '',
-          steps: testCase.steps || '',
-          expected_result: testCase.expected || '',
+          steps: parseStepPairs(testCase.steps || '', testCase.expected || ''),
           priority: this.mapPriority(testCase.priority),
           test_type: 'functional',
           status: 'draft',
