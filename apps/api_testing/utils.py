@@ -398,7 +398,16 @@ def execute_scenario_case(scenario_case, environment, executed_by, execution=Non
     （便于立即返回执行 ID 供轮询），此处直接复用并更新同一条记录。
     """
     from .models import TestExecution, RequestHistory
-    
+
+    # A scenario that owns a step tree is executed by the tree engine; the flat
+    # ScenarioCaseRequest path only remains for scenarios that were never
+    # migrated. Both return the same result shape.
+    if scenario_case.steps.exists():
+        from .scenario_executor import execute_scenario_tree
+
+        return execute_scenario_tree(
+            scenario_case, environment, executed_by, execution=execution)
+
     try:
         # 创建变量解析器
         resolver = VariableResolver()

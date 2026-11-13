@@ -13,7 +13,7 @@ from .models import ApiProject, Environment
 
 
 PATH_PARAMETER_RE = re.compile(r'(?<!\{)\{([A-Za-z_][\w.-]*)\}(?!\})')
-VARIABLE_RE = re.compile(r'\{\{(?:env|vars|steps|loop)\.[A-Za-z0-9_.-]+\}\}')
+VARIABLE_RE = re.compile(r'\{\{\s*(?:env|vars|steps|loop)\.[A-Za-z0-9_.\-\[\]]+\s*\}\}')
 SCHEME_RE = re.compile(r'^[A-Za-z][A-Za-z0-9+.-]*:')
 CONTROL_RE = re.compile(r'[\x00-\x20\x7f-\x9f]')
 

@@ -52,14 +52,10 @@ from .utils import (
     execute_scenario_case,
     execute_test_suite,
     extract_response_variables,
-    prepare_request_body,
-    send_api_request,
 )
 from .operation_logger import log_operation
 from apps.projects.services import ensure_workspace_project_for_module, soft_delete_module_project, sync_project_members_from_module, sync_workspace_project_from_module
-from .variable_resolver import VariableResolver
 from .importers import parse_collection
-from .path_params import resolve_path_parameters
 from .environment_resolver import EnvironmentResolver
 from .request_dto import REQUEST_FIELDS, normalize_request, request_from_model
 from .request_executor import build_transport, execute_request, response_body_preview
@@ -973,6 +969,11 @@ class ScenarioCaseViewSet(viewsets.ModelViewSet):
                 environment_id, user=request.user, project_id=scenario_case.project_id)
         else:
             environment = scenario_case.environment
+            # A step-tree scenario cannot be executed without a base URL, so the
+            # failure is reported before an execution record is created.
+            if environment is None and scenario_case.steps.exists():
+                return Response({'errors': {'environment_id': ['场景执行必须明确选择环境']}},
+                                status=status.HTTP_400_BAD_REQUEST)
         result = execute_scenario_case(scenario_case, environment, request.user)
 
         # 执行体内部已把异常落成 FAILED；没有执行记录说明记录都没建起来。
