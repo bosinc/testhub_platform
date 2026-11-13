@@ -3,6 +3,9 @@ from django.contrib.auth import get_user_model
 from django.utils import timezone
 from datetime import datetime
 
+from .environment_resolver import validate_base_url
+from .request_dto import REQUEST_FIELDS, normalize_request, request_from_model
+
 
 class NullableDateField(serializers.DateField):
     """允许空字符串的日期字段"""
@@ -98,8 +101,21 @@ class ApiCollectionTreeSerializer(serializers.ModelSerializer):
         fields = ['id', 'name', 'project', 'parent', 'order']
 
 
+class StrictStringField(serializers.CharField):
+    """Reject numbers and other non-string inputs instead of coercing them."""
+
+    def to_internal_value(self, data):
+        if not isinstance(data, str):
+            raise serializers.ValidationError('必须是字符串')
+        return super().to_internal_value(data)
+
+
 class ApiRequestSerializer(serializers.ModelSerializer):
     created_by = UserSerializer(read_only=True)
+    url = StrictStringField(allow_blank=True, trim_whitespace=False)
+    method = StrictStringField(required=False)
+    request_type = StrictStringField(required=False)
+    scripts = serializers.JSONField(required=False)
     collection = serializers.PrimaryKeyRelatedField(
         queryset=ApiCollection.objects.all(),
         required=False,
@@ -110,11 +126,50 @@ class ApiRequestSerializer(serializers.ModelSerializer):
         model = ApiRequest
         fields = [
             'id', 'name', 'description', 'request_type', 'method', 'url',
-            'headers', 'params', 'body', 'auth', 'pre_request_script',
+            'headers', 'params', 'path_params', 'body', 'auth', 'scripts', 'settings', 'pre_request_script',
             'post_request_script', 'assertions', 'extractors', 'collection', 'order', 'created_by',
             'created_at', 'updated_at'
         ]
         read_only_fields = ['created_at', 'updated_at']
+
+    def is_valid(self, *, raise_exception=False):
+        """Keep one error envelope for field and DTO validation failures."""
+        valid = super().is_valid(raise_exception=False)
+        if not valid and self._errors and 'errors' not in self._errors:
+            self._errors = {'errors': dict(self._errors)}
+        if not valid and raise_exception:
+            raise serializers.ValidationError(self._errors)
+        return valid
+
+    def validate(self, attrs):
+        overrides = {field: attrs[field] for field in REQUEST_FIELDS if field in attrs}
+        scripts = overrides.get('scripts', {})
+        for column, key in (('pre_request_script', 'pre_request'), ('post_request_script', 'post_request')):
+            if column in attrs:
+                if not isinstance(scripts, dict):
+                    raise serializers.ValidationError({'errors': {'scripts': ['前后置脚本必须是对象']}})
+                if key in scripts and scripts[key] != attrs[column]:
+                    raise serializers.ValidationError({'errors': {'scripts': ['脚本字段与DTO配置冲突']}})
+                scripts = {**scripts, key: attrs[column]}
+        if scripts or 'scripts' in overrides:
+            if self.instance and isinstance(scripts, dict):
+                scripts = {'pre_request': self.instance.pre_request_script,
+                           'post_request': self.instance.post_request_script, **scripts}
+            overrides['scripts'] = scripts
+        dto = request_from_model(self.instance, overrides) if self.instance else normalize_request(overrides)
+        for field in REQUEST_FIELDS:
+            if field != 'scripts' and (not self.instance or field in attrs):
+                attrs[field] = dto[field]
+        attrs.pop('scripts', None)
+        if not self.instance or 'scripts' in overrides:
+            attrs['pre_request_script'] = dto['scripts']['pre_request']
+            attrs['post_request_script'] = dto['scripts']['post_request']
+        return attrs
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        data.update(request_from_model(instance))
+        return data
 
     def create(self, validated_data):
         validated_data['created_by'] = self.context['request'].user
@@ -138,6 +193,7 @@ class ApiRequestTreeSerializer(serializers.ModelSerializer):
 
 class EnvironmentSerializer(serializers.ModelSerializer):
     created_by = UserSerializer(read_only=True)
+    base_url = serializers.CharField(required=False, allow_blank=True, trim_whitespace=False)
     project = serializers.PrimaryKeyRelatedField(
         queryset=ApiProject.objects.all(),
         required=False,
@@ -148,16 +204,20 @@ class EnvironmentSerializer(serializers.ModelSerializer):
     class Meta:
         model = Environment
         fields = [
-            'id', 'name', 'scope', 'project', 'project_name', 'variables', 'is_active',
+            'id', 'name', 'scope', 'project', 'project_name', 'base_url', 'variables', 'is_active',
             'created_by', 'created_at', 'updated_at'
         ]
         read_only_fields = ['created_at', 'updated_at', 'created_by', 'project_name']
 
     def validate(self, attrs):
-        if attrs.get('scope') == 'GLOBAL':
+        scope = attrs.get('scope', getattr(self.instance, 'scope', None))
+        project = attrs.get('project', getattr(self.instance, 'project', None))
+        if scope == 'GLOBAL':
             attrs['project'] = None
-        elif attrs.get('scope') == 'LOCAL' and not attrs.get('project'):
-            raise serializers.ValidationError({'project': '局部环境变量必须关联项目'})
+        elif scope == 'LOCAL' and not project:
+            raise serializers.ValidationError({'errors': {'project': ['局部环境变量必须关联项目']}})
+        validate_base_url(attrs.get('base_url', getattr(self.instance, 'base_url', '')),
+                          require_base_url=False)
         return attrs
 
     def to_representation(self, instance):

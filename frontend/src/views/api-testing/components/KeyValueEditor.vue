@@ -27,7 +27,8 @@
         <div class="column value-column">
           <el-input
             v-if="!showFile || row.type !== 'file'"
-            v-model="row.value"
+            :model-value="displayValue(row.value)"
+            @update:model-value="row.value = $event"
             :placeholder="placeholderValue"
             size="small"
             @input="updateValue"
@@ -55,7 +56,7 @@
               <el-icon><MagicStick /></el-icon>
             </el-button>
           </el-tooltip>
-          <span v-if="row.file" class="file-name">{{ row.file.name }}</span>
+          <span v-if="row.type === 'file'" class="file-name">{{ row.value?.filename || row.value }}</span>
         </div>
 
         <div class="column description-column">
@@ -69,14 +70,19 @@
         
         <div class="column action-column">
           <el-select
-            v-if="showFile"
+            v-if="showFile || showType"
             v-model="row.type"
             size="small"
             style="width: 70px; margin-right: 5px;"
             @change="updateValue"
           >
             <el-option label="Text" value="text" />
-            <el-option label="File" value="file" />
+            <el-option v-if="showFile" label="File" value="file" />
+            <template v-if="showType">
+              <el-option label="Number" value="number" />
+              <el-option label="Boolean" value="boolean" />
+              <el-option label="JSON" value="json" />
+            </template>
           </el-select>
           
           <el-button
@@ -141,12 +147,13 @@
 </template>
 
 <script setup>
-import { ref, watch, onMounted } from 'vue'
+import { ref, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Plus, Delete, MagicStick } from '@element-plus/icons-vue'
 import DataFactorySelector from '@/components/DataFactorySelector.vue'
 import { ElMessage } from 'element-plus'
 import { getVariableFunctions } from '@/api/data-factory'
+import { canonicalRows, cloneDraft, serializeFile } from '@/utils/requestDraft'
 
 const { t } = useI18n()
 
@@ -166,12 +173,18 @@ const props = defineProps({
   showFile: {
     type: Boolean,
     default: false
+  },
+  showType: {
+    type: Boolean,
+    default: false
   }
 })
 
 const emit = defineEmits(['update:modelValue'])
 
 const rows = ref([])
+let unmounted = false
+onBeforeUnmount(() => { unmounted = true })
 const showDataFactorySelector = ref(false)
 const showVariableHelper = ref(false)
 const currentRowIndex = ref(0)
@@ -344,68 +357,19 @@ const useLocalVariableCategories = () => {
   console.log('使用本地变量分类数据:', variableCategories.value)
 }
 
+const displayValue = value => typeof value === 'object' ? JSON.stringify(value) : String(value ?? '')
 const initializeRows = () => {
-  const data = props.modelValue || {}
-  console.log('KeyValueEditor initializeRows called with data:', data)
-  const newRows = []
-  
-  // 检查数据是否为数组格式
-  if (Array.isArray(data)) {
-    console.log('Data is array, processing...')
-    // 如果是数组，直接使用
-    newRows.push(...data.map(item => ({
-      enabled: item.enabled !== false,
-      key: item.key || '',
-      value: item.value || '',
-      description: item.description || '',
-      type: item.type || 'text',
-      file: item.file || null
-    })))
-  } else {
-    console.log('Data is object, converting...')
-    // 如果是对象，转换为行数据
-    Object.keys(data).forEach(key => {
-      if (key && data[key] !== undefined) {
-        newRows.push({
-          enabled: true,
-          key,
-          value: data[key],
-          description: '',
-          type: 'text',
-          file: null
-        })
-      }
-    })
-  }
-  
-  // 确保至少有一个空行
-  if (newRows.length === 0) {
-    newRows.push({
-      enabled: true,
-      key: '',
-      value: '',
-      description: '',
-      type: 'text',
-      file: null
-    })
-  }
-  
-  console.log('KeyValueEditor final rows:', newRows)
-  rows.value = newRows
+  const data = props.modelValue || []
+  // Other existing consumers can still provide a dictionary; the request DTO cannot.
+  const entries = Array.isArray(data) ? canonicalRows(data) : canonicalRows(Object.entries(data).map(([key, value]) => ({ key, value })))
+  rows.value = entries.length ? entries : [{ key: '', value: '', enabled: true, type: 'text', description: '' }]
+  showVariableHelper.value = false
+  showDataFactorySelector.value = false
 }
 
 const updateValue = () => {
-  // 发送完整的行数据数组，而不是简化的key-value对象
-  const result = rows.value.filter(row => row.key || row.value || row.description).map(row => ({
-    key: row.key || '',
-    value: row.value || '',
-    description: row.description || '',
-    enabled: row.enabled !== false,
-    type: row.type || 'text'
-  }))
-  
-  console.log('KeyValueEditor updateValue result (full format):', result)
-  emit('update:modelValue', result)
+  const result = canonicalRows(rows.value.filter(row => row.key || row.value !== '' || row.description || row.enabled === false))
+  emit('update:modelValue', cloneDraft(result))
   
   // 如果最后一行有内容，自动添加新行
   const lastRow = rows.value[rows.value.length - 1]
@@ -432,10 +396,14 @@ const removeRow = (index) => {
   }
 }
 
-const handleFileChange = (index, file) => {
-  rows.value[index].file = file
-  rows.value[index].value = file.name
-  updateValue()
+const handleFileChange = async (index, file) => {
+  const row = rows.value[index]
+  try {
+    const value = await serializeFile(file.raw)
+    if (unmounted || !rows.value.includes(row) || row.type !== 'file') return
+    row.value = value
+    updateValue()
+  } catch { ElMessage.error(t('apiTesting.requestEditor.fileReadFailed')) }
 }
 
 const openDataFactorySelector = (index) => {

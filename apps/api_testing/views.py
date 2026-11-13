@@ -60,6 +60,9 @@ from apps.projects.services import ensure_workspace_project_for_module, soft_del
 from .variable_resolver import VariableResolver
 from .importers import parse_collection
 from .path_params import resolve_path_parameters
+from .environment_resolver import EnvironmentResolver
+from .request_dto import REQUEST_FIELDS, normalize_request, request_from_model
+from .request_executor import build_transport, execute_request, response_body_preview
 from .serializers import (
     ApiProjectSerializer, ApiCollectionSerializer, ApiRequestSerializer,
     EnvironmentSerializer, RequestHistorySerializer, ScenarioCaseSerializer,
@@ -312,6 +315,7 @@ class ApiCollectionViewSet(viewsets.ModelViewSet):
         collection = self.get_object()
 
         def key_value_rows(value):
+            """Export ordered entries and keep disabled rows visible to the user."""
             if isinstance(value, list):
                 return [
                     {
@@ -324,7 +328,10 @@ class ApiCollectionViewSet(viewsets.ModelViewSet):
                     if isinstance(row, dict) and row.get('key')
                 ]
             if isinstance(value, dict):
-                return [{'key': key, 'value': value_item} for key, value_item in value.items()]
+                return [
+                    {'key': key, 'value': value_item, 'description': '', 'disabled': False}
+                    for key, value_item in value.items()
+                ]
             return []
 
         def postman_request(api_request):
@@ -332,7 +339,7 @@ class ApiCollectionViewSet(viewsets.ModelViewSet):
             headers = key_value_rows(api_request.headers)
             raw_url = (api_request.url or '').strip()
             parsed_url = urlsplit(raw_url)
-            path = parsed_url.path
+            path = parsed_url.path or '/'
             host = []
             protocol = parsed_url.scheme or None
             port = None
@@ -351,11 +358,14 @@ class ApiCollectionViewSet(viewsets.ModelViewSet):
             path_variable_names = re.findall(r'(?<!\{)\{([^{}]+)\}(?!\})', path)
             path_variable_names = [name.strip() for name in path_variable_names if name.strip()]
             path_variable_keys = {name.casefold() for name in path_variable_names}
-            path_params = {
-                row['key'].casefold(): row
-                for row in params
-                if row.get('key') and row['key'].casefold() in path_variable_keys
-            }
+            # Path variables live in their own field; fall back to params only for
+            # rows that still carry a legacy path variable during the staged migration.
+            path_param_rows = key_value_rows(api_request.path_params)
+            if not path_param_rows:
+                path_param_rows = [
+                    row for row in params if row['key'].casefold() in path_variable_keys
+                ]
+            path_params = {row['key'].casefold(): row for row in path_param_rows}
             variable_rows = [
                 {
                     'key': name,
@@ -366,7 +376,7 @@ class ApiCollectionViewSet(viewsets.ModelViewSet):
                 for name in path_variable_names
             ]
             query_rows = [
-                {'key': key, 'value': value, 'disabled': False}
+                {'key': key, 'value': value, 'description': '', 'disabled': False}
                 for key, value in parse_qsl(parsed_url.query, keep_blank_values=True)
             ]
             existing_query_keys = {row['key'] for row in query_rows}
@@ -594,6 +604,17 @@ class ApiRequestViewSet(viewsets.ModelViewSet):
         selected = [(index, item) for index, item in enumerate(items) if index in selected_ids]
         if not selected:
             return Response({'error': '请至少选择一个接口'}, status=status.HTTP_400_BAD_REQUEST)
+        # Reject blocking issues before any collection is created so a partial
+        # import cannot leave half of the source tree behind.
+        blocked = [
+            {'name': item.get('name', ''), 'errors': list(item.get('blocking_errors') or [])}
+            for _, item in selected if item.get('blocking_errors')
+        ]
+        if blocked:
+            return Response(
+                {'error': '选中的接口存在阻断问题，请修正后再导入', 'blocked': blocked},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         try:
             with transaction.atomic():
                 collection_by_name = {}
@@ -624,121 +645,103 @@ class ApiRequestViewSet(viewsets.ModelViewSet):
                             )
                             collection_by_name[path_key] = collection
                         parent = collection
+                    # Persist the complete canonical DTO, never a lossy projection.
+                    dto = normalize_request({
+                        field: item[field] for field in REQUEST_FIELDS if field in item
+                    })
                     ApiRequest.objects.create(
                         collection=collection,
                         name=item['name'][:200], description=item.get('description', ''),
-                        method=item['method'], url=item['url'], headers=item['headers'],
-                        params=item['params'], body=item['body'], created_by=request.user,
+                        method=dto['method'], url=dto['url'], request_type=dto['request_type'],
+                        headers=dto['headers'], params=dto['params'], path_params=dto['path_params'],
+                        body=dto['body'], auth=dto['auth'],
+                        pre_request_script=dto['scripts']['pre_request'],
+                        post_request_script=dto['scripts']['post_request'],
+                        assertions=dto['assertions'], extractors=dto['extractors'],
+                        settings=dto['settings'], created_by=request.user,
                         order=index,
                     )
                     created += 1
+        except serializers.ValidationError as exc:
+            return Response({'error': '导入的接口配置不合法', 'detail': exc.detail},
+                            status=status.HTTP_400_BAD_REQUEST)
         except Exception:
             logger.exception('批量导入 API 接口失败')
             return Response({'error': '接口导入失败'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         return Response({'imported': created, 'groups': len(collection_by_name)}, status=status.HTTP_201_CREATED)
     
+    def _project_id(self, api_request):
+        return api_request.collection.project_id if api_request.collection_id else None
+
+    def _resolve_draft(self, request, api_request):
+        """Merge submitted overrides into the canonical DTO without persisting them."""
+        overrides = {field: request.data[field] for field in REQUEST_FIELDS if field in request.data}
+        scripts = overrides.get('scripts')
+        if 'pre_request_script' in request.data or 'post_request_script' in request.data:
+            base = scripts if isinstance(scripts, dict) else {}
+            overrides['scripts'] = {
+                'pre_request': request.data.get(
+                    'pre_request_script', base.get('pre_request', api_request.pre_request_script)),
+                'post_request': request.data.get(
+                    'post_request_script', base.get('post_request', api_request.post_request_script)),
+            }
+        return request_from_model(api_request, overrides)
+
+    def _environment_snapshot(self, request, api_request):
+        project_id = self._project_id(api_request)
+        environment = EnvironmentResolver.resolve(
+            request.data.get('environment_id'), user=request.user, project_id=project_id)
+        return EnvironmentResolver.snapshot(environment, user=request.user, project_id=project_id)
+
+    @action(detail=True, methods=['post'], url_path='preview-url')
+    def preview_url(self, request, pk=None):
+        """Return the final address for the submitted draft; the backend owns addressing."""
+        api_request = self.get_object()
+        snapshot = self._environment_snapshot(request, api_request)
+        transport = build_transport(self._resolve_draft(request, api_request),
+                                    base_url=snapshot['base_url'])
+        return Response({'url': transport['url'], 'environment_id': snapshot['id']})
+
     @action(detail=True, methods=['post'])
     def execute(self, request, pk=None):
-        """执行API请求"""
+        """Execute one request through the shared environment, DTO and transport contract."""
         api_request = self.get_object()
-        environment_id = request.data.get('environment_id')
-        
+        # Preflight failures (missing environment, no permission, invalid address)
+        # are raised as API exceptions so nothing is sent and no history is written.
+        snapshot = self._environment_snapshot(request, api_request)
+        dto = self._resolve_draft(request, api_request)
+        transport = build_transport(dto, base_url=snapshot['base_url'])
         try:
-            # 创建变量解析器
-            resolver = VariableResolver()
+            result = execute_request(dto, base_url=snapshot['base_url'])
+            response = result['response']
+            response_time = result['response_time']
 
-            # 解析环境变量
-            variables = {}
-            environment = None
-            if environment_id:
-                environment = Environment.objects.get(id=environment_id)
-                variables.update(environment.variables)
-            
-            # 使用前端发送的更新后的数据，如果没有则使用数据库中的数据
-            request_params = request.data.get('params', api_request.params)
-            request_headers = request.data.get('headers', api_request.headers)
-            request_body = request.data.get('body', api_request.body)
-            request_method = request.data.get('method', api_request.method)
-            request_url = request.data.get('url', api_request.url)
-
-            # 替换URL中的变量（先解析动态函数，再替换环境变量）
-            url = self._replace_variables(request_url or '', variables)
-            url = resolver.resolve(url)
-            
-            # 准备请求头
-            headers = {}
-            if isinstance(request_headers, list):
-                for header_item in request_headers:
-                    if header_item.get('enabled', True) and header_item.get('key'):
-                        key = header_item['key']
-                        value = self._replace_variables(str(header_item.get('value', '')), variables)
-                        value = resolver.resolve(value)
-                        headers[key] = value
-            else:
-                headers = request_headers.copy() if request_headers else {}
-                for key, value in headers.items():
-                    headers[key] = self._replace_variables(str(value), variables)
-                    headers[key] = resolver.resolve(headers[key])
-
-            # 准备请求参数
-            params = request_params.copy() if request_params else {}
-            for key, value in params.items():
-                params[key] = self._replace_variables(str(value), variables)
-                params[key] = resolver.resolve(params[key])
-            url, params = resolve_path_parameters(url, params)
-
-            # 单接口与场景用例执行共用请求体解析，确保即时执行与已保存执行行为一致。
-            body_type, body_data = prepare_request_body(
-                request_body, request_method, variables, resolver
-            )
-            
-            # 执行请求
-            start_time = time.time()
-            response = send_api_request(
-                method=request_method,
-                url=url,
-                headers=headers,
-                params=params,
-                body_type=body_type,
-                body=body_data,
-            )
-            end_time = time.time()
-            
-            response_time = (end_time - start_time) * 1000  # 转换为毫秒
-            
-            # 执行断言验证
-            assertions = request.data.get('assertions', api_request.assertions) or []
+            assertions = dto['assertions']
             for assertion in assertions:
                 if assertion.get('type') == 'response_time':
                     assertion['actual_time'] = response_time
             assertions_results = execute_assertions(response, assertions)
+            # Extraction results stay local to this execution; they never write back
+            # to the environment.
+            extraction_results, extracted_variables = extract_response_variables(
+                response, dto['extractors'])
 
-            extractors = request.data.get('extractors', api_request.extractors) or []
-            # 单接口提取结果只返回给当前执行，不持久化到所选环境。
-            extraction_results, extracted_variables = extract_response_variables(response, extractors)
-            
-            # 保存请求历史
             history = RequestHistory.objects.create(
                 request=api_request,
-                environment_id=environment_id,
-                request_data={
-                    'url': url,
-                    'method': request_method,
-                    'headers': headers,
-                    'params': params,
-                    'body': body_data
-                },
+                environment_id=snapshot['id'],
+                request_data=result['request'],
                 response_data={
                     'headers': dict(response.headers),
                     'body': response.text,
-                    'json': response.json() if response.headers.get('content-type', '').startswith('application/json') else None
+                    'json': response.json() if response.headers.get(
+                        'content-type', '').startswith('application/json') else None
                 },
                 status_code=response.status_code,
                 response_time=response_time,
+                assertions_results=assertions_results,
                 executed_by=request.user
             )
-            
-            # 记录执行操作
+
             log_operation(
                 operation_type='execute',
                 resource_type='request',
@@ -746,68 +749,29 @@ class ApiRequestViewSet(viewsets.ModelViewSet):
                 resource_name=api_request.name,
                 user=request.user
             )
-            
-            # 返回包含断言结果的数据
+
             history_data = RequestHistorySerializer(history).data
             history_data['assertions_results'] = assertions_results
             history_data['extraction_results'] = extraction_results
             history_data['extracted_variables'] = extracted_variables
-            
             return Response(history_data)
-            
+
         except Exception as e:
-            # 保存错误历史
+            logger.warning('API请求执行失败 request_id=%s: %s', api_request.id, e)
             history = RequestHistory.objects.create(
                 request=api_request,
-                environment_id=environment_id,
+                environment_id=snapshot['id'],
                 request_data={
-                    'url': api_request.url,
-                    'method': api_request.method,
-                    'headers': api_request.headers,
-                    'params': api_request.params,
-                    'body': api_request.body
+                    'url': transport['url'],
+                    'method': transport['method'],
+                    'headers': transport['headers'],
+                    'params': transport['params'],
+                    'body': response_body_preview(transport),
                 },
                 error_message=str(e),
                 executed_by=request.user
             )
-            
             return Response(RequestHistorySerializer(history).data, status=status.HTTP_400_BAD_REQUEST)
-    
-    def _replace_variables(self, text, variables):
-        """替换文本中的变量"""
-        if not isinstance(text, str):
-            return text
-        
-        result = text
-        for key, value in (variables or {}).items():
-            if isinstance(value, dict):
-                replacement = str(value.get('currentValue', '') or value.get('initialValue', ''))
-            else:
-                replacement = str(value) if value is not None else ''
-            result = result.replace(f'{{{{{key}}}}}', replacement)
-        return result
-    
-    def _replace_variables_in_dict(self, data, variables):
-        """递归替换字典中的变量"""
-        if isinstance(data, dict):
-            return {k: self._replace_variables_in_dict(v, variables) for k, v in data.items()}
-        elif isinstance(data, list):
-            return [self._replace_variables_in_dict(item, variables) for item in data]
-        elif isinstance(data, str):
-            return self._replace_variables(data, variables)
-        else:
-            return data
-
-    def _resolve_variables_in_dict(self, data, resolver):
-        """递归解析字典中的动态函数占位符"""
-        if isinstance(data, dict):
-            return {k: self._resolve_variables_in_dict(v, resolver) for k, v in data.items()}
-        elif isinstance(data, list):
-            return [self._resolve_variables_in_dict(item, resolver) for item in data]
-        elif isinstance(data, str):
-            return resolver.resolve(data)
-        else:
-            return data
 
 
 class EnvironmentViewSet(viewsets.ModelViewSet):
@@ -991,8 +955,16 @@ class ScenarioCaseViewSet(viewsets.ModelViewSet):
         ``utils.execute_scenario_case``，与定时任务、MCP 执行同一条实现。
         """
         scenario_case = self.get_object()
-        result = execute_scenario_case(
-            scenario_case, scenario_case.environment, request.user)
+        # An explicitly submitted environment wins; otherwise the scenario default
+        # configured on the page is used. The executor never guesses an "active"
+        # environment on its own.
+        environment_id = request.data.get('environment_id')
+        if environment_id:
+            environment = EnvironmentResolver.resolve(
+                environment_id, user=request.user, project_id=scenario_case.project_id)
+        else:
+            environment = scenario_case.environment
+        result = execute_scenario_case(scenario_case, environment, request.user)
 
         # 执行体内部已把异常落成 FAILED；没有执行记录说明记录都没建起来。
         if not result.get('execution_id'):
