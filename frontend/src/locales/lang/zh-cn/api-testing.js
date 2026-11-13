@@ -2,6 +2,29 @@
  * API Testing 模块中文翻译
  */
 export default {
+  requestEditor: {
+    pathPlaceholder: '请求路径，例如 /users/{id}（Query 请填 Params）',
+    preview: '完整 URL 参考预览',
+    confirmPreview: '后端确认 URL',
+    previewHint: '参考预览不解析运行时变量；HTTP 实际地址由后端最终确定。未保存请求仅显示本地参考。',
+    environmentRequired: '请明确选择执行环境，并配置有效的前置 URL',
+    saveBeforePreview: '请先保存请求，再进行后端 URL 预览或 WebSocket 连接',
+    previewFailed: '完整 URL 预览失败',
+    hostSuggestion: '建议的环境前置 URL（不会自动覆盖）：',
+    importPath: '将导入的请求路径：',
+    curlPreviewHint: '请核对基础路径归属，避免与环境前缀重复。重复 Query 会保留；本机文件必须重新选择上传。',
+    username: '用户名', password: '密码', addTo: '添加到',
+    timeout: '超时（秒）', redirects: '跟随重定向', verifySsl: '验证 TLS 证书',
+    fileReadFailed: '文件读取失败，请重新选择',
+    baseUrl: '前置 URL', baseUrlPlaceholder: '填写 HTTP/HTTPS 地址，可包含基础路径',
+    baseUrlHint: '允许保存空草稿，但不能执行。不得包含变量、认证信息、Query 或 fragment。',
+    invalidBaseUrl: '请填写有效的 HTTP/HTTPS 前置 URL，不包含变量、用户名、密码、Query 或 fragment',
+    rowsInvalid: '请求参数必须为有序条目列表',
+    fileRequired: '请选择文件：不能使用本机路径作为文件内容',
+    bodyUnsupported: '不支持的请求体类型',
+    urlencodedFile: 'urlencoded 不支持文件',
+    jsonInvalid: 'JSON 请求体格式不正确'
+  },
   // 导航菜单
   nav: {
     title: '接口测试',
@@ -327,6 +350,31 @@ export default {
       header: '响应头',
       equals: '完全匹配'
     },
+    assertionOperators: {
+      equals: '等于',
+      notEquals: '不等于',
+      exists: '存在',
+      notExists: '不存在',
+      isNotEmpty: '非空',
+      isEmpty: '为空',
+      isString: '是字符串',
+      isNumber: '是数字',
+      isBoolean: '是布尔值',
+      isArray: '是数组',
+      isObject: '是对象',
+      includes: '包含(任一命中)',
+      notIncludes: '不包含(任一)',
+      contains: '字符串包含',
+      notContains: '字符串不包含',
+      atLeast: '大于等于',
+      greaterThan: '大于',
+      lessThan: '小于',
+      closeTo: '约等于(带容差)',
+      length: '长度等于',
+      matches: '正则匹配'
+    },
+    operatorNoValue: '该操作符不需要期望值',
+    collectionAssertionReadOnly: '集合期望值仅支持通过 API 配置，此处只读展示。',
     expectedStatusCode: '期望状态码',
     maxResponseTime: '最大响应时间(ms)',
     jsonPathExtract: 'JSONPath提取',

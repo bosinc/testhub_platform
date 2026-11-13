@@ -114,8 +114,23 @@
 
         <div v-else class="request-detail request-editor-card">
           <!-- 请求基本信息 -->
-          <div class="request-header">
-            <div class="request-line">
+          <RequestEditor
+            ref="requestEditorRef"
+            :key="requestEditorKey"
+            v-model="requestDraft"
+            :environment="currentEnvironment"
+            :extraction-results="response?.extraction_results || []"
+            :busy="sending || saving"
+            :ws-status="websocketConnectionStatus"
+            @send="sendRequest"
+            @preview="confirmUrlPreview"
+            @ws-connect="toggleWebSocketConnection"
+            @ws-disconnect="disconnectWebSocket"
+            @ws-send="sendWebSocketMessage"
+            @data-factory="openEditorDataFactory"
+            @variable-helper="openEditorVariableHelper"
+          >
+            <template #environment>
               <el-select v-model="selectedEnvironment" :placeholder="$t('apiTesting.interface.environment')" class="env-select">
                 <el-option :label="$t('apiTesting.common.noEnvironment')" value="" />
                 <el-option
@@ -125,58 +140,8 @@
                   :value="env.id"
                 />
               </el-select>
-
-              <!-- 方法和 URL 使用同一组布局，保持两者紧邻并把剩余空间给 URL。 -->
-              <div class="request-target">
-                <!-- HTTP接口显示方法选择器 -->
-                <el-select
-                  v-model="requestMethod"
-                  class="method-select"
-                  :class="requestMethod.toLowerCase()"
-                  :placeholder="'GET'"
-                  :popper-class="'method-select-dropdown'"
-                >
-                  <el-option
-                    v-for="method in availableMethods"
-                    :key="method"
-                    :label="method"
-                    :value="method"
-                    :class="method.toLowerCase()"
-                  />
-                </el-select>
-
-                <el-input
-                  v-model="requestUrl"
-                  :placeholder="$t('apiTesting.interface.inputRequestUrl')"
-                  class="url-input"
-                />
-              </div>
-
-              <!-- WebSocket连接按钮 -->
-              <el-button
-                v-if="selectedRequest && selectedRequest.request_type === 'WEBSOCKET'"
-                :type="websocketConnectionStatus === 'disconnected' ? 'primary' : 'info'"
-                :loading="websocketConnectionStatus === 'connecting'"
-                @click="toggleWebSocketConnection"
-                class="send-button"
-              >
-                <span v-if="websocketConnectionStatus === 'disconnected'">{{ $t('apiTesting.interface.connect') }}</span>
-                <span v-else-if="websocketConnectionStatus === 'connecting'">{{ $t('apiTesting.interface.connecting') }}</span>
-                <span v-else>{{ $t('apiTesting.interface.disconnect') }}</span>
-              </el-button>
-
-              <!-- HTTP发送按钮 -->
-              <el-button
-                v-if="!selectedRequest || !selectedRequest.request_type || selectedRequest.request_type !== 'WEBSOCKET'"
-                type="primary"
-                @click="sendRequest"
-                :loading="sending"
-                class="send-button"
-              >
-                {{ $t('apiTesting.interface.send') }}
-              </el-button>
-            </div>
-
+            </template>
+            <template #meta>
             <div class="request-meta">
               <el-input
                 v-model="selectedRequest.name"
@@ -210,187 +175,8 @@
                 </el-dropdown>
               </div>
             </div>
-          </div>
-
-          <!-- 请求配置 -->
-          <el-tabs v-model="activeTab" class="request-tabs">
-            <el-tab-pane label="Params" name="params">
-              <KeyValueEditor
-                v-model="queryParams"
-                :placeholder-key="$t('apiTesting.interface.paramName')"
-                :placeholder-value="$t('apiTesting.interface.paramValue')"
-              />
-              <div v-if="pathParameterNames.length" class="path-parameters-panel">
-                <div class="path-parameters-title">Path Variables</div>
-                <KeyValueEditor
-                  v-model="pathParams"
-                  :placeholder-key="$t('apiTesting.interface.paramName')"
-                  :placeholder-value="$t('apiTesting.interface.paramValue')"
-                />
-              </div>
-            </el-tab-pane>
-
-            <el-tab-pane label="Headers" name="headers">
-              <KeyValueEditor
-                ref="headersEditorRef"
-                v-model="selectedRequest.headers"
-                :placeholder-key="$t('apiTesting.interface.headerName')"
-                :placeholder-value="$t('apiTesting.interface.headerValue')"
-                @update:modelValue="onHeadersUpdate"
-              />
-            </el-tab-pane>
-
-            <el-tab-pane label="Body" name="body" v-if="hasBody">
-              <div class="body-container">
-                <el-radio-group v-model="bodyType" @change="onBodyTypeChange">
-                  <el-radio value="none">none</el-radio>
-                  <el-radio value="form-data">form-data</el-radio>
-                  <el-radio value="x-www-form-urlencoded">x-www-form-urlencoded</el-radio>
-                  <el-radio value="raw">raw</el-radio>
-                  <el-radio value="binary">binary</el-radio>
-                </el-radio-group>
-
-                <div v-if="bodyType === 'form-data'" class="body-content">
-                  <KeyValueEditor
-                    v-model="formData"
-                    :placeholder-key="$t('apiTesting.interface.key')"
-                    :placeholder-value="$t('apiTesting.interface.value')"
-                    :show-file="true"
-                  />
-                </div>
-
-                <div v-else-if="bodyType === 'x-www-form-urlencoded'" class="body-content">
-                  <KeyValueEditor
-                    v-model="formUrlEncoded"
-                    :placeholder-key="$t('apiTesting.interface.key')"
-                    :placeholder-value="$t('apiTesting.interface.value')"
-                  />
-                </div>
-
-                <div v-else-if="bodyType === 'raw'" class="body-content">
-                  <div class="raw-options">
-                    <el-select v-model="rawType" style="width: 150px;">
-                      <el-option label="Text" value="text" />
-                      <el-option label="JSON" value="json" />
-                      <el-option label="HTML" value="html" />
-                      <el-option label="XML" value="xml" />
-                    </el-select>
-
-                    <el-button
-                      size="small"
-                      :icon="MagicStick"
-                      @click="openDataFactorySelectorForBody('rawBody')"
-                      :title="$t('apiTesting.interface.referDataFactory')"
-                      class="data-factory-btn"
-                    >
-                      {{ $t('apiTesting.interface.referDataFactory') }}
-                    </el-button>
-                    <el-button
-                      size="small"
-                      :icon="MagicStick"
-                      @click="openVariableHelper('rawBody')"
-                      :title="$t('apiTesting.interface.variableHelper')"
-                      class="variable-helper-btn"
-                    >
-                      {{ $t('apiTesting.interface.variableHelper') }}
-                    </el-button>
-                  </div>
-                  <el-input
-                    ref="rawBodyInputRef"
-                    v-model="rawBody"
-                    type="textarea"
-                    :rows="10"
-                    :placeholder="$t('apiTesting.interface.inputRequestBody')"
-                    class="raw-body"
-                  />
-                </div>
-              </div>
-            </el-tab-pane>
-
-            <!-- HTTP接口专用标签页 -->
-            <template v-if="!selectedRequest || selectedRequest.request_type !== 'WEBSOCKET'">
-              <el-tab-pane label="Pre-request Script" name="pre-script">
-                <div class="script-editor-container">
-                  <el-input
-                    v-model="selectedRequest.pre_request_script"
-                    type="textarea"
-                    :rows="10"
-                    :placeholder="$t('apiTesting.interface.scriptBeforePlaceholder')"
-                  />
-                  <div class="script-buttons">
-                    <el-button
-                      size="small"
-                      :icon="MagicStick"
-                      @click="openDataFactorySelectorForScript('pre_request_script')"
-                      :title="$t('apiTesting.interface.referDataFactory')"
-                      class="script-factory-btn"
-                    >
-                      {{ $t('apiTesting.interface.referDataFactory') }}
-                    </el-button>
-                    <el-button
-                      size="small"
-                      :icon="MagicStick"
-                      @click="openVariableHelper('pre_request_script')"
-                      :title="$t('apiTesting.interface.variableHelper')"
-                      class="script-variable-btn"
-                    >
-                      {{ $t('apiTesting.interface.variableHelper') }}
-                    </el-button>
-                  </div>
-                </div>
-              </el-tab-pane>
-
-              <el-tab-pane label="Tests" name="tests">
-                <div class="script-editor-container">
-                  <el-input
-                    v-model="selectedRequest.post_request_script"
-                    type="textarea"
-                    :rows="10"
-                    :placeholder="$t('apiTesting.interface.scriptAfterPlaceholder')"
-                  />
-                  <div class="script-buttons">
-                    <el-button
-                      size="small"
-                      :icon="MagicStick"
-                      @click="openDataFactorySelectorForScript('post_request_script')"
-                      :title="$t('apiTesting.interface.referDataFactory')"
-                      class="script-factory-btn"
-                    >
-                      {{ $t('apiTesting.interface.referDataFactory') }}
-                    </el-button>
-                    <el-button
-                      size="small"
-                      :icon="MagicStick"
-                      @click="openVariableHelper('post_request_script')"
-                      :title="$t('apiTesting.interface.variableHelper')"
-                      class="script-variable-btn"
-                    >
-                      {{ $t('apiTesting.interface.variableHelper') }}
-                    </el-button>
-                  </div>
-                </div>
-              </el-tab-pane>
-
-              <el-tab-pane :label="$t('apiTesting.interface.assertions')" name="assertions">
-                <AssertionEditor
-                  v-model="selectedRequest.assertions"
-                  :show-helpers="true"
-                  @data-factory="({ assertion, field, index }) => openDataFactorySelector(assertion, field, index)"
-                  @variable-helper="({ assertion, field, index }) => openVariableHelperForAssertion(assertion, field, index)"
-                />
-              </el-tab-pane>
-
-              <el-tab-pane :label="$t('apiTesting.interface.variableExtraction')" name="extractors">
-                <VariableExtractorEditor
-                  v-model="selectedRequest.extractors"
-                  :results="response?.extraction_results"
-                />
-              </el-tab-pane>
             </template>
-
-            <!-- WebSocket接口专用标签页 -->
-            <template v-else-if="selectedRequest && selectedRequest.request_type === 'WEBSOCKET'">
-              <el-tab-pane label="Message" name="message">
+            <template #ws-message="{ send }">
                 <div class="message-container">
                   <div class="message-input-section">
                     <el-select
@@ -432,7 +218,7 @@
                     </div>
 
                     <div class="message-actions" style="margin-top: 15px;">
-                      <el-button type="primary" @click="sendWebSocketMessage">
+                      <el-button type="primary" @click="send">
                         {{ $t('apiTesting.interface.sendMessage') }}
                       </el-button>
                       <el-button @click="clearWebSocketMessage">
@@ -471,125 +257,11 @@
                     </div>
                   </div>
                 </div>
-              </el-tab-pane>
             </template>
-          </el-tabs>
+          </RequestEditor>
 
           <!-- 响应区域 -->
-          <div v-if="response" class="response-section">
-            <div class="response-header">
-              <h3>{{ $t('apiTesting.interface.response') }}</h3>
-              <div class="response-info">
-                <el-tag :type="getStatusType(response.status_code)">
-                  {{ response.status_code }}
-                </el-tag>
-                <span class="response-time">{{ response.response_time ? response.response_time.toFixed(0) : 0 }}ms</span>
-              </div>
-            </div>
-
-            <el-tabs v-model="resultActiveTab" class="result-tabs">
-              <!-- 一级 tab：响应信息 -->
-              <el-tab-pane :label="$t('apiTesting.interface.response')" name="response">
-                <el-tabs v-model="responseActiveTab" class="nested-tabs">
-                  <el-tab-pane label="Body" name="body">
-                    <div class="response-body">
-                      <div class="response-actions">
-                        <el-button-group>
-                          <el-button size="small" @click="formatResponse">{{ $t('apiTesting.interface.format') }}</el-button>
-                          <el-button size="small" @click="copyResponse">{{ $t('apiTesting.interface.copy') }}</el-button>
-                          <el-button size="small" @click="toggleJsonPathExtractor">
-                            {{ $t('apiTesting.interface.jsonPathExtract') }}
-                          </el-button>
-                        </el-button-group>
-                      </div>
-                      <div v-if="showJsonPathExtractor" class="jsonpath-extractor">
-                        <div class="jsonpath-input">
-                          <el-input
-                            v-model="jsonPathExpression"
-                            :placeholder="$t('apiTesting.interface.jsonPathExample')"
-                            size="small"
-                            @input="evaluateJsonPath"
-                          >
-                            <template #append>
-                              <el-button size="small" @click="copyJsonPathResult">{{ $t('apiTesting.interface.copyResult') }}</el-button>
-                            </template>
-                          </el-input>
-                        </div>
-                        <div v-if="jsonPathResult !== null" class="jsonpath-result">
-                          <strong>{{ $t('apiTesting.interface.extractResult') }}</strong>
-                          <pre>{{ jsonPathResult }}</pre>
-                        </div>
-                      </div>
-                      <div ref="responseEditorHost" class="response-content"></div>
-                    </div>
-                  </el-tab-pane>
-
-                  <el-tab-pane label="Headers" name="headers">
-                    <div class="response-headers">
-                      <div v-for="(value, key) in (response.response_data?.headers || {})" :key="key" class="header-row">
-                        <strong>{{ key }}:</strong> {{ value }}
-                      </div>
-                    </div>
-                  </el-tab-pane>
-
-                  <el-tab-pane :label="$t('apiTesting.interface.assertionResults')" name="assertions" v-if="response.assertions_results && response.assertions_results.length > 0">
-                    <div class="assertions-results">
-                      <div
-                        v-for="(result, index) in response.assertions_results"
-                        :key="index"
-                        class="assertion-result-item"
-                        :class="{ 'passed': result.passed, 'failed': !result.passed }"
-                      >
-                        <div class="assertion-result-header">
-                          <el-tag :type="result.passed ? 'success' : 'danger'" size="small">
-                            {{ result.passed ? $t('apiTesting.interface.passed') : $t('apiTesting.interface.failed') }}
-                          </el-tag>
-                          <span class="assertion-name">{{ result.name }}</span>
-                        </div>
-                        <div class="assertion-result-details">
-                          <div class="result-row">
-                            <span class="label">{{ $t('apiTesting.interface.expected') }}</span>
-                            <span class="value">{{ formatAssertionValue(result.expected) }}</span>
-                          </div>
-                          <div class="result-row">
-                            <span class="label">{{ $t('apiTesting.interface.actual') }}</span>
-                            <span class="value">{{ formatAssertionValue(result.actual) }}</span>
-                          </div>
-                          <div class="result-row" v-if="result.error">
-                            <span class="label">{{ $t('apiTesting.interface.error') }}</span>
-                            <span class="value error">{{ result.error }}</span>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </el-tab-pane>
-                </el-tabs>
-              </el-tab-pane>
-
-              <!-- 一级 tab：请求信息 -->
-              <el-tab-pane :label="$t('apiTesting.interface.requestInfo')" name="request">
-                <div class="header-row request-line">
-                  <strong>{{ response.request_data?.method }}</strong>
-                  <span class="request-url">{{ response.request_data?.url }}</span>
-                </div>
-                <el-tabs v-model="requestActiveTab" class="nested-tabs">
-                  <el-tab-pane label="Body" name="body">
-                    <div v-if="hasRequestBodyData" class="response-content">{{ formattedRequestBody }}</div>
-                    <div v-else class="empty-tip">{{ $t('apiTesting.interface.noRequestBody') }}</div>
-                  </el-tab-pane>
-
-                  <el-tab-pane label="Headers" name="headers">
-                    <div v-if="Object.keys(response.request_data?.headers || {}).length > 0" class="response-headers">
-                      <div v-for="(value, key) in (response.request_data?.headers || {})" :key="key" class="header-row">
-                        <strong>{{ key }}:</strong> {{ value }}
-                      </div>
-                    </div>
-                    <div v-else class="empty-tip">{{ $t('apiTesting.interface.noRequestHeaders') }}</div>
-                  </el-tab-pane>
-                </el-tabs>
-              </el-tab-pane>
-            </el-tabs>
-          </div>
+          <ResponseViewer :response="response" />
         </div>
           </div>
         </template>
@@ -646,7 +318,7 @@
 
       <template #footer>
         <el-button @click="closeEditCollectionDialog">{{ $t('apiTesting.common.cancel') }}</el-button>
-        <el-button type="primary" @click="editCollection">{{ $t('apiTesting.common.save') }}</el-button>
+        <el-button type="primary" @click="updateCollection">{{ $t('apiTesting.common.save') }}</el-button>
       </template>
     </el-dialog>
 
@@ -729,9 +401,16 @@
         :rows="15"
         :placeholder="$t('apiTesting.interface.pasteCurlCommand')"
       />
+      <div v-if="curlPreview" class="curl-preview">
+        <p>{{ $t('apiTesting.requestEditor.hostSuggestion') }} <code>{{ curlPreview.model.baseURL }}</code></p>
+        <p>{{ $t('apiTesting.requestEditor.importPath') }} <code>{{ curlPreview.draft.url }}</code></p>
+        <p>{{ $t('apiTesting.requestEditor.curlPreviewHint') }}</p>
+        <pre>{{ JSON.stringify(curlPreview.draft, null, 2) }}</pre>
+      </div>
       <template #footer>
         <el-button @click="closeCurlImportDialog">{{ $t('apiTesting.common.cancel') }}</el-button>
-        <el-button type="primary" @click="parseAndImportCurl">{{ $t('apiTesting.interface.parseAndImport') }}</el-button>
+        <el-button @click="parseAndImportCurl">{{ $t('apiTesting.requestEditor.preview') }}</el-button>
+        <el-button v-if="curlPreview" type="primary" @click="applyCurlPreview">{{ $t('apiTesting.interface.parseAndImport') }}</el-button>
       </template>
     </el-dialog>
 
@@ -877,24 +556,20 @@
 import ResizableSplitPane from '@/components/ResizableSplitPane.vue'
 import { ref, reactive, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Folder, Document, MagicStick, Search, CopyDocument, Delete, Upload, UploadFilled, InfoFilled } from '@element-plus/icons-vue'
+import { Plus, Folder, Document, Search, CopyDocument, Delete, Upload, UploadFilled, InfoFilled } from '@element-plus/icons-vue'
 import api from '@/utils/api'
-import KeyValueEditor from './components/KeyValueEditor.vue'
-import AssertionEditor from '@/components/api-testing/AssertionEditor.vue'
-import VariableExtractorEditor from '@/components/api-testing/VariableExtractorEditor.vue'
+import RequestEditor from '@/components/api-testing/RequestEditor.vue'
+import ResponseViewer from '@/components/api-testing/ResponseViewer.vue'
+import { cloneDraft, createRequestDraft, serializeRequestDraft, previewRequestUrl, toCodegenModel, curlModelToDraft } from '@/utils/requestDraft'
 import DataFactorySelector from '@/components/DataFactorySelector.vue'
 import { RequestModelParser } from '@/utils/requestModel'
 import { getVariableFunctions } from '@/api/data-factory'
-import { normalizeAssertions } from '@/utils/assertions'
 import { getPreferredProjectId, useRememberedProject } from '@/utils/projectSelection'
 import { CodeGenerator } from '@/utils/codeGenerator'
 import { useI18n } from 'vue-i18n'
-import * as monaco from 'monaco-editor/esm/vs/editor/editor.api'
-import 'monaco-editor/esm/vs/language/json/monaco.contribution'
-import 'monaco-editor/esm/vs/editor/contrib/contextmenu/browser/contextmenu'
-import 'monaco-editor/esm/vs/editor/contrib/clipboard/browser/clipboard'
 
 const { t } = useI18n()
+const requestErrorMessage = error => error.message?.startsWith('apiTesting.requestEditor.') ? t(error.message) : error.message
 const sidebarWidth = ref(300)
 
 const treeRef = ref(null)
@@ -910,10 +585,14 @@ const selectedRequest = ref(null)
 const response = ref(null)
 const sending = ref(false)
 const saving = ref(false)
-const activeTab = ref('params')
-const resultActiveTab = ref('response')
-const responseActiveTab = ref('body')
-const requestActiveTab = ref('body')
+const requestEditorRef = ref(null)
+const requestEditorKey = ref(0)
+let requestSelectionVersion = 0
+const currentEnvironment = computed(() => environments.value.find(env => String(env.id) === String(selectedEnvironment.value)) || null)
+const requestDraft = computed({
+  get: () => createRequestDraft(selectedRequest.value || {}),
+  set: draft => { selectedRequest.value = { ...selectedRequest.value, ...draft } }
+})
 const showCreateCollectionDialog = ref(false)
 const showEditCollectionDialog = ref(false)
 const showContextMenu = ref(false)
@@ -922,14 +601,9 @@ const contextMenuY = ref(0)
 const contextMenuRef = ref(null)
 const contextMenuReady = ref(false)
 const rightClickedNode = ref(null)
-const headersEditorRef = ref(null)
 const editingNodeId = ref(null)
 const editingNodeName = ref('')
 const editInputRef = ref(null)
-const rawBodyInputRef = ref(null)
-const responseEditorHost = ref(null)
-const currentHeaders = ref({})
-let responseEditor = null
 
 const searchKeyword = ref('')
 const treeProps = {
@@ -976,101 +650,25 @@ const visibleExpandedKeys = computed(() => {
   return keys
 })
 
-// OpenAPI 路径参数使用单花括号，例如 /users/{id}；双花括号仍保留给环境变量。
-const getPathParameterNames = (url) => {
-  const names = []
-  const pattern = /(?<!\{)\{([^{}]+)\}(?!\})/g
-  let source = String(url || '')
-  try {
-    source = decodeURIComponent(source)
-  } catch {
-    // Keep the original URL when a partially encoded value cannot be decoded.
-  }
-  let match
-  while ((match = pattern.exec(source)) !== null) {
-    const name = match[1].trim()
-    if (name && !names.includes(name)) names.push(name)
-  }
-  return names
-}
-
-const syncPathParameterRows = (url, params) => {
-  if (!Array.isArray(params)) return
-  const names = getPathParameterNames(url)
-  const nameSet = new Set(names)
-  params.forEach(row => {
-    if (row.type === 'path' && !nameSet.has(row.key)) row.type = 'text'
-  })
-  names.forEach(key => {
-    const row = params.find(item => item.key === key)
-    if (row) {
-      row.type = 'path'
-    } else {
-      params.push({ key, value: '', description: '', enabled: true, type: 'path' })
-    }
-  })
-}
-
-const parameterRows = (params) => {
-  if (Array.isArray(params)) return params
-  if (!params || typeof params !== 'object') return []
-  return Object.entries(params).map(([key, value]) => ({
-    key,
-    value: value ?? '',
-    description: '',
-    enabled: true,
-    type: 'text'
-  }))
-}
-
-const pathParameterNames = computed(() => getPathParameterNames(selectedRequest.value?.url))
-const queryParams = computed({
-  get: () => {
-    const names = new Set(pathParameterNames.value)
-    return parameterRows(selectedRequest.value?.params).filter(row => row.type !== 'path' && !names.has(row.key))
-  },
-  set: (rows) => {
-    if (!selectedRequest.value) return
-    const names = new Set(pathParameterNames.value)
-    const pathRows = parameterRows(selectedRequest.value.params).filter(row => row.type === 'path' || names.has(row.key))
-    selectedRequest.value.params = [...rows, ...pathRows]
-  }
-})
-const pathParams = computed({
-  get: () => {
-    const names = pathParameterNames.value
-    const existing = parameterRows(selectedRequest.value?.params)
-    return names.map(name => existing.find(row => row.key === name) || {
-      key: name,
-      value: '',
-      description: '',
-      enabled: true,
-      type: 'path'
-    }).map(row => ({ ...row, type: 'path' }))
-  },
-  set: (rows) => {
-    if (!selectedRequest.value) return
-    const names = new Set(pathParameterNames.value)
-    const queryRows = parameterRows(selectedRequest.value.params).filter(row => row.type !== 'path' && !names.has(row.key))
-    selectedRequest.value.params = [...queryRows, ...rows.map(row => ({ ...row, type: 'path' }))]
-  }
-})
-
 // 数据工厂选择器相关
 const showDataFactorySelector = ref(false)
 const showVariableHelper = ref(false)
-const currentEditingField = ref('')
-const currentBodyField = ref('')
-const currentAssertion = ref(null)
-const currentAssertionField = ref('')
-const currentAssertionIndex = ref(-1)
-const currentScriptField = ref('')
+const helperTarget = ref(null)
 const variableCategories = ref([])
 const loading = ref(false)
 
 // CURL导入相关
 const showCurlImportDialog = ref(false)
 const curlCommand = ref('')
+const curlPreview = ref(null)
+const applyCurlPreview = () => {
+  if (!curlPreview.value) return
+  if (!selectedRequest.value) createEmptyRequest()
+  if (!selectedRequest.value) return
+  requestDraft.value = curlPreview.value.draft
+  showCurlImportDialog.value = false
+  ElMessage.success(t('apiTesting.interface.imported'))
+}
 
 // Swagger / Postman 批量导入
 const showBatchImportDialog = ref(false)
@@ -1240,25 +838,17 @@ const websocketMessageType = ref('text')
 const websocketMessageContent = ref('')
 const websocketBinaryFile = ref(null)
 
-// JSONPath提取相关
-const showJsonPathExtractor = ref(false)
-const jsonPathExpression = ref('')
-const jsonPathResult = ref(null)
-
-// Body相关
-const bodyType = ref('none')
-const rawType = ref('text')
-const formData = ref([])
-const formUrlEncoded = ref([])
-const rawBody = ref('')
-
-const availableMethods = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS', 'CONNECT', 'TRACE']
-
 const onProjectChange = async (projectId) => {
   if (!projectId) return
 
   try {
     clearSearch()
+    requestSelectionVersion += 1
+    disconnectWebSocket()
+    requestEditorKey.value += 1
+    selectedRequest.value = null
+    selectedEnvironment.value = ''
+    response.value = null
     await Promise.all([
       loadCollections(projectId),
       loadEnvironments(projectId)
@@ -1448,105 +1038,28 @@ const attachRequestsToTree = (requests) => {
   })
 }
 
-const flattenCollections = (items, parent = null) => {
-  let result = []
-  for (const item of items) {
-    if (item.type === 'collection') {
-      result.push(item)
-      if (item.children && item.children.length > 0) {
-        result = result.concat(flattenCollections(item.children, item))
-      }
-    }
-  }
-  return result
-}
-
 const selectRequest = (requestData) => {
-  // 搜索结果直接引用树节点，先复制一份，避免详情编辑转换参数格式时修改树数据。
-  requestData = JSON.parse(JSON.stringify(requestData))
-  delete requestData.type
-  delete requestData.treeKey
-  delete requestData.matchType
-  delete requestData.children
-  requestData.assertions = normalizeAssertions(requestData.assertions)
-  requestData.extractors = Array.isArray(requestData.extractors) ? requestData.extractors : []
-
-  // 初始化currentHeaders
-  currentHeaders.value = requestData.headers || {}
-
-  // 将 params 从字典格式转换为数组格式
-  if (requestData.params && typeof requestData.params === 'object' && !Array.isArray(requestData.params)) {
-    const paramsArray = []
-    Object.keys(requestData.params).forEach(key => {
-      if (key && requestData.params[key] !== undefined) {
-        paramsArray.push({
-          enabled: true,
-          key,
-          value: requestData.params[key],
-          description: '',
-          type: 'text'
-        })
-      }
-    })
-    requestData.params = paramsArray
-  }
-
-  syncPathParameterRows(requestData.url, requestData.params)
-
-  // 将 headers 从字典格式转换为数组格式
-  if (requestData.headers && typeof requestData.headers === 'object' && !Array.isArray(requestData.headers)) {
-    const headersArray = []
-    Object.keys(requestData.headers).forEach(key => {
-      if (key && requestData.headers[key] !== undefined) {
-        headersArray.push({
-          enabled: true,
-          key,
-          value: requestData.headers[key],
-          description: '',
-          type: 'text'
-        })
-      }
-    })
-    requestData.headers = headersArray
-  }
-
-  // 解析body数据
-  if (requestData.body && requestData.body.type) {
-    if (requestData.body.type === 'json' && requestData.body.data) {
-      bodyType.value = 'raw'
-      rawType.value = 'json'
-      rawBody.value = JSON.stringify(requestData.body.data, null, 2)
-    } else if (requestData.body.type === 'raw' && requestData.body.data) {
-      bodyType.value = 'raw'
-      rawType.value = 'text'
-      rawBody.value = requestData.body.data
-    } else if (requestData.body.type === 'form-data') {
-      bodyType.value = 'form-data'
-      formData.value = requestData.body.data || []
-    } else if (requestData.body.type === 'x-www-form-urlencoded') {
-      bodyType.value = 'x-www-form-urlencoded'
-      formUrlEncoded.value = requestData.body.data || []
-    } else if (requestData.body.type === 'binary') {
-      bodyType.value = 'binary'
-    } else {
-      bodyType.value = 'none'
-      rawBody.value = ''
-    }
-  } else {
-    bodyType.value = 'none'
-    rawBody.value = ''
-  }
-
+  requestSelectionVersion += 1
+  disconnectWebSocket()
+  websocketMessages.value = []
+  clearWebSocketMessage()
+  showVariableHelper.value = false
+  showDataFactorySelector.value = false
+  helperTarget.value = null
   response.value = null
-  selectedRequest.value = requestData
+  requestEditorKey.value += 1
+  selectedRequest.value = { ...cloneDraft(requestData), ...createRequestDraft(requestData) }
+  delete selectedRequest.value.type
+  delete selectedRequest.value.treeKey
+  delete selectedRequest.value.children
 }
 
 const onNodeClick = async (data) => {
   if (data.type !== 'request') return
-
+  const version = ++requestSelectionVersion
   try {
     const apiResponse = await api.get(`/api-testing/requests/${data.id}/`)
-    selectRequest(apiResponse.data)
+    if (version === requestSelectionVersion) selectRequest(apiResponse.data)
   } catch (error) {
     ElMessage.error(t('apiTesting.interface.loadRequestsFailed'))
     console.error('加载请求失败:', error)
@@ -1602,8 +1115,8 @@ const createEmptyRequest = () => {
     name: t('apiTesting.interface.unnamedRequest'),
     url: '',
     method: 'GET',
-    params: {},
-    headers: {},
+    params: [],
+    headers: [],
     pre_request_script: '',
     post_request_script: '',
     assertions: [],
@@ -1611,7 +1124,7 @@ const createEmptyRequest = () => {
     request_type: 'HTTP'
   }
 
-  selectedRequest.value = newRequest
+  selectRequest(newRequest)
 }
 
 const openCreateCollectionDialog = () => {
@@ -1638,10 +1151,6 @@ const closeCodeGenerateDialog = () => {
   showCodeGenerateDialog.value = false
 }
 
-const toggleJsonPathExtractor = () => {
-  showJsonPathExtractor.value = !showJsonPathExtractor.value
-}
-
 const addRequest = () => {
   if (!rightClickedNode.value) return
 
@@ -1657,8 +1166,8 @@ const addRequest = () => {
     name: t('apiTesting.interface.unnamedRequest'),
     url: '',
     method: 'GET',
-    params: {},
-    headers: {},
+    params: [],
+    headers: [],
     pre_request_script: '',
     post_request_script: '',
     assertions: [],
@@ -1666,7 +1175,7 @@ const addRequest = () => {
     request_type: 'HTTP'
   }
 
-  selectedRequest.value = newRequest
+  selectRequest(newRequest)
   showContextMenu.value = false
 }
 
@@ -1835,636 +1344,83 @@ const collectionRules = {
   name: [{ required: true, message: t('apiTesting.interface.inputCollectionName'), trigger: 'blur' }]
 }
 
-const methodClass = computed(() => {
-  const method = selectedRequest.value?.method || 'GET'
-  return `method-${method.toLowerCase()}`
-})
-
-const getMethodClass = (method) => {
-  return method ? method.toLowerCase() : 'get'
+const requireEnvironment = () => {
+  if (currentEnvironment.value) return true
+  ElMessage.warning(t('apiTesting.requestEditor.environmentRequired'))
+  return false
 }
 
-const getMethodColor = (method) => {
-  const colors = {
-    'get': '#61affe',
-    'post': '#49cc90',
-    'put': '#fca130',
-    'delete': '#f93e3e',
-    'patch': '#50e3c2',
-    'head': '#9013fe',
-    'options': '#0ebeff',
-    'connect': '#7f8c8d',
-    'trace': '#e67e22'
-  }
-  return colors[(method || 'GET').toLowerCase()] || '#61affe'
-}
-
-const requestMethod = computed({
-  get: () => selectedRequest.value?.method || 'GET',
-  set: (value) => {
-    if (!selectedRequest.value) {
-      // 如果selectedRequest为null，创建一个新的请求对象
-      const newRequest = {
-        method: value,
-        url: '',
-        type: 'request',
-        request_type: 'HTTP',
-        headers: [],
-        params: [],
-        body: {
-          type: 'none',
-          content: ''
-        }
-      }
-      selectedRequest.value = newRequest
-    } else {
-      selectedRequest.value.method = value
-    }
-  }
-})
-
-const requestUrl = computed({
-  get: () => selectedRequest.value?.url || '',
-  set: (value) => {
-    if (selectedRequest.value) {
-      selectedRequest.value.url = value
-    }
-  }
-})
-
-watch(() => selectedRequest.value?.url, (url) => {
-  if (selectedRequest.value) {
-    if (!Array.isArray(selectedRequest.value.params)) {
-      selectedRequest.value.params = parameterRows(selectedRequest.value.params)
-    }
-    syncPathParameterRows(url, selectedRequest.value.params)
-  }
-})
-
-const hasBody = computed(() => {
-  return selectedRequest.value && selectedRequest.value.method && ['POST', 'PUT', 'PATCH'].includes(selectedRequest.value.method)
-})
-
-const responseBody = computed(() => {
-  if (!response.value || !response.value.response_data) return ''
-
-  try {
-    if (response.value.response_data.json) {
-      return JSON.stringify(response.value.response_data.json, null, 2)
-    } else {
-      return response.value.response_data.body || ''
-    }
-  } catch (e) {
-    return response.value.response_data?.body || ''
-  }
-})
-
-// 请求信息（执行后服务端返回的真实请求快照，已做变量解析）
-const hasRequestBodyData = computed(() => {
-  const body = response.value?.request_data?.body
-  if (body === null || body === undefined || body === '') return false
-  if (typeof body === 'object' && Object.keys(body).length === 0) return false
-  return true
-})
-
-const formattedRequestBody = computed(() => {
-  const body = response.value?.request_data?.body
-  if (body === null || body === undefined || body === '') return ''
-  if (typeof body === 'string') return body
-  try {
-    return JSON.stringify(body, null, 2)
-  } catch (e) {
-    return String(body)
-  }
-})
-
-const convertKeyValueArrayToObject = (input) => {
-  if (input && typeof input === 'object' && !Array.isArray(input)) {
-    return input
-  }
-
-  if (!Array.isArray(input)) return {}
-
-  const obj = {}
-  input.forEach(item => {
-    if (item.enabled !== false && item.key) {
-      obj[item.key] = item.value || ''
-    }
-  })
-  return obj
-}
-
-const appendJsonPathKey = (parentPath, key) => {
-  // 只有合法标识符才使用点号语法，其余键名使用 JSONPath 下标语法。
-  return /^[A-Za-z_$][\w$]*$/.test(key)
-    ? `${parentPath}.${key}`
-    : `${parentPath}[${JSON.stringify(key)}]`
-}
-
-const buildJsonPathByLine = content => {
-  const linePaths = new Map()
-  if (!content) return linePaths
-
-  try {
-    JSON.parse(content)
-  } catch {
-    return linePaths
-  }
-
-  const stack = []
-  const lines = content.split('\n')
-  const propertyPattern = /^\s*"((?:\\.|[^"\\])*)"\s*:\s?(.*)$/
-
-  lines.forEach((line, lineIndex) => {
-    const trimmed = line.trim()
-    if (!trimmed) return
-
-    // 关闭行仍然归属于刚刚结束的对象/数组，便于用户点击任意一行都能得到路径。
-    if (trimmed.startsWith('}') || trimmed.startsWith(']')) {
-      linePaths.set(lineIndex + 1, stack.at(-1)?.path || '$')
-      stack.pop()
-      return
-    }
-
-    const propertyMatch = trimmed.match(propertyPattern)
-    if (propertyMatch) {
-      const key = JSON.parse(`"${propertyMatch[1]}"`)
-      const parent = stack.at(-1)
-      const path = appendJsonPathKey(parent?.path || '$', key)
-      linePaths.set(lineIndex + 1, path)
-      const value = propertyMatch[2].replace(/,$/, '').trim()
-      if (value.startsWith('{')) {
-        stack.push({ type: 'object', path })
-      } else if (value.startsWith('[')) {
-        stack.push({ type: 'array', path, index: 0 })
-      }
-      return
-    }
-
-    if ((trimmed.startsWith('{') || trimmed.startsWith('[')) && stack.length === 0) {
-      linePaths.set(lineIndex + 1, '$')
-      stack.push({ type: trimmed.startsWith('[') ? 'array' : 'object', path: '$', index: 0 })
-      return
-    }
-
-    if (stack.length === 0) {
-      linePaths.set(lineIndex + 1, '$')
-      return
-    }
-
-    const parent = stack.at(-1)
-    if (parent?.type === 'array') {
-      const path = `${parent.path}[${parent.index}]`
-      linePaths.set(lineIndex + 1, path)
-      parent.index += 1
-      if (trimmed.startsWith('{')) {
-        stack.push({ type: 'object', path })
-      } else if (trimmed.startsWith('[')) {
-        stack.push({ type: 'array', path, index: 0 })
-      }
-    }
-  })
-
-  return linePaths
-}
-
-const responseJsonPathForLine = lineNumber => {
-  const linePaths = buildJsonPathByLine(responseBody.value)
-  return linePaths.get(lineNumber) || ''
-}
-
-const responseValueForLine = (editor, lineNumber) => {
-  try {
-    const jsonPath = responseJsonPathForLine(lineNumber)
-    if (!jsonPath) return null
-
-    let value = JSON.parse(responseBody.value)
-    const pathParts = jsonPath.match(/\.([A-Za-z_$][\w$]*)|\[(\d+)\]|\[("(?:\\.|[^"\\])*")\]/g) || []
-    for (const part of pathParts) {
-      if (part.startsWith('.')) {
-        value = value[part.slice(1)]
-      } else if (part.startsWith('["')) {
-        value = value[JSON.parse(part.slice(1, -1))]
-      } else {
-        value = value[Number(part.slice(1, -1))]
-      }
-    }
-
-    // 字符串按原始文本复制，其他类型使用合法 JSON 表示。
-    return typeof value === 'string' ? value : JSON.stringify(value) ?? null
-  } catch {
+const getBackendPreview = async () => {
+  if (!requireEnvironment()) return null
+  if (!selectedRequest.value?.id) {
+    ElMessage.warning(t('apiTesting.requestEditor.saveBeforePreview'))
     return null
   }
+  const key = requestEditorKey.value
+  const id = selectedRequest.value.id
+  const snapshot = JSON.stringify(requestDraft.value)
+  const environmentId = selectedEnvironment.value
+  const draft = await serializeRequestDraft(requestDraft.value)
+  if (key !== requestEditorKey.value) return null
+  const { data } = await api.post(`/api-testing/requests/${id}/preview-url/`, { ...draft, environment_id: environmentId })
+  if (key !== requestEditorKey.value || String(environmentId) !== String(selectedEnvironment.value) || snapshot !== JSON.stringify(requestDraft.value)) return null
+  return data.url
 }
 
-const copyTextToClipboard = async (text, successMessage, failureMessage) => {
+const confirmUrlPreview = async () => {
   try {
-    if (navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(text)
-    } else {
-      const textarea = document.createElement('textarea')
-      textarea.value = text
-      textarea.style.position = 'fixed'
-      textarea.style.opacity = '0'
-      document.body.appendChild(textarea)
-      textarea.select()
-      document.execCommand('copy')
-      textarea.remove()
-    }
-    ElMessage.success(successMessage)
-    return true
-  } catch {
-    ElMessage.error(failureMessage)
-    return false
+    const url = await getBackendPreview()
+    if (url) await ElMessageBox.alert(url, t('apiTesting.requestEditor.confirmPreview'))
+  } catch (error) {
+    ElMessage.error(error.response?.data?.error || requestErrorMessage(error) || t('apiTesting.requestEditor.previewFailed'))
   }
-}
-
-const createResponseEditor = () => {
-  if (!responseEditorHost.value || responseEditor) return
-
-  responseEditor = monaco.editor.create(responseEditorHost.value, {
-    value: responseBody.value || '',
-    language: 'json',
-    theme: 'vs',
-    readOnly: true,
-    automaticLayout: true,
-    minimap: { enabled: false },
-    folding: true,
-    lineNumbers: 'on',
-    scrollBeyondLastLine: false,
-    contextmenu: true,
-    fontSize: 13,
-    lineHeight: 20,
-    padding: { top: 12, bottom: 12 }
-  })
-
-  responseEditor.addAction({
-    id: 'copy-response-value',
-    label: t('apiTesting.interface.copyValue'),
-    contextMenuGroupId: 'navigation',
-    contextMenuOrder: -2,
-    run: async editor => {
-      const selection = editor.getSelection()
-      const selectedValue = selection && !selection.isEmpty()
-        ? editor.getModel()?.getValueInRange(selection)
-        : null
-      const value = selectedValue ?? responseValueForLine(editor, editor.getPosition()?.lineNumber || 1)
-      if (value === null) {
-        ElMessage.warning(t('apiTesting.interface.valueUnavailable'))
-        return
-      }
-      await copyTextToClipboard(value, t('apiTesting.interface.valueCopied'), t('apiTesting.interface.copyFailed'))
-    }
-  })
-
-  responseEditor.addAction({
-    id: 'copy-response-json-path',
-    label: t('apiTesting.interface.copyJsonPath'),
-    contextMenuGroupId: 'navigation',
-    contextMenuOrder: -1,
-    run: async editor => {
-      const lineNumber = editor.getPosition()?.lineNumber || 1
-      const jsonPath = responseJsonPathForLine(lineNumber)
-      if (!jsonPath) {
-        ElMessage.warning(t('apiTesting.interface.jsonPathUnavailable'))
-        return
-      }
-      await copyTextToClipboard(
-        jsonPath,
-        t('apiTesting.interface.jsonPathCopied'),
-        t('apiTesting.interface.copyFailed')
-      )
-    }
-  })
-}
-
-const disposeResponseEditor = () => {
-  responseEditor?.dispose()
-  responseEditor = null
-}
-
-watch(responseBody, async content => {
-  await nextTick()
-  if (!response.value || !responseEditorHost.value) {
-    // 响应区域使用 v-if 渲染，切换接口时必须释放旧的 Monaco 实例。
-    disposeResponseEditor()
-    return
-  }
-  createResponseEditor()
-  if (responseEditor && responseEditor.getValue() !== content) {
-    responseEditor.setValue(content || '')
-  }
-}, { immediate: true })
-
-const getStatusType = (status) => {
-  if (status >= 200 && status < 300) return 'success'
-  if (status >= 300 && status < 400) return 'warning'
-  if (status >= 400) return 'danger'
-  return 'info'
 }
 
 const sendRequest = async () => {
-  if (!selectedRequest.value || !selectedRequest.value.url) {
-  ElMessage.warning(t('apiTesting.interface.requestUrlRequired'))
-    return
-  }
-
+  if (sending.value || saving.value || !requireEnvironment()) return
+  if (!selectedRequest.value?.url) { ElMessage.warning(t('apiTesting.interface.requestUrlRequired')); return }
+  const key = requestEditorKey.value
+  const environmentId = selectedEnvironment.value
   try {
     sending.value = true
-
-    // 新建接口需要先取得持久化 ID，才能复用现有执行和历史记录接口。
     if (!selectedRequest.value.id) {
-      const saved = await saveRequest({ silent: true })
-      if (!saved || !selectedRequest.value?.id) return
+      if (!await saveRequest({ silent: true }) || key !== requestEditorKey.value) return
     }
-
-    // 准备请求体数据
-    let bodyData = {}
-    if (hasBody.value) {
-      if (bodyType.value === 'none') {
-        bodyData = {}
-      } else if (bodyType.value === 'raw' && rawBody.value) {
-        if (rawType.value === 'json') {
-          try {
-            bodyData = {
-              type: 'json',
-              data: JSON.parse(rawBody.value)
-            }
-          } catch (e) {
-            bodyData = {
-              type: 'raw',
-              data: rawBody.value
-            }
-          }
-        } else {
-          bodyData = {
-            type: 'raw',
-            data: rawBody.value
-          }
-        }
-      } else if (bodyType.value === 'form-data') {
-        bodyData = {
-          type: 'form-data',
-          data: formData.value || []
-        }
-      } else if (bodyType.value === 'x-www-form-urlencoded') {
-        bodyData = {
-          type: 'x-www-form-urlencoded',
-          data: formUrlEncoded.value || []
-        }
-      } else if (bodyType.value === 'binary') {
-        bodyData = {
-          type: 'binary',
-          data: null
-        }
-      }
-    }
-
-    const requestData = {
-      url: selectedRequest.value.url,
-      method: selectedRequest.value.method,
-      params: convertKeyValueArrayToObject(selectedRequest.value.params || []),
-      headers: selectedRequest.value.headers,
-      extractors: selectedRequest.value.extractors || [],
-      environment_id: selectedEnvironment.value || null
-    }
-    
-    // 对于GET请求，不发送body字段
-    if (hasBody.value) {
-      requestData.body = bodyData
-    }
-
-    const apiResponse = await api.post(`/api-testing/requests/${selectedRequest.value.id}/execute/`, requestData)
-    response.value = apiResponse.data
-
+    const id = selectedRequest.value.id
+    const requestData = { ...await serializeRequestDraft(requestDraft.value), environment_id: environmentId }
+    const { data } = await api.post(`/api-testing/requests/${id}/execute/`, requestData)
+    if (key === requestEditorKey.value) response.value = data
     ElMessage.success(t('apiTesting.interface.requestSucceeded'))
   } catch (error) {
-    ElMessage.error(t('apiTesting.interface.requestFailed'))
-    console.error('请求失败:', error)
-  } finally {
-    sending.value = false
-  }
-}
-
-const onHeadersUpdate = (headers) => {
-  if (selectedRequest.value) {
-    currentHeaders.value = headers
-    selectedRequest.value.headers = headers
-  }
+    ElMessage.error(error.response?.data?.error || requestErrorMessage(error) || t('apiTesting.interface.requestFailed'))
+  } finally { sending.value = false }
 }
 
 const saveRequest = async (options = {}) => {
-  if (!selectedRequest.value || !selectedRequest.value.url) {
-  ElMessage.warning(t('apiTesting.interface.requestUrlRequired'))
-    return
+  if (saving.value || !selectedRequest.value?.url) {
+    ElMessage.warning(t('apiTesting.interface.requestUrlRequired'))
+    return false
   }
-
+  const key = requestEditorKey.value
+  const source = cloneDraft(selectedRequest.value)
   try {
     saving.value = true
-
-    // 准备保存的数据
-    let bodyData = {}
-
-    if (hasBody.value) {
-      if (bodyType.value === 'none') {
-        bodyData = {}
-      } else if (bodyType.value === 'raw' && rawBody.value) {
-        if (rawType.value === 'json') {
-          try {
-            bodyData = {
-              type: 'json',
-              data: JSON.parse(rawBody.value)
-            }
-          } catch (e) {
-            bodyData = {
-              type: 'raw',
-              data: rawBody.value
-            }
-          }
-        } else {
-          bodyData = {
-            type: 'raw',
-            data: rawBody.value
-          }
-        }
-      } else if (bodyType.value === 'form-data') {
-        bodyData = {
-          type: 'form-data',
-          data: formData.value || []
-        }
-      } else if (bodyType.value === 'x-www-form-urlencoded') {
-        bodyData = {
-          type: 'x-www-form-urlencoded',
-          data: formUrlEncoded.value || []
-        }
-      } else if (bodyType.value === 'binary') {
-        bodyData = {
-          type: 'binary',
-          data: null
-        }
-      }
-    }
-
-    // 直接从KeyValueEditor组件获取当前headers（完整数组格式）
-    let finalHeaders = []
-    if (headersEditorRef.value) {
-      const rows = headersEditorRef.value.rows || []
-      finalHeaders = rows
-        .filter(row => row.enabled && row.key && row.key.trim())
-        .map(row => ({
-          key: row.key.trim(),
-          value: row.value || '',
-          description: row.description || '',
-          enabled: row.enabled !== false
-        }))
-    } else {
-      if (selectedRequest.value.headers && Array.isArray(selectedRequest.value.headers)) {
-        finalHeaders = selectedRequest.value.headers.filter(item => item.enabled && item.key)
-      }
-    }
-
     const requestData = {
-      ...selectedRequest.value,
-      params: Array.isArray(selectedRequest.value.params) ? convertKeyValueArrayToObject(selectedRequest.value.params || []) : selectedRequest.value.params,
-      headers: finalHeaders
+      ...await serializeRequestDraft(source), name: source.name,
+      collection: source.collection || null, project: selectedProject.value
     }
-    
-    // 对于GET请求，不包含body字段
-    if (hasBody.value) {
-      requestData.body = bodyData
-    }
-
-    let response
-    if (selectedRequest.value.id) {
-      response = await api.put(`/api-testing/requests/${selectedRequest.value.id}/`, requestData)
-    } else {
-      response = await api.post('/api-testing/requests/', requestData)
-    }
-
-    selectedRequest.value = response.data
-    updateRequestTreeNode(response.data)
-  if (!options.silent) ElMessage.success(t('apiTesting.interface.saved'))
+    const result = source.id
+      ? await api.put(`/api-testing/requests/${source.id}/`, requestData)
+      : await api.post('/api-testing/requests/', requestData)
+    updateRequestTreeNode(result.data)
+    // A delayed save must never replace another request or discard newer local edits.
+    if (key === requestEditorKey.value) selectedRequest.value = { ...selectedRequest.value, id: result.data.id }
+    if (!options.silent) ElMessage.success(t('apiTesting.interface.saved'))
     return true
   } catch (error) {
-  ElMessage.error(t('apiTesting.interface.saveFailed'))
-    console.error('保存失败:', error)
+    ElMessage.error(error.response?.data?.error || requestErrorMessage(error) || t('apiTesting.interface.saveFailed'))
     return false
-  } finally {
-    saving.value = false
-  }
-}
-
-const onBodyTypeChange = () => {
-  // 保存当前body数据到selectedRequest
-  if (selectedRequest.value) {
-    if (bodyType.value === 'raw' && rawBody.value) {
-      if (rawType.value === 'json') {
-        try {
-          selectedRequest.value.body = {
-            type: 'json',
-            data: JSON.parse(rawBody.value)
-          }
-        } catch (e) {
-          selectedRequest.value.body = {
-            type: 'raw',
-            data: rawBody.value
-          }
-        }
-      } else {
-        selectedRequest.value.body = {
-          type: 'raw',
-          data: rawBody.value
-        }
-      }
-    } else if (bodyType.value === 'form-data') {
-      selectedRequest.value.body = {
-        type: 'form-data',
-        data: formData.value || []
-      }
-    } else if (bodyType.value === 'x-www-form-urlencoded') {
-      selectedRequest.value.body = {
-        type: 'x-www-form-urlencoded',
-        data: formUrlEncoded.value || []
-      }
-    } else if (bodyType.value === 'binary') {
-      selectedRequest.value.body = {
-        type: 'binary',
-        data: null
-      }
-    } else {
-      selectedRequest.value.body = {
-        type: 'none',
-        data: null
-      }
-    }
-  }
-}
-
-const formatResponse = () => {
-  if (!response.value || !response.value.response_data) return
-
-  try {
-    if (response.value.response_data.json) {
-      response.value.response_data.json = JSON.parse(JSON.stringify(response.value.response_data.json))
-    }
-    ElMessage.success(t('apiTesting.interface.formatSucceeded'))
-  } catch (e) {
-    ElMessage.error(t('apiTesting.interface.formatFailed'))
-  }
-}
-
-const copyResponse = () => {
-  if (responseBody.value) {
-    navigator.clipboard.writeText(responseBody.value)
-    ElMessage.success(t('apiTesting.interface.clipboardCopied'))
-  }
-}
-
-const evaluateJsonPath = () => {
-  if (!response.value || !response.value.response_data || !response.value.response_data.json || !jsonPathExpression.value) {
-    jsonPathResult.value = null
-    return
-  }
-
-  try {
-    // 简单的JSONPath实现
-    const json = response.value.response_data.json
-    let result = json
-
-    // 解析JSONPath表达式
-    const parts = jsonPathExpression.value.split('.').filter(p => p)
-
-    for (const part of parts) {
-      if (part === '$') {
-        result = json
-      } else if (part.includes('[')) {
-        // 处理数组索引
-        const [arrayName, indexStr] = part.split('[')
-        const index = parseInt(indexStr.replace(']', ''))
-        result = result[arrayName][index]
-      } else {
-        result = result[part]
-      }
-    }
-
-    jsonPathResult.value = JSON.stringify(result, null, 2)
-  } catch (e) {
-  jsonPathResult.value = t('apiTesting.interface.jsonPathError')
-  }
-}
-
-const copyJsonPathResult = () => {
-  if (jsonPathResult.value) {
-    navigator.clipboard.writeText(jsonPathResult.value)
-  ElMessage.success(t('apiTesting.interface.clipboardCopied'))
-  }
-}
-
-const formatAssertionValue = (value) => {
-  if (typeof value === 'object' && value !== null) {
-    return JSON.stringify(value, null, 2)
-  }
-  return value
+  } finally { saving.value = false }
 }
 
 const createCollection = async () => {
@@ -2474,7 +1430,7 @@ const createCollection = async () => {
   }
 
   try {
-    const response = await api.post('/api-testing/collections/', {
+    await api.post('/api-testing/collections/', {
       ...collectionForm,
       project: selectedProject.value
     })
@@ -2510,6 +1466,7 @@ const updateCollection = async () => {
 const importCurl = () => {
   // 清空上次的 curl 命令
   curlCommand.value = ''
+  curlPreview.value = null
   showCurlImportDialog.value = true
 }
 
@@ -2526,33 +1483,8 @@ const parseAndImportCurl = async () => {
       createEmptyRequest()
     }
 
-    // 回填基本字段
-    selectedRequest.value.method = requestModel.method
-    selectedRequest.value.url = requestModel.baseURL + requestModel.path
-    selectedRequest.value.headers = requestModel.headers
-    selectedRequest.value.params = requestModel.query
-
-    // 回填 body 相关字段
-    if (requestModel.body.mode !== 'none') {
-      if (requestModel.body.mode === 'json') {
-        bodyType.value = 'raw'
-        rawType.value = 'json'
-        rawBody.value = requestModel.body.json || ''
-      } else if (requestModel.body.mode === 'raw') {
-        bodyType.value = 'raw'
-        rawType.value = 'text'
-        rawBody.value = requestModel.body.raw || ''
-      } else if (requestModel.body.mode === 'formdata') {
-        bodyType.value = 'form-data'
-        formData.value = requestModel.body.formdata || []
-      } else if (requestModel.body.mode === 'urlencoded') {
-        bodyType.value = 'x-www-form-urlencoded'
-        formUrlEncoded.value = requestModel.body.urlencoded || []
-      }
-    }
-
-    showCurlImportDialog.value = false
-    ElMessage.success(t('apiTesting.interface.imported'))
+    // Import is explicit; the host is only a suggestion and never updates an environment.
+    curlPreview.value = { model: requestModel, draft: curlModelToDraft(requestModel) }
   } catch (error) {
     ElMessage.error(t('apiTesting.interface.curlParseFailed'))
     console.error('解析CURL命令失败:', error)
@@ -2560,59 +1492,21 @@ const parseAndImportCurl = async () => {
 }
 
 // 辅助函数：将对象格式转换为数组格式
-const convertToArrayFormat = (data) => {
-  if (!data) return []
-  // 如果已经是数组格式，直接返回
-  if (Array.isArray(data)) return data
-  // 如果是对象格式，转换为数组格式
-  if (typeof data === 'object') {
-    return Object.entries(data).map(([key, value]) => ({
-      key,
-      value: typeof value === 'object' ? JSON.stringify(value) : String(value),
-      enabled: true
-    }))
-  }
-  return []
+const codegenRequestModel = async () => {
+  if (!requireEnvironment()) return null
+  const draft = await serializeRequestDraft(requestDraft.value)
+  const url = selectedRequest.value.id ? await getBackendPreview() : previewRequestUrl(draft, currentEnvironment.value)
+  if (!url) throw new Error(t('apiTesting.requestEditor.previewFailed'))
+  return toCodegenModel(draft, url)
 }
-
-const exportRequest = () => {
+const exportRequest = async () => {
   if (!selectedRequest.value) return
-
   try {
-    let baseURL = ''
-    let path = ''
-
-    if (selectedRequest.value.url) {
-      try {
-        const url = new URL(selectedRequest.value.url)
-        baseURL = `${url.protocol}//${url.host}`
-        path = url.pathname
-      } catch (error) {
-        baseURL = selectedRequest.value.url
-        path = ''
-      }
-    }
-
-    const requestModel = {
-      method: selectedRequest.value?.method || 'GET',
-      baseURL: baseURL,
-      path: path,
-      query: convertToArrayFormat(selectedRequest.value?.params),
-      headers: convertToArrayFormat(selectedRequest.value?.headers),
-      body: {
-        mode: 'none',
-        raw: rawBody.value || ''
-      },
-      timeout: 30000
-    }
-
-    const curlCommand = RequestModelParser.toCurl(requestModel)
-    navigator.clipboard.writeText(curlCommand)
+    const model = await codegenRequestModel()
+    if (!model) return
+    await navigator.clipboard.writeText(RequestModelParser.toCurl(model))
     ElMessage.success(t('apiTesting.interface.clipboardCopied'))
-  } catch (error) {
-    ElMessage.error(t('apiTesting.interface.exportFailed'))
-    console.error('导出失败:', error)
-  }
+  } catch (error) { ElMessage.error(requestErrorMessage(error) || t('apiTesting.interface.exportFailed')) }
 }
 
 const generateCode = async (language) => {
@@ -2627,48 +1521,8 @@ const generateCode = async (language) => {
     // 更新语言选择器的值
     codeLanguage.value = language
 
-    // 构建完整的 requestModel 对象
-    let bodyMode = 'none'
-
-    if (bodyType.value === 'raw') {
-      bodyMode = rawType.value === 'json' ? 'json' : 'raw'
-    } else if (bodyType.value === 'form-data') {
-      bodyMode = 'formdata'
-    } else if (bodyType.value === 'x-www-form-urlencoded') {
-      bodyMode = 'urlencoded'
-    } else if (bodyType.value === 'binary') {
-      bodyMode = 'binary'
-    }
-
-    // 解析 URL 获取 baseURL 和 path
-    let baseURL = ''
-    let path = ''
-    try {
-      const url = new URL(selectedRequest.value.url)
-      baseURL = `${url.protocol}//${url.host}`
-      path = url.pathname
-    } catch (error) {
-      // 如果 URL 解析失败，使用整个 URL 作为 path
-      path = selectedRequest.value.url
-    }
-
-    // 构建完整的 requestModel 对象
-    const requestModel = {
-      method: selectedRequest.value.method || 'GET',
-      baseURL: baseURL,
-      path: path,
-      query: Array.isArray(selectedRequest.value.params) ? selectedRequest.value.params : [],
-      headers: Array.isArray(selectedRequest.value.headers) ? selectedRequest.value.headers : [],
-      body: {
-        mode: bodyMode,
-        raw: rawBody.value,
-        json: rawBody.value,
-        formdata: formData.value,
-        urlencoded: formUrlEncoded.value
-      },
-      timeout: 30000
-    }
-
+    const requestModel = await codegenRequestModel()
+    if (!requestModel) return
     const code = await CodeGenerator.generateCode(requestModel, language)
     generatedCode.value = code
     showCodeGenerateDialog.value = true
@@ -2685,73 +1539,60 @@ const copyGeneratedCode = () => {
   }
 }
 
-const toggleWebSocketConnection = async () => {
-  if (!selectedRequest.value || !selectedRequest.value.url) {
-  ElMessage.warning(t('apiTesting.interface.websocketUrlRequired'))
-    return
-  }
-
-  if (websocketConnectionStatus.value === 'connected') {
-    // 关闭连接
-    if (websocketConnection.value) {
-      websocketConnection.value.close()
-      websocketConnection.value = null
-    }
-    websocketConnectionStatus.value = 'disconnected'
-    ElMessage.success(t('apiTesting.interface.websocketClosed'))
-  } else {
-    // 建立连接
-    try {
-      websocketConnectionStatus.value = 'connecting'
-      const wsUrl = selectedRequest.value.url.replace('http://', 'ws://').replace('https://', 'wss://')
-
-      websocketConnection.value = new WebSocket(wsUrl)
-
-      websocketConnection.value.onopen = () => {
-        websocketConnectionStatus.value = 'connected'
-      ElMessage.success(t('apiTesting.interface.websocketConnected'))
-        websocketMessages.value.push({
-          type: 'connected',
-          content: t('apiTesting.interface.websocketConnected'),
-          timestamp: new Date().toLocaleString()
-        })
-      }
-
-      websocketConnection.value.onmessage = (event) => {
-        websocketMessages.value.push({
-          type: 'received',
-          content: event.data,
-          timestamp: new Date().toLocaleString()
-        })
-      }
-
-      websocketConnection.value.onclose = () => {
-        websocketConnectionStatus.value = 'disconnected'
-        websocketConnection.value = null
-        websocketMessages.value.push({
-          type: 'info',
-          content: t('apiTesting.interface.websocketClosed'),
-          timestamp: new Date().toLocaleString()
-        })
-      }
-
-      websocketConnection.value.onerror = (error) => {
-        websocketConnectionStatus.value = 'disconnected'
-        websocketConnection.value = null
-        ElMessage.error(t('apiTesting.interface.websocketFailed'))
-        websocketMessages.value.push({
-          type: 'error',
-          content: `${t('apiTesting.interface.websocketFailed')}: ${error.message}`,
-          timestamp: new Date().toLocaleString()
-        })
-      }
-    } catch (error) {
-      websocketConnectionStatus.value = 'disconnected'
-      ElMessage.error(t('apiTesting.interface.websocketFailed'))
-      console.error('WebSocket连接失败:', error)
-    }
+let wsGeneration = 0
+const disconnectWebSocket = () => {
+  wsGeneration += 1
+  const socket = websocketConnection.value
+  websocketConnection.value = null
+  websocketConnectionStatus.value = 'disconnected'
+  if (socket) {
+    socket.onopen = socket.onmessage = socket.onerror = socket.onclose = null
+    socket.close()
   }
 }
+const addWsMessage = (type, content) => websocketMessages.value.push({ type, content, timestamp: new Date().toLocaleString() })
+const toggleWebSocketConnection = async () => {
+  if (websocketConnectionStatus.value !== 'disconnected') { disconnectWebSocket(); return }
+  if (!requireEnvironment()) return
+  if (!selectedRequest.value?.id) { ElMessage.warning(t('apiTesting.requestEditor.saveBeforePreview')); return }
+  const generation = ++wsGeneration
+  websocketConnectionStatus.value = 'connecting'
+  try {
+    const wsUrl = await getBackendPreview()
+    if (generation !== wsGeneration) return
+    if (!wsUrl) { websocketConnectionStatus.value = 'disconnected'; return }
+    if (!/^wss?:\/\//i.test(wsUrl)) throw new Error(t('apiTesting.requestEditor.previewFailed'))
+    const socket = new WebSocket(wsUrl)
+    websocketConnection.value = socket
+    socket.onopen = () => {
+      if (generation !== wsGeneration) return
+      websocketConnectionStatus.value = 'connected'
+      addWsMessage('connected', t('apiTesting.interface.websocketConnected'))
+    }
+    socket.onmessage = async event => {
+      const content = event.data instanceof Blob ? `[Binary ${event.data.size} bytes]` : event.data
+      if (generation === wsGeneration) addWsMessage('received', content)
+    }
+    socket.onclose = () => {
+      if (generation !== wsGeneration) return
+      websocketConnectionStatus.value = 'disconnected'
+      websocketConnection.value = null
+      addWsMessage('info', t('apiTesting.interface.websocketClosed'))
+    }
+    socket.onerror = () => {
+      if (generation !== wsGeneration) return
+      disconnectWebSocket()
+      addWsMessage('error', t('apiTesting.interface.websocketFailed'))
+      ElMessage.error(t('apiTesting.interface.websocketFailed'))
+    }
+  } catch (error) {
+    if (generation !== wsGeneration) return
+    disconnectWebSocket()
+    ElMessage.error(error.response?.data?.error || requestErrorMessage(error) || t('apiTesting.interface.websocketFailed'))
+  }
+}
+watch(selectedEnvironment, disconnectWebSocket)
+watch(() => selectedRequest.value?.request_type, disconnectWebSocket)
 
 const sendWebSocketMessage = () => {
   if (!websocketConnection.value || websocketConnectionStatus.value !== 'connected') {
@@ -2765,18 +1606,13 @@ const sendWebSocketMessage = () => {
   }
 
   try {
-    let message = websocketMessageContent.value
-    if (websocketMessageType.value === 'json') {
-
-      message = JSON.parse(message)
-    }
-
+    const message = websocketMessageType.value === 'binary'
+      ? websocketBinaryFile.value
+      : websocketMessageType.value === 'json'
+        ? JSON.stringify(JSON.parse(websocketMessageContent.value))
+        : websocketMessageContent.value
     websocketConnection.value.send(message)
-    websocketMessages.value.push({
-      type: 'sent',
-      content: websocketMessageContent.value,
-      timestamp: new Date().toLocaleString()
-    })
+    addWsMessage('sent', websocketMessageType.value === 'binary' ? `[Binary ${websocketBinaryFile.value.name}]` : message)
 
     if (websocketMessageType.value !== 'binary') {
       websocketMessageContent.value = ''
@@ -2822,83 +1658,31 @@ const formatJson = (str) => {
   }
 }
 
-const openDataFactorySelectorForBody = (field) => {
-  currentBodyField.value = field
-  currentAssertion.value = null
-  currentAssertionField.value = ''
-  currentAssertionIndex.value = -1
-  currentScriptField.value = ''
+const openEditorDataFactory = target => {
+  helperTarget.value = { ...target, key: requestEditorKey.value }
   showDataFactorySelector.value = true
 }
-
-const openDataFactorySelectorForScript = (field) => {
-  currentScriptField.value = field
-  currentAssertion.value = null
-  currentAssertionField.value = ''
-  currentAssertionIndex.value = -1
-  showDataFactorySelector.value = true
-}
-
-const openDataFactorySelector = (assertion, field, index) => {
-  currentAssertion.value = assertion
-  currentAssertionField.value = field
-  currentAssertionIndex.value = index
-  currentScriptField.value = ''
-  showDataFactorySelector.value = true
-}
-
-const openVariableHelper = (field) => {
-  currentEditingField.value = field
-  currentAssertion.value = null
-  currentAssertionField.value = ''
-  currentAssertionIndex.value = -1
+const openEditorVariableHelper = target => {
+  helperTarget.value = { ...target, key: requestEditorKey.value }
   showVariableHelper.value = true
 }
-
-const openVariableHelperForAssertion = (assertion, field, index) => {
-  currentAssertion.value = assertion
-  currentAssertionField.value = field
-  currentAssertionIndex.value = index
-  currentEditingField.value = ''
-  showVariableHelper.value = true
-}
-
-const insertVariable = (variable) => {
-  // 确保variable是对象（处理行点击事件）
-  if (typeof variable === 'object' && variable !== null) {
-    if (currentEditingField.value && selectedRequest.value) {
-      const example = variable.example
-
-      if (currentEditingField.value === 'rawBody') {
-        // 在光标位置插入变量
-        insertTextAtCursor(rawBodyInputRef, example)
-      } else if (currentEditingField.value === 'pre_request_script') {
-        // 对于脚本字段，暂时保持追加到末尾的行为
-        // （如果需要光标插入，需要为脚本编辑器添加ref并实现类似逻辑）
-        const currentValue = selectedRequest.value.pre_request_script || ''
-        selectedRequest.value.pre_request_script = currentValue + example
-      } else if (currentEditingField.value === 'post_request_script') {
-        const currentValue = selectedRequest.value.post_request_script || ''
-        selectedRequest.value.post_request_script = currentValue + example
-      }
-
-    ElMessage.success(t('apiTesting.interface.variableInserted', { name: variable.name }))
-      showVariableHelper.value = false
-    } else if (currentAssertion.value && currentAssertionField.value) {
-      const example = variable.example
-      const field = currentAssertionField.value
-
-      const currentValue = currentAssertion.value[field] || ''
-      if (!currentValue) {
-        currentAssertion.value[field] = example
-      } else {
-        currentAssertion.value[field] = currentValue + example
-      }
-
-    ElMessage.success(t('apiTesting.interface.variableInserted', { name: variable.name }))
-      showVariableHelper.value = false
-    }
+const insertHelperText = (text, replace = false) => {
+  const target = helperTarget.value
+  if (!target || target.key !== requestEditorKey.value) return
+  if (target.target === 'assertion') {
+    const draft = createRequestDraft(requestDraft.value)
+    const assertion = draft.assertions[target.index]
+    if (!assertion || Array.isArray(assertion[target.field])) return
+    assertion[target.field] = replace ? text : `${assertion[target.field] || ''}${text}`
+    requestDraft.value = draft
+  } else {
+    requestEditorRef.value?.insertText(target.field, text)
   }
+}
+const insertVariable = variable => {
+  insertHelperText(variable.example)
+  showVariableHelper.value = false
+  ElMessage.success(t('apiTesting.interface.variableInserted', { name: variable.name }))
 }
 
 const handleDataFactorySelect = (record) => {
@@ -2936,65 +1720,13 @@ const handleDataFactorySelect = (record) => {
     valueToSet = JSON.stringify(valueToSet)
   }
 
-  // 如果是断言字段
-  if (currentAssertion.value) {
-    currentAssertion.value[currentAssertionField.value] = valueToSet
-    ElMessage.success(`${t('apiTesting.interface.referencedToAssertion')}: ${record.tool_name}`)
-  }
-  // 如果是Body字段
-  else if (currentBodyField.value) {
-    if (currentBodyField.value === 'rawBody') {
-      // 在光标位置插入文本
-      insertTextAtCursor(rawBodyInputRef, valueToSet)
-    }
-    ElMessage.success(t('apiTesting.interface.dataFactoryBodyReferenced', { name: record.tool_name }))
-  }
-  // 如果是脚本字段
-  else if (currentScriptField.value && selectedRequest.value) {
-    // 将值插入到脚本中
-    const insertText = `\n// 来自数据工厂: ${record.tool_name}\nconst ${record.tool_name.replace(/\s+/g, '_')} = ${JSON.stringify(valueToSet)}\n`
-    const currentValue = selectedRequest.value[currentScriptField.value] || ''
-    selectedRequest.value[currentScriptField.value] = currentValue + insertText
-    ElMessage.success(t('apiTesting.interface.dataFactoryScriptReferenced', { name: record.tool_name }))
-  }
-
+  const target = helperTarget.value
+  const text = target?.field?.endsWith('_script')
+    ? `\n// Data factory output\nconst factoryOutput = ${JSON.stringify(valueToSet)}\n`
+    : valueToSet
+  insertHelperText(text, target?.target === 'assertion')
+  ElMessage.success(t('apiTesting.interface.dataFactoryBodyReferenced', { name: record.tool_name }))
   showDataFactorySelector.value = false
-}
-
-// 在光标位置插入文本的辅助函数
-const insertTextAtCursor = (inputRef, textToInsert) => {
-  if (!inputRef.value) {
-    // 如果没有找到ref，直接追加到末尾
-    rawBody.value = rawBody.value + textToInsert
-    return
-  }
-
-  // 获取textarea DOM元素
-  const textarea = inputRef.value.$el?.querySelector('textarea')
-  if (!textarea) {
-    // 如果找不到textarea元素，直接追加到末尾
-    rawBody.value = rawBody.value + textToInsert
-    return
-  }
-
-  const startPos = textarea.selectionStart
-  const endPos = textarea.selectionEnd
-  const currentValue = rawBody.value
-
-  // 在光标位置插入新文本
-  const newValue =
-    currentValue.substring(0, startPos) +
-    textToInsert +
-    currentValue.substring(endPos)
-
-  rawBody.value = newValue
-
-  // 恢复光标位置到插入文本的末尾
-  nextTick(() => {
-    const newCursorPos = startPos + textToInsert.length
-    textarea.setSelectionRange(newCursorPos, newCursorPos)
-    textarea.focus()
-  })
 }
 
 // 加载变量函数
@@ -3124,7 +1856,7 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
-  disposeResponseEditor()
+  disconnectWebSocket()
   // 移除全局点击事件监听器
   document.removeEventListener('click', handleGlobalClick)
 })
@@ -3315,19 +2047,6 @@ const useLocalVariableCategories = () => {
   margin-top: 10px;
 }
 
-.path-parameters-panel {
-  margin-top: 16px;
-  border-top: 1px solid #ebeef5;
-  padding-top: 12px;
-}
-
-.path-parameters-title {
-  margin-bottom: 8px;
-  color: #606266;
-  font-size: 14px;
-  font-weight: 600;
-}
-
 @media (max-width: 640px) {
   .import-preview-item {
     flex-wrap: wrap;
@@ -3502,228 +2221,6 @@ const useLocalVariableCategories = () => {
   gap: 20px;
 }
 
-/* 请求头部 */
-.request-header {
-  margin-bottom: 0;
-  padding: 24px;
-  background: #ffffff;
-  border-radius: 12px;
-  border: 1px solid #e9ecef;
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
-  transition: box-shadow 0.2s ease;
-}
-
-.request-header:hover {
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
-}
-
-.request-line {
-  display: flex;
-  gap: 12px;
-  margin-bottom: 16px;
-  align-items: center;
-  flex-wrap: wrap;
-}
-
-/* 环境选择器独立占用较小宽度，方法和 URL 组成连续的请求目标区域。 */
-.request-target {
-  display: flex;
-  flex: 1;
-  min-width: 260px;
-  align-items: stretch;
-}
-
-/* 方法选择器样式 */
-.method-select {
-  width: 104px;
-  flex: 0 0 104px;
-}
-
-.method-select :deep(.el-select) {
-  border-radius: 6px;
-}
-
-/* 为不同方法的选择器添加颜色 */
-.method-select.get :deep(.el-select .el-input__wrapper) {
-  background-color: #61affe !important;
-  color: white !important;
-  border-color: #61affe !important;
-}
-
-.method-select.post :deep(.el-select .el-input__wrapper) {
-  background-color: #49cc90 !important;
-  color: white !important;
-  border-color: #49cc90 !important;
-}
-
-.method-select.put :deep(.el-select .el-input__wrapper) {
-  background-color: #fca130 !important;
-  color: white !important;
-  border-color: #fca130 !important;
-}
-
-.method-select.delete :deep(.el-select .el-input__wrapper) {
-  background-color: #f93e3e !important;
-  color: white !important;
-  border-color: #f93e3e !important;
-}
-
-.method-select.patch :deep(.el-select .el-input__wrapper) {
-  background-color: #50e3c2 !important;
-  color: white !important;
-  border-color: #50e3c2 !important;
-}
-
-.method-select.head :deep(.el-select .el-input__wrapper) {
-  background-color: #9013fe !important;
-  color: white !important;
-  border-color: #9013fe !important;
-}
-
-.method-select.options :deep(.el-select .el-input__wrapper) {
-  background-color: #0ebeff !important;
-  color: white !important;
-  border-color: #0ebeff !important;
-}
-
-.method-select.connect :deep(.el-select .el-input__wrapper) {
-  background-color: #7f8c8d !important;
-  color: white !important;
-  border-color: #7f8c8d !important;
-}
-
-.method-select.trace :deep(.el-select .el-input__wrapper) {
-  background-color: #e67e22 !important;
-  color: white !important;
-  border-color: #e67e22 !important;
-}
-
-/* 方法选择器通用样式 */
-.method-select :deep(.el-select .el-input__inner) {
-  color: white !important;
-}
-
-.method-select :deep(.el-select .el-select__icon) {
-  color: white !important;
-}
-
-.method-select :deep(.el-select .el-select__selected-item),
-.method-select :deep(.el-select .el-select__selected-item span),
-.method-select :deep(.el-select .el-select__placeholder) {
-  background-color: transparent !important;
-  color: white !important;
-}
-
-.method-select :deep(.el-select .el-input__wrapper .el-select__placeholder) {
-  background-color: transparent !important;
-  color: white !important;
-}
-
-.method-select :deep(.el-select .el-input__wrapper .el-input__inner::placeholder) {
-  background-color: transparent !important;
-  color: white !important;
-}
-
-.method-select :deep(.el-select .el-input__wrapper .el-input__inner::-webkit-input-placeholder) {
-  background-color: transparent !important;
-  color: white !important;
-}
-
-.method-select :deep(.el-select .el-input__wrapper .el-input__inner::-moz-placeholder) {
-  background-color: transparent !important;
-  color: white !important;
-}
-
-.method-select :deep(.el-select .el-input__wrapper .el-input__inner:-ms-input-placeholder) {
-  background-color: transparent !important;
-  color: white !important;
-}
-
-/* 方法选择器下拉菜单样式 */
-.method-select :deep(.el-select-dropdown) {
-  border-radius: 6px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-}
-
-.method-select :deep(.el-select-dropdown__item) {
-  padding: 8px 16px;
-  border-radius: 4px;
-}
-
-.method-select :deep(.el-select-dropdown__item:hover) {
-  background-color: #f0f0f0;
-}
-
-.method-select :deep(.el-select-dropdown__item.selected) {
-  background-color: #ecf5ff;
-  color: #409eff;
-}
-
-/* 为不同方法的下拉选项添加颜色 */
-.method-select :deep(.el-select-dropdown__item[class*="method-"]) {
-  position: relative;
-}
-
-.method-select :deep(.el-select-dropdown__item[class*="method-"])::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 4px;
-  border-radius: 0 4px 4px 0;
-}
-
-.method-select :deep(.el-select-dropdown__item.method-get::before) {
-  background-color: #61affe;
-}
-
-.method-select :deep(.el-select-dropdown__item.method-post::before) {
-  background-color: #49cc90;
-}
-
-.method-select :deep(.el-select-dropdown__item.method-put::before) {
-  background-color: #fca130;
-}
-
-.method-select :deep(.el-select-dropdown__item.method-delete::before) {
-  background-color: #f93e3e;
-}
-
-.method-select :deep(.el-select-dropdown__item.method-patch::before) {
-  background-color: #50e3c2;
-}
-
-.method-select :deep(.el-select-dropdown__item.method-head::before) {
-  background-color: #9013fe;
-}
-
-.method-select :deep(.el-select-dropdown__item.method-options::before) {
-  background-color: #0ebeff;
-}
-
-.method-select :deep(.el-select-dropdown__item.method-connect::before) {
-  background-color: #7f8c8d;
-}
-
-.method-select :deep(.el-select-dropdown__item.method-trace::before) {
-  background-color: #e67e22;
-}
-
-.url-input {
-  flex: 1;
-  min-width: 0;
-}
-
-.request-target .method-select :deep(.el-input__wrapper) {
-  border-radius: 6px 0 0 6px;
-}
-
-.request-target .url-input :deep(.el-input__wrapper) {
-  margin-left: -1px;
-  border-radius: 0 6px 6px 0;
-}
-
 .env-select {
   width: 128px;
   flex: 0 0 128px;
@@ -3733,20 +2230,7 @@ const useLocalVariableCategories = () => {
   border-radius: 6px;
 }
 
-.send-button {
-  width: 100px;
-  border-radius: 8px;
-  font-weight: 600;
-  transition: all 0.2s ease;
-  background: #5046e5;
-  border: none;
-}
-
-.send-button:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 4px 16px rgba(80, 70, 229, 0.4);
-  background: #4338ca;
-}
+.curl-preview pre { max-height: 280px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
 
 /* 请求元数据 */
 .request-meta {
@@ -3783,221 +2267,6 @@ const useLocalVariableCategories = () => {
 
 .action-buttons .el-dropdown {
   border-radius: 6px;
-}
-
-/* 标签页内容 */
-.tab-content {
-  background: white;
-  border: 1px solid #e4e7ed;
-  border-radius: 10px;
-  padding: 24px;
-  margin-bottom: 0;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
-}
-
-/* 响应区域 */
-.response-section {
-  background: white;
-  border: 1px solid #e9ecef;
-  border-radius: 12px;
-  overflow: hidden;
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
-  transition: box-shadow 0.2s ease;
-}
-
-.response-section:hover {
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
-}
-
-.response-header {
-  padding: 20px 24px;
-  background: #f8f9fa;
-  border-bottom: 1px solid #e9ecef;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.response-header h3 {
-  margin: 0;
-  font-size: 16px;
-  font-weight: 600;
-  color: #303133;
-}
-
-.response-info {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.response-time {
-  font-size: 14px;
-  color: #606266;
-  font-weight: 500;
-  background: #e9ecef;
-  padding: 4px 12px;
-  border-radius: 16px;
-}
-
-/* 响应体 */
-.response-body {
-  padding: 10px;
-  min-height: 400px;
-  max-height: 600px;
-  overflow: auto;
-}
-
-.response-actions {
-  margin-bottom: 16px;
-}
-
-.response-actions .el-button-group {
-  border-radius: 8px;
-  overflow: hidden;
-  background: white;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-}
-
-.response-actions .el-button {
-  border-radius: 0;
-  transition: all 0.2s ease;
-  background: transparent;
-  border: none;
-  color: #666;
-}
-
-.response-actions .el-button:hover {
-  background: #f5f7fa;
-  color: #5046e5;
-}
-
-.response-content {
-  height: 480px;
-  min-height: 320px;
-  background: white;
-  border-radius: 8px;
-  border: 1px solid #e9ecef;
-  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.05);
-  overflow: hidden;
-}
-
-.response-content :deep(.monaco-editor),
-.response-content :deep(.monaco-editor .overflow-guard) {
-  border-radius: 8px;
-}
-
-/* 响应头 */
-.response-headers {
-  padding: 24px;
-  background: #f8f9fa;
-  border-radius: 10px;
-  margin: 20px;
-  border: 1px solid #e9ecef;
-  max-height: 80vh;
-  overflow: auto;
-}
-
-.header-row {
-  padding: 8px 0;
-  border-bottom: 1px solid #e9ecef;
-}
-
-.header-row:last-child {
-  border-bottom: none;
-}
-
-/* 响应区域：一级 tab（响应信息 / 请求信息）切换，内部二级 tab 细分 */
-.result-tabs {
-  margin-top: 4px;
-  padding: 0 20px 20px;
-}
-
-.result-tabs :deep(.el-tabs__header) {
-  margin: 0 0 12px;
-}
-
-/* 请求配置 tabs 使用合并前的紧凑尺寸和激活色，覆盖 Element Plus 默认样式。 */
-.request-tabs :deep(.el-tabs__item) {
-  height: 36px !important;
-  line-height: 36px !important;
-  color: #606266;
-  font-size: 13px;
-}
-
-.request-tabs :deep(.el-tabs__item.is-active) {
-  color: #6366f1 !important;
-  font-weight: 500;
-}
-
-.request-tabs :deep(.el-tabs__active-bar) {
-  background-color: #6366f1 !important;
-}
-
-.request-tabs :deep(.el-tabs__nav-wrap::after) {
-  height: 1px;
-  background: #f0f0f0;
-}
-
-/* 嵌套的二级 tabs：去除默认大间距，紧贴上级 tab 内 */
-.nested-tabs :deep(.el-tabs__header) {
-  margin: 0 0 8px;
-}
-
-/* 请求行（方法 + URL） */
-.request-line {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 12px;
-  background: #ecf5ff;
-  border-radius: 6px;
-  border: 1px solid #d9ecff;
-  margin-bottom: 8px;
-}
-
-.request-line strong {
-  color: #409eff;
-  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
-  flex-shrink: 0;
-}
-
-.request-url {
-  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
-  font-size: 13px;
-  word-break: break-all;
-  color: #303133;
-  min-width: 0;
-}
-
-/* 空数据提示 */
-.empty-tip {
-  padding: 24px 16px;
-  color: #909399;
-  font-size: 13px;
-  text-align: center;
-  background: #f8f9fa;
-  border-radius: 6px;
-}
-
-/* 代码编辑器 */
-.code-editor {
-  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
-  font-size: 14px;
-  line-height: 1.6;
-  background: #f8f9fa;
-  border: 1px solid #e9ecef;
-  border-radius: 8px;
-  padding: 16px;
-  min-height: 200px;
-  resize: vertical;
-  transition: all 0.2s ease;
-}
-
-.code-editor:focus {
-  outline: none;
-  border-color: #5046e5;
-  box-shadow: 0 0 0 2px rgba(80, 70, 229, 0.2);
 }
 
 .code-generate {
@@ -4038,469 +2307,6 @@ const useLocalVariableCategories = () => {
   background: #f5f3ff;
   color: #5046e5;
   font-weight: 500;
-}
-
-/* 脚本编辑器容器 */
-.script-editor-container {
-  position: relative;
-}
-
-.script-editor-container .el-input {
-  border-radius: 6px;
-}
-
-.script-editor-container .el-input__textarea {
-  min-height: 200px;
-  font-family: 'Courier New', Courier, monospace;
-  font-size: 14px;
-  line-height: 1.6;
-}
-
-/* 脚本按钮 */
-.script-buttons {
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  display: flex;
-  gap: 6px;
-  z-index: 10;
-  background: white;
-  border-radius: 8px;
-  padding: 4px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-}
-
-.script-buttons .el-button {
-  border-radius: 6px;
-  font-size: 11px;
-  padding: 4px 10px;
-  transition: all 0.2s ease;
-  background: transparent;
-  border: none;
-}
-
-.script-buttons .el-button:hover {
-  transform: none;
-  box-shadow: none;
-  background: #f5f7fa;
-}
-
-.script-factory-btn {
-  color: #10b981;
-}
-
-.script-factory-btn:hover {
-  background: #ecfdf5;
-}
-
-.script-variable-btn {
-  color: #5046e5;
-}
-
-.script-variable-btn:hover {
-  background: #f5f3ff;
-}
-
-/* Raw 选项 */
-.raw-options {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  margin-bottom: 16px;
-  flex-wrap: wrap;
-  background: white;
-  border-radius: 8px;
-  padding: 8px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-}
-
-.raw-options .el-select {
-  width: 150px;
-  border-radius: 6px;
-}
-
-.raw-options .el-button {
-  border-radius: 6px;
-  font-size: 11px;
-  padding: 4px 10px;
-  transition: all 0.2s ease;
-  background: transparent;
-  border: none;
-}
-
-.raw-options .el-button:hover {
-  transform: none;
-  box-shadow: none;
-  background: #f5f7fa;
-}
-
-.data-factory-btn {
-  background-color: #409eff !important;
-  border-color: #409eff !important;
-  color: white !important;
-}
-
-.data-factory-btn:hover {
-  background-color: #66b1ff !important;
-  border-color: #66b1ff !important;
-}
-
-.variable-helper-btn {
-  background-color: #67c23a !important;
-  border-color: #67c23a !important;
-  color: white !important;
-}
-
-.variable-helper-btn:hover {
-  background-color: #5daf34 !important;
-  border-color: #5daf34 !important;
-}
-
-.raw-body {
-  border-radius: 6px;
-  font-family: 'Courier New', Courier, monospace;
-  font-size: 14px;
-  line-height: 1.6;
-}
-
-/* 标签页按钮 */
-.tab-buttons {
-  display: flex;
-  gap: 10px;
-  margin-bottom: 20px;
-  flex-wrap: wrap;
-}
-
-.tab-button {
-  padding: 10px 20px;
-  border: 1px solid #e4e7ed;
-  background: white;
-  border-radius: 6px;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  font-size: 14px;
-  color: #606266;
-}
-
-.tab-button.active {
-  background: #409eff;
-  color: white;
-  border-color: #409eff;
-  box-shadow: 0 2px 8px rgba(64, 158, 255, 0.3);
-}
-
-.tab-button:hover:not(.active) {
-  border-color: #c6e2ff;
-  color: #409eff;
-  transform: translateY(-1px);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-}
-
-/* 表单行 */
-.form-row {
-  display: flex;
-  gap: 12px;
-  align-items: center;
-  margin-bottom: 16px;
-  flex-wrap: wrap;
-}
-
-.form-label {
-  width: 100px;
-  font-weight: 500;
-  color: #303133;
-  flex-shrink: 0;
-}
-
-.form-input {
-  flex: 1;
-  min-width: 200px;
-}
-
-.form-input .el-input {
-  border-radius: 6px;
-}
-
-/* 字符串构建器 */
-.string-builder {
-  border: 1px solid #e4e7ed;
-  border-radius: 6px;
-  overflow: hidden;
-  background: white;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.05);
-}
-
-.string-builder-header {
-  padding: 12px 16px;
-  background: #f8f9fa;
-  border-bottom: 1px solid #e4e7ed;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.string-builder-body {
-  padding: 16px;
-  min-height: 120px;
-  background: white;
-}
-
-.string-builder-footer {
-  padding: 12px 16px;
-  background: #f8f9fa;
-  border-top: 1px solid #e4e7ed;
-  display: flex;
-  gap: 10px;
-  justify-content: flex-end;
-}
-
-.string-builder-footer .el-button {
-  border-radius: 6px;
-}
-
-/* 变量助手 */
-.variable-assistant {
-  position: relative;
-}
-
-.variable-popup {
-  position: absolute;
-  top: 100%;
-  right: 0;
-  background: white;
-  border: 1px solid #e4e7ed;
-  border-radius: 8px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
-  z-index: 1000;
-  width: 450px;
-  max-height: 500px;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-  margin-top: 8px;
-}
-
-.variable-header {
-  padding: 16px 20px;
-  background: #f8f9fa;
-  border-bottom: 1px solid #e4e7ed;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.variable-header h3 {
-  margin: 0;
-  font-size: 16px;
-  font-weight: 600;
-  color: #303133;
-}
-
-.variable-content {
-  flex: 1;
-  overflow: auto;
-}
-
-.variable-categories {
-  padding: 16px;
-}
-
-.variable-category {
-  margin-bottom: 24px;
-}
-
-.variable-category-title {
-  font-weight: 600;
-  margin-bottom: 12px;
-  color: #303133;
-  font-size: 14px;
-  border-bottom: 1px solid #e4e7ed;
-  padding-bottom: 6px;
-}
-
-.variable-list {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.variable-item {
-  padding: 14px;
-  background: #f8f9fa;
-  border: 1px solid #e4e7ed;
-  border-radius: 6px;
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-
-.variable-item:hover {
-  background: #ecf5ff;
-  border-color: #c6e2ff;
-  transform: translateY(-1px);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-}
-
-.variable-name {
-  font-weight: 500;
-  margin-bottom: 6px;
-  color: #303133;
-}
-
-.variable-syntax {
-  font-size: 12px;
-  color: #909399;
-  font-family: 'Courier New', Courier, monospace;
-  margin-bottom: 6px;
-  background: white;
-  padding: 4px 8px;
-  border-radius: 4px;
-  border: 1px solid #e4e7ed;
-}
-
-.variable-desc {
-  font-size: 12px;
-  color: #606266;
-  margin-bottom: 4px;
-}
-
-.variable-example {
-  font-size: 12px;
-  color: #67c23a;
-  font-family: 'Courier New', Courier, monospace;
-  margin-top: 4px;
-  background: #f0f9eb;
-  padding: 4px 8px;
-  border-radius: 4px;
-  border: 1px solid #c2e7b0;
-}
-
-/* JSONPath 部分 */
-.jsonpath-extractor {
-  margin-top: 16px;
-  padding: 16px;
-  background: #f8f9fa;
-  border: 1px solid #e4e7ed;
-  border-radius: 6px;
-}
-
-.jsonpath-input {
-  display: flex;
-  gap: 10px;
-  margin-bottom: 12px;
-  align-items: center;
-}
-
-.jsonpath-input .el-input {
-  flex: 1;
-  border-radius: 6px;
-}
-
-.jsonpath-result {
-  background: white;
-  border: 1px solid #e4e7ed;
-  border-radius: 6px;
-  padding: 12px;
-  font-family: 'Courier New', Courier, monospace;
-  font-size: 14px;
-  min-height: 80px;
-  white-space: pre-wrap;
-  word-break: break-all;
-  max-height: 200px;
-  overflow: auto;
-}
-
-/* 状态徽章 */
-.status-badge {
-  font-size: 12px;
-  padding: 4px 12px;
-  border-radius: 12px;
-  font-weight: 500;
-}
-
-.status-badge.success {
-  background: #f0f9eb;
-  color: #67c23a;
-}
-
-.status-badge.warning {
-  background: #fdf6ec;
-  color: #e6a23c;
-}
-
-.status-badge.danger {
-  background: #fef0f0;
-  color: #f56c6c;
-}
-
-.status-badge.info {
-  background: #ecf5ff;
-  color: #409eff;
-}
-
-/* 断言结果 */
-.assertions-results {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  padding: 16px;
-}
-
-.assertion-result-item {
-  background: white;
-  border: 1px solid #e4e7ed;
-  border-radius: 8px;
-  padding: 16px;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.05);
-  transition: all 0.2s ease;
-}
-
-.assertion-result-item.passed {
-  border-left: 4px solid #67c23a;
-}
-
-.assertion-result-item.failed {
-  border-left: 4px solid #f56c6c;
-}
-
-.assertion-result-header {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 12px;
-}
-
-.assertion-result-details {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin-left: 20px;
-}
-
-.result-row {
-  display: flex;
-  gap: 12px;
-  align-items: flex-start;
-}
-
-.result-row .label {
-  width: 80px;
-  font-size: 14px;
-  font-weight: 500;
-  color: #606266;
-  flex-shrink: 0;
-}
-
-.result-row .value {
-  flex: 1;
-  font-size: 14px;
-  color: #303133;
-  font-family: 'Courier New', Courier, monospace;
-  white-space: pre-wrap;
-  word-break: break-all;
-}
-
-.result-row .value.error {
-  color: #f56c6c;
 }
 
 /* WebSocket 相关 */
@@ -4668,37 +2474,8 @@ const useLocalVariableCategories = () => {
     border-bottom: 1px solid #e4e7ed;
   }
 
-  .request-line {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .method-select,
-  .url-input,
-  .env-select,
-  .send-button {
+  .env-select {
     width: 100%;
-  }
-
-  .request-target {
-    width: 100%;
-    min-width: 0;
-  }
-
-  .form-row {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .form-label {
-    width: 100%;
-    margin-bottom: 8px;
-  }
-
-  .script-buttons {
-    position: static;
-    margin-top: 12px;
-    justify-content: flex-end;
   }
 
   .request-meta {
@@ -4715,27 +2492,6 @@ const useLocalVariableCategories = () => {
     flex-wrap: wrap;
   }
 
-  .tab-buttons {
-    justify-content: flex-start;
-  }
-
-  .tab-button {
-    padding: 8px 16px;
-    font-size: 13px;
-  }
-
-  .raw-options {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .raw-options .el-select {
-    width: 100%;
-  }
-
-  .raw-options .el-button {
-    width: 100%;
-  }
 }
 
 /* 滚动条样式 */
@@ -4808,183 +2564,5 @@ const useLocalVariableCategories = () => {
 .method-tag.trace {
   background-color: #e67e22 !important;
 }
-
-/* 覆盖方法选择器样式 */
-.method-select.get :deep(.el-select .el-input__wrapper) {
-  background-color: #61affe !important;
-  color: white !important;
-  border-color: #61affe !important;
-}
-
-.method-select.post :deep(.el-select .el-input__wrapper) {
-  background-color: #49cc90 !important;
-  color: white !important;
-  border-color: #49cc90 !important;
-}
-
-.method-select.put :deep(.el-select .el-input__wrapper) {
-  background-color: #fca130 !important;
-  color: white !important;
-  border-color: #fca130 !important;
-}
-
-.method-select.delete :deep(.el-select .el-input__wrapper) {
-  background-color: #f93e3e !important;
-  color: white !important;
-  border-color: #f93e3e !important;
-}
-
-.method-select.patch :deep(.el-select .el-input__wrapper) {
-  background-color: #50e3c2 !important;
-  color: white !important;
-  border-color: #50e3c2 !important;
-}
-
-.method-select.head :deep(.el-select .el-input__wrapper) {
-  background-color: #9013fe !important;
-  color: white !important;
-  border-color: #9013fe !important;
-}
-
-.method-select.options :deep(.el-select .el-input__wrapper) {
-  background-color: #0ebeff !important;
-  color: white !important;
-  border-color: #0ebeff !important;
-}
-
-.method-select.connect :deep(.el-select .el-input__wrapper) {
-  background-color: #7f8c8d !important;
-  color: white !important;
-  border-color: #7f8c8d !important;
-}
-
-.method-select.trace :deep(.el-select .el-input__wrapper) {
-  background-color: #e67e22 !important;
-  color: white !important;
-  border-color: #e67e22 !important;
-}
-
-/* 方法选择器保持原尺寸和下拉样式，选中方法文字与接口树标签使用同色。 */
-.method-select :deep(.el-input__wrapper) {
-  background-color: #ffffff !important;
-  border-color: #dcdfe6 !important;
-}
-
-.method-select.get :deep(.el-input__inner),
-.method-select.get :deep(.el-select__selected-item),
-.method-select.get :deep(.el-select__selected-item span),
-.method-select.get :deep(.el-select__icon) {
-  color: #61affe !important;
-}
-
-.method-select.post :deep(.el-input__inner),
-.method-select.post :deep(.el-select__selected-item),
-.method-select.post :deep(.el-select__selected-item span),
-.method-select.post :deep(.el-select__icon) {
-  color: #49cc90 !important;
-}
-
-.method-select.put :deep(.el-input__inner),
-.method-select.put :deep(.el-select__selected-item),
-.method-select.put :deep(.el-select__selected-item span),
-.method-select.put :deep(.el-select__icon) {
-  color: #fca130 !important;
-}
-
-.method-select.delete :deep(.el-input__inner),
-.method-select.delete :deep(.el-select__selected-item),
-.method-select.delete :deep(.el-select__selected-item span),
-.method-select.delete :deep(.el-select__icon) {
-  color: #f93e3e !important;
-}
-
-.method-select.patch :deep(.el-input__inner),
-.method-select.patch :deep(.el-select__selected-item),
-.method-select.patch :deep(.el-select__selected-item span),
-.method-select.patch :deep(.el-select__icon) {
-  color: #50e3c2 !important;
-}
-
-.method-select.head :deep(.el-input__inner),
-.method-select.head :deep(.el-select__selected-item),
-.method-select.head :deep(.el-select__selected-item span),
-.method-select.head :deep(.el-select__icon) {
-  color: #9013fe !important;
-}
-
-.method-select.options :deep(.el-input__inner),
-.method-select.options :deep(.el-select__selected-item),
-.method-select.options :deep(.el-select__selected-item span),
-.method-select.options :deep(.el-select__icon) {
-  color: #0ebeff !important;
-}
-
-.method-select.connect :deep(.el-input__inner),
-.method-select.connect :deep(.el-select__selected-item),
-.method-select.connect :deep(.el-select__selected-item span),
-.method-select.connect :deep(.el-select__icon) {
-  color: #7f8c8d !important;
-}
-
-.method-select.trace :deep(.el-input__inner),
-.method-select.trace :deep(.el-select__selected-item),
-.method-select.trace :deep(.el-select__selected-item span),
-.method-select.trace :deep(.el-select__icon) {
-  color: #e67e22 !important;
-}
-
-/* 覆盖方法选择器通用样式 */
-.method-select :deep(.el-select .el-input__inner) {
-  color: white !important;
-}
-
-.method-select :deep(.el-select .el-select__icon) {
-  color: white !important;
-}
-
-.method-select :deep(.el-select .el-select__selected-item),
-.method-select :deep(.el-select .el-select__selected-item span),
-.method-select :deep(.el-select .el-select__placeholder) {
-  background-color: transparent !important;
-  color: white !important;
-}
-
-/* 提高选择器优先级，覆盖上面的通用白色文字规则。 */
-.method-select.get :deep(.el-select .el-input__inner),
-.method-select.get :deep(.el-select .el-select__icon),
-.method-select.get :deep(.el-select .el-select__selected-item),
-.method-select.get :deep(.el-select .el-select__selected-item span) { color: #61affe !important; }
-.method-select.post :deep(.el-select .el-input__inner),
-.method-select.post :deep(.el-select .el-select__icon),
-.method-select.post :deep(.el-select .el-select__selected-item),
-.method-select.post :deep(.el-select .el-select__selected-item span) { color: #49cc90 !important; }
-.method-select.put :deep(.el-select .el-input__inner),
-.method-select.put :deep(.el-select .el-select__icon),
-.method-select.put :deep(.el-select .el-select__selected-item),
-.method-select.put :deep(.el-select .el-select__selected-item span) { color: #fca130 !important; }
-.method-select.delete :deep(.el-select .el-input__inner),
-.method-select.delete :deep(.el-select .el-select__icon),
-.method-select.delete :deep(.el-select .el-select__selected-item),
-.method-select.delete :deep(.el-select .el-select__selected-item span) { color: #f93e3e !important; }
-.method-select.patch :deep(.el-select .el-input__inner),
-.method-select.patch :deep(.el-select .el-select__icon),
-.method-select.patch :deep(.el-select .el-select__selected-item),
-.method-select.patch :deep(.el-select .el-select__selected-item span) { color: #50e3c2 !important; }
-.method-select.head :deep(.el-select .el-input__inner),
-.method-select.head :deep(.el-select .el-select__icon),
-.method-select.head :deep(.el-select .el-select__selected-item),
-.method-select.head :deep(.el-select .el-select__selected-item span) { color: #9013fe !important; }
-.method-select.options :deep(.el-select .el-input__inner),
-.method-select.options :deep(.el-select .el-select__icon),
-.method-select.options :deep(.el-select .el-select__selected-item),
-.method-select.options :deep(.el-select .el-select__selected-item span) { color: #0ebeff !important; }
-.method-select.connect :deep(.el-select .el-input__inner),
-.method-select.connect :deep(.el-select .el-select__icon),
-.method-select.connect :deep(.el-select .el-select__selected-item),
-.method-select.connect :deep(.el-select .el-select__selected-item span) { color: #7f8c8d !important; }
-.method-select.trace :deep(.el-select .el-input__inner),
-.method-select.trace :deep(.el-select .el-select__icon),
-.method-select.trace :deep(.el-select .el-select__selected-item),
-.method-select.trace :deep(.el-select .el-select__selected-item span) { color: #e67e22 !important; }
 
 </style>

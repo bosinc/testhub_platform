@@ -24,6 +24,9 @@ router.register(r'scenario-case-folders', ScenarioCaseFolderViewSet, basename='s
 router.register(r'test-suites', TestSuiteViewSet, basename='test-suite')
 router.register(r'scenario-case-requests', ScenarioCaseRequestViewSet, basename='scenario-case-request')
 router.register(r'test-executions', TestExecutionViewSet)
+# The plan exposes step polling under /executions/; keep the historical
+# /test-executions/ route so existing pages keep working.
+router.register(r'executions', TestExecutionViewSet, basename='execution')
 router.register(r'users', UserViewSet)
 router.register(r'scheduled-tasks', ScheduledTaskViewSet, basename='scheduledtask')
 router.register(r'task-execution-logs', TaskExecutionLogViewSet, basename='taskexecutionlog')

@@ -1,4 +1,4 @@
-import { RequestModel } from './requestModel'
+import { RequestModelParser, type RequestModel } from './requestModel'
 import * as curlconverter from 'curlconverter'
 
 export interface CodeTemplate {
@@ -105,7 +105,7 @@ export class CodeGenerator {
   }
 
   static async generateCode(model: RequestModel, language: string): Promise<string> {
-    const curlCommand = this.buildCurlCommand(model)
+    const curlCommand = RequestModelParser.toCurl(model)
     
     if (language === 'curl') {
       return curlCommand
@@ -177,83 +177,6 @@ export class CodeGenerator {
     } catch (error) {
       console.error('Error generating code:', error)
       return `// Error generating code: ${error}`
-    }
-  }
-
-  private static buildCurlCommand(model: RequestModel): string {
-    const url = this.buildUrl(model)
-    const method = model.method.toUpperCase()
-    const headers = this.buildCurlHeaders(model)
-    const body = this.buildCurlBody(model)
-
-    // console.log('Building curl command:', { url, method, headers, body })
-    // console.log('Model data:', { baseURL: model.baseURL, path: model.path, query: model.query })
-
-    let curl = `curl -X ${method}`
-
-    if (headers) {
-      curl += ` ${headers}`
-    }
-
-    if (body) {
-      curl += ` ${body}`
-    }
-
-    curl += ` '${url}'`
-
-    // console.log('Generated curl command:', curl)
-
-    return curl
-  }
-
-  private static buildUrl(model: RequestModel): string {
-    try {
-      const url = new URL(model.baseURL + model.path)
-      model.query.forEach(param => {
-        if (param.enabled && param.key) {
-          url.searchParams.append(param.key, param.value)
-        }
-      })
-      return url.toString()
-    } catch (error) {
-      console.error('Error building URL:', error, { baseURL: model.baseURL, path: model.path })
-      return model.baseURL + model.path
-    }
-  }
-
-  private static buildCurlHeaders(model: RequestModel): string {
-    const headers = model.headers.filter(h => h.enabled && h.key)
-
-    return headers
-      .map(h => {
-        const value = h.value.replace(/"/g, '\\"')
-        return `-H "${h.key}: ${value}"`
-      })
-      .join(' ')
-  }
-
-  private static buildCurlBody(model: RequestModel): string {
-    if (model.body.mode === 'none') {
-      return ''
-    }
-
-    const bodyValue = model.body.raw || model.body.json || ''
-    if (!bodyValue) {
-      return ''
-    }
-
-    switch (model.body.mode) {
-      case 'raw':
-      case 'json':
-        return `-d '${bodyValue}'`
-      case 'formdata':
-        return '--data-urlencode "data"'
-      case 'urlencoded':
-        return `--data-urlencode "${bodyValue}"`
-      case 'binary':
-        return `--data-binary "@${bodyValue}"`
-      default:
-        return ''
     }
   }
 

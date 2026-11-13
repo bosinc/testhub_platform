@@ -2,6 +2,29 @@
  * API Testing Module English Translations
  */
 export default {
+  requestEditor: {
+    pathPlaceholder: 'Request path, e.g. /users/{id} (use Params for Query)',
+    preview: 'Estimated full URL',
+    confirmPreview: 'Confirm URL with backend',
+    previewHint: 'This estimate does not resolve runtime variables. The backend determines the actual HTTP URL. Unsaved requests only have a local estimate.',
+    environmentRequired: 'Explicitly select an execution environment with a valid base URL',
+    saveBeforePreview: 'Save the request before backend URL preview or WebSocket connection',
+    previewFailed: 'Full URL preview failed',
+    hostSuggestion: 'Suggested environment base URL (not applied automatically):',
+    importPath: 'Request path to import:',
+    curlPreviewHint: 'Check which base path belongs to the environment to avoid duplicated prefixes. Duplicate Query entries are preserved. Local files must be selected again.',
+    username: 'Username', password: 'Password', addTo: 'Add to',
+    timeout: 'Timeout (seconds)', redirects: 'Follow redirects', verifySsl: 'Verify TLS certificate',
+    fileReadFailed: 'Could not read the file; select it again',
+    baseUrl: 'Base URL', baseUrlPlaceholder: 'HTTP/HTTPS address, optionally with a base path',
+    baseUrlHint: 'An empty draft can be saved but cannot execute. Variables, credentials, Query and fragments are not allowed.',
+    invalidBaseUrl: 'Enter a valid HTTP/HTTPS base URL without variables, credentials, Query or fragment',
+    rowsInvalid: 'Request parameters must be ordered entry lists',
+    fileRequired: 'Select a file; local paths cannot be used as file content',
+    bodyUnsupported: 'Unsupported request body type',
+    urlencodedFile: 'urlencoded does not support files',
+    jsonInvalid: 'Invalid JSON request body'
+  },
   // Navigation Menu
   nav: {
     title: 'API Testing',
@@ -342,6 +365,31 @@ export default {
       header: 'Response Header',
       equals: 'Exact Match'
     },
+    assertionOperators: {
+      equals: 'Equals',
+      notEquals: 'Not Equals',
+      exists: 'Exists',
+      notExists: 'Not Exists',
+      isNotEmpty: 'Not Empty',
+      isEmpty: 'Empty',
+      isString: 'Is String',
+      isNumber: 'Is Number',
+      isBoolean: 'Is Boolean',
+      isArray: 'Is Array',
+      isObject: 'Is Object',
+      includes: 'Includes (any hit)',
+      notIncludes: 'Not Includes (any)',
+      contains: 'String Contains',
+      notContains: 'String Not Contains',
+      atLeast: 'At Least',
+      greaterThan: 'Greater Than',
+      lessThan: 'Less Than',
+      closeTo: 'Close To (tolerance)',
+      length: 'Length Equals',
+      matches: 'Matches Regex'
+    },
+    operatorNoValue: 'This operator does not need an expected value',
+    collectionAssertionReadOnly: 'Collection expected values can only be configured via the API and are read-only here.',
     expectedStatusCode: 'Expected Status Code',
     maxResponseTime: 'Max Response Time(ms)',
     jsonPathExtract: 'JSONPath Extract',
