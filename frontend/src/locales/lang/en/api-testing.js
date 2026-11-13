@@ -366,6 +366,7 @@ export default {
       matches: 'Matches Regex'
     },
     operatorNoValue: 'This operator does not need an expected value',
+    collectionAssertionReadOnly: 'Collection expected values can only be configured via the API and are read-only here.',
     expectedStatusCode: 'Expected Status Code',
     maxResponseTime: 'Max Response Time(ms)',
     jsonPathExtract: 'JSONPath Extract',

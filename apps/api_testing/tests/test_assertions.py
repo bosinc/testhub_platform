@@ -7,10 +7,20 @@
   - status_code 的 one_of（状态码集合）。
 """
 import json
+import subprocess
+import sys
+import textwrap
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+from unittest.mock import patch
 
 from django.test import SimpleTestCase
 
-from ..utils import execute_assertions
+from ..utils import (
+    REGEX_ASSERTION_TIMEOUT_SECONDS,
+    _match_assertion_regex,
+    execute_assertions,
+)
 
 
 class _FakeResponse:
@@ -179,6 +189,37 @@ class JsonPathAssertionOperatorTests(SimpleTestCase):
         )
         self.assertTrue(passed)
 
+    def test_includes_and_not_includes_use_all_matched_arrays(self):
+        # 审核复现：目标只出现在第二个数组；顺序、空数组均不改变结论。
+        cases = [
+            ([{'tags': ['Posts']}, {'tags': ['Links']}], 'Links', True),
+            ([{'tags': ['Links']}, {'tags': ['Posts']}], 'Links', True),
+            ([{'tags': []}, {'tags': ['Links']}], 'Links', True),
+            ([{'tags': ['Posts']}, {'tags': ['Links']}], 'Forms', False),
+            ([{'tags': []}, {'tags': []}], 'Links', False),
+            ([], 'Links', False),
+            # 不将数组本身的字符串表示当成元素。
+            ([{'tags': ['Posts']}, {'tags': ['Links']}], "['Links']", False),
+            ([{'tags': ['Posts']}, {'tags': 'Links'}], 'Links', True),
+            ([{'tags': 'Posts'}, {'tags': ['Links']}], 'Links', True),
+            ([{'tags': []}, {'tags': [True, None, 2.0]}], 'true', True),
+            ([{'tags': []}, {'tags': [True, None, 2.0]}], 'null', True),
+            ([{'tags': []}, {'tags': [True, None, 2.0]}], '2', True),
+            # 嵌套数组只展开一层，不递归匹配孙元素。
+            ([{'tags': [['Links']]}], 'Links', False),
+            ([{'tags': [['Links']]}], ['Links'], True),
+        ]
+        for groups, expected, included in cases:
+            for operator in ('includes', 'not_includes'):
+                with self.subTest(groups=groups, expected=expected, operator=operator):
+                    passed, _, error = run_one(
+                        {'type': 'json_path', 'json_path': '$.groups[*].tags',
+                         'operator': operator, 'expected': expected},
+                        {'groups': groups},
+                    )
+                    self.assertEqual(passed, included if operator == 'includes' else not included)
+                    self.assertIsNone(error)
+
     def test_contains_substring(self):
         passed, _, _ = run_one(
             {'type': 'json_path', 'json_path': '$.message', 'operator': 'contains', 'expected': 'succ'},
@@ -262,6 +303,110 @@ class JsonPathAssertionOperatorTests(SimpleTestCase):
         )
         self.assertFalse(result['passed'])
         self.assertIn('不是JSON格式', result['error'])
+
+
+class RegexAssertionIsolationTests(SimpleTestCase):
+    def test_regex_semantics_and_stringified_values(self):
+        for value, pattern, expected_passed in [
+            ('abc-123', r'(?<=abc-)\d+$', True),
+            ('abc-abc', r'^(\w+)-\1$', True),
+            ('测试通过', '^测试', True),
+            (True, '^true$', True),
+            (None, '^null$', True),
+            (2.0, '^2$', True),
+            ('abc-123', '^def', False),
+        ]:
+            with self.subTest(value=value, pattern=pattern):
+                passed, actual, error = run_one(
+                    {'type': 'json_path', 'json_path': '$.value',
+                     'operator': 'matches', 'expected': pattern},
+                    {'value': value},
+                )
+                self.assertEqual(passed, expected_passed)
+                self.assertEqual(actual, value)
+                self.assertIsNone(error)
+
+    def test_invalid_regex_keeps_actual_and_reports_error(self):
+        passed, actual, error = run_one(
+            {'type': 'json_path', 'json_path': '$.value', 'operator': 'matches', 'expected': '['},
+            {'value': 'abc'},
+        )
+        self.assertFalse(passed)
+        self.assertEqual(actual, 'abc')
+        self.assertIn('正则表达式无效', error)
+
+    def test_process_start_failure_fails_closed(self):
+        with patch('apps.api_testing.utils.subprocess.run', side_effect=OSError('unavailable')):
+            passed, error = _match_assertion_regex('abc', 'abc')
+        self.assertFalse(passed)
+        self.assertIn('正则匹配执行失败', error)
+
+    def test_timeout_budget_cannot_be_overridden_by_assertion(self):
+        with patch('apps.api_testing.utils.subprocess.run') as run:
+            run.side_effect = subprocess.TimeoutExpired('regex', REGEX_ASSERTION_TIMEOUT_SECONDS)
+            passed, _, error = run_one(
+                {'type': 'json_path', 'json_path': '$.value', 'operator': 'matches',
+                 'expected': 'abc', 'timeout': 999},
+                {'value': 'abc'},
+            )
+        self.assertFalse(passed)
+        self.assertIn('超时', error)
+        self.assertEqual(run.call_args.kwargs['timeout'], REGEX_ASSERTION_TIMEOUT_SECONDS)
+
+    def test_matching_from_non_main_thread(self):
+        # 执行器也用于后台线程，不能依赖只在主线程可用的 signal 超时。
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            self.assertEqual(pool.submit(_match_assertion_regex, '^abc$', 'abc').result(5),
+                             (True, None))
+
+    def test_catastrophic_backtracking_is_killed_and_next_assertion_runs(self):
+        # 外层进程再加硬上限，防止将来隔离退化为直接 re.search 时挂死整个测试。
+        probe = textwrap.dedent('''
+            import json
+            import subprocess
+            import time
+            from types import SimpleNamespace
+            from unittest.mock import patch
+            import django
+            django.setup()
+            from apps.api_testing.utils import execute_assertions
+
+            children = []
+            original_popen = subprocess.Popen
+            def tracked_popen(*args, **kwargs):
+                process = original_popen(*args, **kwargs)
+                children.append(process)
+                return process
+
+            text = 'a' * 30 + '!'
+            response = SimpleNamespace(status_code=200,
+                headers={'content-type': 'application/json'}, text=json.dumps({'value': text}))
+            started = time.monotonic()
+            with patch('apps.api_testing.utils.subprocess.Popen', side_effect=tracked_popen):
+                results = execute_assertions(response, [
+                    {'type': 'json_path', 'json_path': '$.value', 'operator': 'matches',
+                     'expected': '(a+)+$'},
+                    {'type': 'status_code', 'expected': 200},
+                ])
+            print(json.dumps({'results': results, 'elapsed': time.monotonic() - started,
+                'children_reaped': bool(children) and all(p.returncode is not None for p in children)}))
+        ''')
+        completed = subprocess.run(
+            [sys.executable, '-c', probe],
+            cwd=Path(__file__).resolve().parents[3],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=10,
+        )
+        observed = json.loads(completed.stdout)
+        timed_out, following = observed['results']
+        self.assertFalse(timed_out['passed'])
+        self.assertIn('超时', timed_out['error'])
+        self.assertEqual(timed_out['actual'], 'a' * 30 + '!')
+        self.assertTrue(following['passed'])
+        self.assertTrue(observed['children_reaped'])
+        self.assertLess(observed['elapsed'], REGEX_ASSERTION_TIMEOUT_SECONDS + 1)
 
 
 class StatusCodeAssertionOperatorTests(SimpleTestCase):

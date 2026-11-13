@@ -37,8 +37,14 @@
           </el-select>
 
           <div v-if="assertion.type" class="assertion-params">
+            <template v-if="assertion.type === 'status_code' && isCollectionAssertion(assertion)">
+              <el-input :model-value="JSON.stringify(assertion.expected)" readonly size="small" />
+              <span class="assertion-hint">
+                {{ $t('apiTesting.interface.collectionAssertionReadOnly') }}
+              </span>
+            </template>
             <el-input-number
-              v-if="assertion.type === 'status_code'"
+              v-else-if="assertion.type === 'status_code'"
               v-model="assertion.expected"
               :min="100"
               :max="599"
@@ -72,8 +78,14 @@
                 size="small"
                 class="assertion-input"
               />
+              <template v-if="isCollectionAssertion(assertion)">
+                <el-input :model-value="JSON.stringify(assertion.expected)" readonly size="small" />
+                <span class="assertion-hint">
+                  {{ $t('apiTesting.interface.collectionAssertionReadOnly') }}
+                </span>
+              </template>
               <AssertionValueInput
-                v-if="operatorNeedsValue(assertion)"
+                v-else-if="operatorNeedsValue(assertion)"
                 v-model="assertion.expected"
                 :placeholder="$t('apiTesting.interface.expectedValue')"
                 :show-helpers="showHelpers"
@@ -210,6 +222,11 @@ const NO_VALUE_OPERATORS = new Set([
   'is_not_empty', 'is_empty',
   'is_string', 'is_number', 'is_boolean', 'is_array', 'is_object'
 ])
+
+const isCollectionAssertion = assertion => (
+  String(assertion.operator || '').trim().toLowerCase() === 'one_of' ||
+  (assertion.type === 'status_code' && Array.isArray(assertion.expected))
+)
 
 const operatorNeedsValue = assertion => !NO_VALUE_OPERATORS.has(assertion.operator || 'equals')
 

@@ -351,6 +351,7 @@ export default {
       matches: '正则匹配'
     },
     operatorNoValue: '该操作符不需要期望值',
+    collectionAssertionReadOnly: '集合期望值仅支持通过 API 配置，此处只读展示。',
     expectedStatusCode: '期望状态码',
     maxResponseTime: '最大响应时间(ms)',
     jsonPathExtract: 'JSONPath提取',

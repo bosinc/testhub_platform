@@ -28,6 +28,7 @@ export const createAssertion = (name) => ({
 
 export const resetAssertionFields = (assertion) => {
   if (!assertion) return assertion
+  delete assertion.operator
   if (assertion.type === 'status_code') {
     assertion.expected = 200
   } else if (assertion.type === 'response_time') {
@@ -37,7 +38,7 @@ export const resetAssertionFields = (assertion) => {
   } else if (assertion.type === 'json_path') {
     assertion.json_path = ''
     assertion.expected = ''
-    if (!assertion.operator) assertion.operator = 'equals'
+    assertion.operator = 'equals'
   } else if (assertion.type === 'header') {
     assertion.header_name = ''
     assertion.expected_value = ''
