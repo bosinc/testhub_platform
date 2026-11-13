@@ -7,7 +7,7 @@
           <el-option v-for="project in projects" :key="project.id" :label="project.name" :value="project.id" />
         </el-select>
         <el-button :disabled="!projectId" @click="openStorageStateManager">
-          登录态管理
+          {{ t('uiAutomation.storageState.title') }}
           <span v-if="storageStateTotal" class="header-count">{{ storageStateTotal }}</span>
         </el-button>
         <el-tooltip :content="t('uiAutomation.variables.selectProject')" :disabled="!!projectId">
@@ -88,7 +88,8 @@
                 <el-icon v-else><Document /></el-icon>
                 <div class="test-case-tree-content">
                   <div class="test-case-tree-title">
-                    <span class="test-case-tree-name">{{ data.name }}</span>
+                    <!-- 长名称省略显示，悬停时提示完整的目录或用例名称。 -->
+                    <span class="test-case-tree-name" :title="data.name">{{ data.name }}</span>
                     <div v-if="data.type === 'testCase'" class="case-actions">
                       <el-button size="small" text :title="t('uiAutomation.testCase.copy.title')" @click.stop="copyTestCase(data)"><el-icon><CopyDocument /></el-icon></el-button>
                       <el-button size="small" text type="danger" :title="t('uiAutomation.testCase.delete.title')" @click.stop="deleteTestCase(data)"><el-icon><Delete /></el-icon></el-button>
@@ -140,6 +141,14 @@
                 <el-option :label="t('uiAutomation.testCase.priorityMedium')" value="medium" />
                 <el-option :label="t('uiAutomation.testCase.priorityLow')" value="low" />
               </el-select>
+              <el-button
+                v-if="linkedTestCases.length"
+                class="linked-test-case-button"
+                :icon="Link"
+                @click="openLinkedTestCases"
+              >
+                {{ t('testcase.title') }}
+              </el-button>
             </div>
             <el-input
               v-model="selectedTestCase.description"
@@ -150,43 +159,44 @@
               :placeholder="t('uiAutomation.testCase.caseDescPlaceholder')"
               :aria-label="t('uiAutomation.testCase.caseDescription')"
             />
+            <!-- 工具栏控件统一使用中等尺寸，与步骤编排区域保持一致。 -->
             <div class="detail-actions">
-              <el-button size="small" @click="addStep">
+              <el-button size="default" @click="addStep">
                 <el-icon><Plus /></el-icon>
                 {{ t('uiAutomation.testCase.addStep') }}
               </el-button>
-              <el-select v-model="selectedEngine" :placeholder="t('uiAutomation.testCase.selectEngine')" size="small" style="width: 130px; margin-right: 10px">
+              <el-select v-model="selectedEngine" :placeholder="t('uiAutomation.testCase.selectEngine')" size="default" style="width: 130px; margin-right: 10px">
                 <el-option label="Playwright" value="playwright" />
                 <el-option label="Selenium" value="selenium" />
               </el-select>
-              <el-select v-model="selectedBrowser" :placeholder="t('uiAutomation.testCase.selectBrowser')" size="small" style="width: 120px; margin-right: 10px">
+              <el-select v-model="selectedBrowser" :placeholder="t('uiAutomation.testCase.selectBrowser')" size="default" style="width: 120px; margin-right: 10px">
                 <el-option label="Chrome" value="chrome" />
                 <el-option label="Firefox" value="firefox" />
                 <el-option label="Safari" value="safari" />
                 <el-option label="Edge" value="edge" />
               </el-select>
-              <!-- 运行前选择可选的初始登录态，清空即使用干净上下文。 -->
-              <el-select v-model="selectedStorageStateId" clearable placeholder="选择登录态" size="small" style="width: 150px; margin-right: 10px" :disabled="selectedEngine !== 'playwright'">
-                <el-option v-for="state in storageStates" :key="state.id" :label="state.name" :value="state.id" />
-              </el-select>
-              <el-select v-model="headlessMode" :placeholder="t('uiAutomation.testCase.runModeLabel')" size="small" style="width: 110px; margin-right: 10px">
+              <el-select v-model="headlessMode" :placeholder="t('uiAutomation.testCase.runModeLabel')" size="default" style="width: 120px; margin-right: 10px">
                 <el-option :label="t('uiAutomation.testCase.headedMode')" :value="false" />
                 <el-option :label="t('uiAutomation.testCase.headlessMode')" :value="true" />
               </el-select>
-              <el-button size="small" type="success" @click="runTestCase(selectedTestCase)" :loading="isRunning">
+              <!-- 运行前选择可选的初始登录态，清空即使用干净上下文。 -->
+              <el-select v-model="selectedStorageStateId" clearable :placeholder="t('uiAutomation.stepEditor.selectStorageState')" size="default" style="width: 160px; margin-right: 10px" :disabled="selectedEngine !== 'playwright'">
+                <el-option v-for="state in storageStates" :key="state.id" :label="state.name" :value="state.id" />
+              </el-select>
+              <el-button size="default" type="success" @click="runTestCase(selectedTestCase)" :loading="isRunning">
                 <el-icon v-if="!isRunning"><CaretRight /></el-icon>
                 {{ isRunning ? t('uiAutomation.testCase.running') : t('uiAutomation.testCase.runLabel') }}
               </el-button>
-              <el-button size="small" type="primary" @click="saveTestCase">
+              <el-button size="default" type="primary" @click="saveTestCase">
                 <el-icon><Check /></el-icon>
                 {{ t('uiAutomation.testCase.saveTestCase') }}
               </el-button>
-              <el-button size="small" v-if="executionResult" @click="toggleView">
+              <el-button size="default" v-if="executionResult" @click="toggleView">
                 <el-icon><component :is="showSteps ? 'View' : 'Edit'" /></el-icon>
                 {{ showSteps ? t('uiAutomation.testCase.viewResult') : t('uiAutomation.testCase.editSteps') }}
               </el-button>
               <el-button
-                size="small"
+                size="default"
                 v-if="executionResult && !showSteps"
                 type="success"
                 @click="runTestCase(selectedTestCase)"
@@ -372,7 +382,7 @@
     <!-- 登录态管理支持上传文件、手工编辑和项目内资源操作。 -->
     <el-dialog
       v-model="showStorageStateDialog"
-      title="登录态管理"
+      :title="t('uiAutomation.storageState.title')"
       width="min(1040px, calc(100vw - 40px))"
       top="6vh"
       :close-on-click-modal="false"
@@ -382,32 +392,32 @@
       class="project-variables-dialog"
     >
       <div class="storage-state-toolbar">
-        <el-button :icon="Plus" @click="openStorageStateEditor()">新建</el-button>
+        <el-button :icon="Plus" @click="openStorageStateEditor()">{{ t('common.add') }}</el-button>
         <el-upload :show-file-list="false" accept=".json,application/json" :http-request="uploadStorageState">
-          <el-button type="primary" :icon="Upload" :disabled="!projectId">上传</el-button>
+          <el-button type="primary" :icon="Upload" :disabled="!projectId">{{ t('common.upload') }}</el-button>
         </el-upload>
       </div>
       <div class="variables-dialog-body storage-state-dialog-body">
         <el-table :data="storageStates" size="small" v-loading="loadingStorageStates">
-          <el-table-column prop="name" label="名称" width="160" show-overflow-tooltip />
-          <el-table-column prop="source_url" label="来源页面" min-width="180" show-overflow-tooltip />
-          <el-table-column label="大小" width="100"><template #default="scope">{{ formatStorageSize(scope.row.file_size) }}</template></el-table-column>
-          <el-table-column label="创建时间" width="150"><template #default="scope">{{ formatStorageStateTime(scope.row.created_at) }}</template></el-table-column>
-          <el-table-column label="操作" width="180"><template #default="scope">
-            <el-button link @click="downloadStorageStateFile(scope.row)">下载</el-button>
-            <el-button link @click="openStorageStateEditor(scope.row)">编辑</el-button>
-            <el-button link type="danger" @click="removeStorageState(scope.row)">删除</el-button>
+          <el-table-column prop="name" :label="t('uiAutomation.common.name')" width="160" show-overflow-tooltip />
+          <el-table-column prop="source_url" :label="t('uiAutomation.storageState.sourcePage')" min-width="150" show-overflow-tooltip />
+          <el-table-column :label="t('uiAutomation.storageState.size')" width="100"><template #default="scope">{{ formatStorageSize(scope.row.file_size) }}</template></el-table-column>
+          <el-table-column :label="t('uiAutomation.common.createTime')" width="150"><template #default="scope">{{ formatStorageStateTime(scope.row.created_at) }}</template></el-table-column>
+          <el-table-column :label="t('uiAutomation.common.operation')" width="200"><template #default="scope">
+            <el-button link @click="downloadStorageStateFile(scope.row)">{{ t('common.download') }}</el-button>
+            <el-button link @click="openStorageStateEditor(scope.row)">{{ t('uiAutomation.common.edit') }}</el-button>
+            <el-button link type="danger" @click="removeStorageState(scope.row)">{{ t('uiAutomation.common.delete') }}</el-button>
           </template></el-table-column>
         </el-table>
       </div>
     </el-dialog>
-    <el-dialog v-model="showStorageStateEditor" :title="editingStorageState ? '编辑登录态' : '新增登录态'" width="720px">
+    <el-dialog v-model="showStorageStateEditor" :title="t(editingStorageState ? 'uiAutomation.storageState.edit' : 'uiAutomation.storageState.create')" width="720px">
       <el-form label-width="100px">
-        <el-form-item label="名称"><el-input v-model="storageStateDraft.name" /></el-form-item>
-        <el-form-item label="来源页面"><el-input v-model="storageStateDraft.source_url" /></el-form-item>
+        <el-form-item :label="t('uiAutomation.common.name')"><el-input v-model="storageStateDraft.name" /></el-form-item>
+        <el-form-item :label="t('uiAutomation.storageState.sourcePage')"><el-input v-model="storageStateDraft.source_url" /></el-form-item>
         <el-form-item label="JSON"><el-input v-model="storageStateDraft.content" type="textarea" :rows="16" /></el-form-item>
       </el-form>
-      <template #footer><el-button @click="showStorageStateEditor = false">取消</el-button><el-button type="primary" @click="saveStorageStateEditor">保存</el-button></template>
+      <template #footer><el-button @click="showStorageStateEditor = false">{{ t('uiAutomation.common.cancel') }}</el-button><el-button type="primary" @click="saveStorageStateEditor">{{ t('uiAutomation.common.save') }}</el-button></template>
     </el-dialog>
 
     <!-- 新建/编辑测试用例对话框 -->
@@ -523,6 +533,36 @@
       </el-tabs>
     </el-dialog>
     
+    <!-- 详情随 UI 用例接口返回，抽屉只负责选择并展示，不额外请求接口。 -->
+    <el-drawer
+      v-model="showLinkedTestCases"
+      :with-header="false"
+      :aria-label="t('testcase.detail')"
+      append-to-body
+      destroy-on-close
+    >
+      <div v-if="linkedTestCases.length > 1" class="linked-test-case-toolbar">
+        <el-button
+          class="linked-case-nav-button"
+          :icon="ArrowUp"
+          :aria-label="t('common.previous')"
+          :disabled="activeLinkedTestCaseIndex <= 0"
+          @click="navigateLinkedTestCase(-1)"
+        />
+        <span class="linked-case-count">
+          {{ activeLinkedTestCaseIndex + 1 }} / {{ linkedTestCases.length }}
+        </span>
+        <el-button
+          class="linked-case-nav-button"
+          :icon="ArrowDown"
+          :aria-label="t('common.next')"
+          :disabled="activeLinkedTestCaseIndex >= linkedTestCases.length - 1"
+          @click="navigateLinkedTestCase(1)"
+        />
+      </div>
+      <TestCaseDetailPanel v-if="activeLinkedTestCase" :test-case="activeLinkedTestCase" />
+    </el-drawer>
+
     <DataFactorySelector
       v-model="showDataFactorySelector"
       @select="handleDataFactorySelect"
@@ -532,13 +572,14 @@
 
 <script setup>
 import ResizableSplitPane from '@/components/ResizableSplitPane.vue'
+import TestCaseDetailPanel from '@/components/testcases/TestCaseDetailPanel.vue'
 import StructuredStepEditor from '@/components/ui-automation/StructuredStepEditor.vue'
 import VariableEditor from '@/components/ui-automation/VariableEditor.vue'
 import { loadUiVariables, formatUiVariables } from '@/utils/uiVariables'
 import { ref, reactive, computed, onMounted, watch, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
-  Search, Plus, Edit, Delete, Check, CaretRight, Picture, Warning, View, ZoomIn, Refresh, WarningFilled, MagicStick, Setting, Upload, Folder, FolderAdd, Document, CopyDocument, Expand, Fold
+  Search, Plus, Edit, Delete, Check, CaretRight, Picture, Warning, View, ZoomIn, Refresh, WarningFilled, MagicStick, Setting, Upload, Folder, FolderAdd, Document, CopyDocument, Expand, Fold, Link, ArrowUp, ArrowDown
 } from '@element-plus/icons-vue'
 import DataFactorySelector from '@/components/DataFactorySelector.vue'
 import { useI18n } from 'vue-i18n'
@@ -581,6 +622,38 @@ const testCaseFolders = ref([])
 const testCaseTreeRef = ref(null)
 const expandedFolderKeys = ref(new Set())
 const selectedTestCase = ref(null)
+const showLinkedTestCases = ref(false)
+const activeLinkedTestCaseId = ref(null)
+const linkedTestCases = computed(() => selectedTestCase.value?.linked_test_cases || [])
+const activeLinkedTestCase = computed(() => linkedTestCases.value.find(
+  testCase => testCase.id === activeLinkedTestCaseId.value
+))
+const activeLinkedTestCaseIndex = computed(() => linkedTestCases.value.findIndex(
+  testCase => testCase.id === activeLinkedTestCaseId.value
+))
+
+const openLinkedTestCases = () => {
+  if (!linkedTestCases.value.length) return
+  activeLinkedTestCaseId.value = linkedTestCases.value[0].id
+  showLinkedTestCases.value = true
+}
+
+const navigateLinkedTestCase = offset => {
+  const nextCase = linkedTestCases.value[activeLinkedTestCaseIndex.value + offset]
+  if (nextCase) activeLinkedTestCaseId.value = nextCase.id
+}
+
+// 切换 UI 用例或关联被清空后关闭抽屉，避免展示上一个用例的数据。
+watch(() => selectedTestCase.value?.id, () => {
+  showLinkedTestCases.value = false
+  activeLinkedTestCaseId.value = null
+})
+watch(linkedTestCases, cases => {
+  if (!cases.length) showLinkedTestCases.value = false
+  if (!cases.some(testCase => testCase.id === activeLinkedTestCaseId.value)) {
+    activeLinkedTestCaseId.value = cases[0]?.id ?? null
+  }
+})
 const currentSteps = ref([])
 const currentVariables = ref([])
 const storageStates = ref([])
@@ -968,7 +1041,8 @@ const moveTestCaseToFolder = async () => {
     ElMessage.success(t('uiAutomation.testCase.folder.moved'))
     showMoveTestCaseDialog.value = false
     if (selectedTestCase.value?.id === testCase.id) {
-      selectedTestCase.value = testCases.value.find(item => String(item.id) === String(testCase.id)) || null
+      // 移动接口不返回关联详情，保留已加载的详情字段供抽屉使用。
+      selectedTestCase.value = { ...selectedTestCase.value, ...updatedTestCase }
     }
   } catch (error) {
     ElMessage.error(error.response?.data?.folder?.[0] || t('uiAutomation.testCase.folder.moveFailed'))
@@ -1126,7 +1200,7 @@ const formatStorageStateTime = timestamp => {
 // 自定义上传请求直接使用 Element Plus 提供的原始 File，确保请求包含文件字节。
 const uploadStorageState = async ({ file, onSuccess, onError }) => {
   if (!(file instanceof File)) {
-    const error = new Error('请选择有效的 JSON 文件')
+    const error = new Error(t('uiAutomation.storageState.invalidFile'))
     onError(error)
     ElMessage.error(error.message)
     return
@@ -1136,11 +1210,11 @@ const uploadStorageState = async ({ file, onSuccess, onError }) => {
   try {
     const response = await createStorageState(form)
     await loadStorageStates()
-    ElMessage.success('登录态已添加')
+    ElMessage.success(t('uiAutomation.common.createSuccess'))
     onSuccess(response.data)
   } catch (error) {
     onError(error)
-    ElMessage.error(error.response?.data?.file?.[0] || error.response?.data?.error || '上传失败')
+    ElMessage.error(error.response?.data?.file?.[0] || error.response?.data?.error || t('uiAutomation.storageState.uploadFailed'))
   }
 }
 // 打开新增或编辑表单；编辑已有资源时先读取其当前 JSON 内容。
@@ -1153,8 +1227,8 @@ const openStorageStateEditor = async state => {
 const saveStorageStateEditor = async () => {
   // 手工编辑先在前端校验标准 JSON，再分别调用元数据和内容接口。
   let content
-  try { content = JSON.parse(storageStateDraft.content) } catch { ElMessage.error('JSON 格式无效'); return }
-  if (!Array.isArray(content.cookies || []) || !Array.isArray(content.origins || [])) { ElMessage.error('cookies 和 origins 必须为数组'); return }
+  try { content = JSON.parse(storageStateDraft.content) } catch { ElMessage.error(t('uiAutomation.storageState.invalidJson')); return }
+  if (!Array.isArray(content.cookies || []) || !Array.isArray(content.origins || [])) { ElMessage.error(t('uiAutomation.storageState.invalidArrays')); return }
   try {
     if (editingStorageState.value) {
       await updateStorageState(editingStorageState.value.id, { name: storageStateDraft.name, source_url: storageStateDraft.source_url })
@@ -1168,14 +1242,21 @@ const saveStorageStateEditor = async () => {
       })
     }
     showStorageStateEditor.value = false; await loadStorageStates()
-  } catch (error) { ElMessage.error(error.response?.data?.content?.[0] || error.message || '保存失败') }
+  } catch (error) { ElMessage.error(error.response?.data?.content?.[0] || error.message || t('uiAutomation.common.saveFailed')) }
 }
 const downloadStorageStateFile = async state => {
   const response = await downloadStorageState(state.id); const url = URL.createObjectURL(response.data)
   const anchor = document.createElement('a'); anchor.href = url; anchor.download = `${state.name}.json`; anchor.click(); URL.revokeObjectURL(url)
 }
 const removeStorageState = async state => {
-  try { await ElMessageBox.confirm(`确定删除登录态“${state.name}”吗？`, '确认删除', { type: 'warning' }); await deleteStorageState(state.id); await loadStorageStates() } catch {}
+  // 确认框复用通用标题和按钮文案，资源名称通过参数传入。
+  try {
+    await ElMessageBox.confirm(t('uiAutomation.storageState.deleteConfirm', { name: state.name }), t('uiAutomation.common.confirmDelete'), {
+      type: 'warning', confirmButtonText: t('uiAutomation.common.confirm'), cancelButtonText: t('uiAutomation.common.cancel')
+    })
+    await deleteStorageState(state.id)
+    await loadStorageStates()
+  } catch {}
 }
 
 // 将接口返回的测试步骤转换为结构化步骤组件所需的编辑字段。
@@ -1695,6 +1776,11 @@ const saveTestCaseForm = async () => {
           type: 'ui_test_case',
           object_id: savedAutomationCaseId
         })
+        if (selectedTestCase.value?.id === savedAutomationCaseId) {
+          // 创建关联后刷新只读字段，保留当前尚未保存的步骤和标题编辑。
+          const { data: detail } = await getTestCaseDetail(savedAutomationCaseId)
+          selectedTestCase.value.linked_test_cases = detail.linked_test_cases || []
+        }
         ElMessage.success(t('testcase.automationLinked'))
       } catch (error) {
         editingTestCase.value = testCases.value.find(item => item.id === savedAutomationCaseId) || editingTestCase.value
@@ -1862,7 +1948,8 @@ onMounted(async () => {
 
 <style scoped>
 .test-case-manager {
-  height: 100vh;
+  height: 100%;
+  min-height: 0;
   display: flex;
   flex-direction: column;
 }
@@ -1902,6 +1989,7 @@ onMounted(async () => {
 
 .main-content {
   flex: 1;
+  min-height: 0;
   display: flex;
   overflow: hidden;
 }
@@ -1986,7 +2074,7 @@ onMounted(async () => {
 
 .test-case-tree-name {
   min-width: 0;
-  flex: 1;
+  flex: 1 1 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2000,7 +2088,9 @@ onMounted(async () => {
 
 .test-case-tree-node .case-actions {
   display: none;
+  flex: 0 0 auto;
   align-items: center;
+  margin-left: auto;
   gap: 1px;
 }
 
@@ -2011,6 +2101,8 @@ onMounted(async () => {
 .test-case-tree-node .case-actions :deep(.el-button) {
   width: 19px;
   height: 19px;
+  /* 清除组件默认的相邻按钮间距，仅保留操作区的 1px gap。 */
+  margin-left: 0;
   padding: 0;
 }
 
@@ -2143,6 +2235,33 @@ onMounted(async () => {
   flex: 0 0 auto;
 }
 
+.linked-test-case-button {
+  flex: 0 0 auto;
+  /* 默认沿用按钮悬停配色，让关联入口始终显示淡蓝色。 */
+  --el-button-bg-color: var(--el-button-hover-bg-color);
+  --el-button-border-color: var(--el-button-hover-border-color);
+  --el-button-text-color: var(--el-button-hover-text-color);
+}
+
+.linked-test-case-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+
+.linked-case-nav-button {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+}
+
+.linked-case-count {
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
+}
+
 .detail-description-input {
   width: 100%;
 }
@@ -2175,9 +2294,8 @@ onMounted(async () => {
 
 .steps-header {
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  margin-bottom: 15px;
+  padding: 15px 20px 0;
 }
 
 .steps-header h4 {

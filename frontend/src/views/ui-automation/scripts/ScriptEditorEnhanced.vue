@@ -31,10 +31,11 @@
 
         <div class="panel-content">
           <el-tree
+            class="element-library-tree"
             :data="elementTree"
             :filter-node-method="filterElementNode"
             :props="{ children: 'children', label: 'name' }"
-            node-key="id"
+            node-key="treeKey"
             default-expand-all
             @node-click="handleElementClick"
           >
@@ -43,7 +44,7 @@
                 <el-icon class="node-icon">
                   <component :is="getTreeNodeIcon(data.type)" />
                 </el-icon>
-                <span class="node-label">{{ data.name }}</span>
+                <span class="node-label" :title="data.name">{{ data.name }}</span>
                 <div class="node-actions" v-if="data.type === 'element'">
                   <el-button size="small" text @click.stop="insertElementCode(data)" :title="$t('uiAutomation.scriptEditor.clickToInsert')">
                     <el-icon><Plus /></el-icon>
@@ -207,6 +208,7 @@ import {
 import RecordingWizard from './RecordingWizard.vue'
 import ScriptReplayDialog from './ScriptReplayDialog.vue'
 import { getPreferredProjectId, useRememberedProject } from '@/utils/projectSelection'
+import { createElementLibraryLoader } from './elementLibrary.mjs'
 
 import {
   getUiProjects,
@@ -237,6 +239,8 @@ const recordingVisible = ref(false)
 const replayVisible = ref(false)
 
 const elementTree = ref([])
+const loadLibrary = createElementLibraryLoader(getElementGroupTree, getElementTree)
+let elementTreeRequestId = 0
 const elementFilter = ref('')
 const selectedElementDetail = ref(null)
 const executionLogs = ref([])
@@ -312,63 +316,22 @@ const loadProjects = async () => {
 }
 
 const loadElementTree = async () => {
-  if (!projectId.value) {
+  const requestedProject = projectId.value
+  const requestId = ++elementTreeRequestId
+  if (!requestedProject) {
     elementTree.value = []
     return
   }
 
   try {
-    // 并行加载页面树和元素
-    const [pageGroupResponse, elementsResponse] = await Promise.all([
-      getElementGroupTree({ project: projectId.value }),
-      getElementTree({ project: projectId.value })
-    ])
-
-    // 构建页面节点
-    const buildTree = (groups) => {
-      return groups.map(group => ({
-        ...group,
-        type: 'page',
-        children: group.children ? buildTree(group.children) : []
-      }))
-    }
-
-    const pageNodes = buildTree(pageGroupResponse.data || [])
-
-    // 获取所有元素
-    const elements = elementsResponse.data?.results || elementsResponse.data || []
-
-    console.log('=== Smart Script Generator - Loading Element Tree ===')
-    console.log('Page nodes count:', pageNodes.length)
-    console.log('Total elements:', elements.length)
-
-    // 将元素添加到对应页面下
-    const attachElementsToPages = (pages) => {
-      pages.forEach(page => {
-        // 找到属于当前页面的元素
-        const pageElements = elements.filter(element => element.group_id === page.id)
-        console.log(`Page ${page.name} (ID: ${page.id}) found ${pageElements.length} elements`)
-
-        const elementNodes = pageElements.map(element => ({
-          ...element,
-          type: 'element'
-        }))
-
-        // 将元素添加到页面的子节点中
-        page.children = page.children ? [...page.children, ...elementNodes] : [...elementNodes]
-
-        // 递归处理子页面
-        if (page.children) {
-          attachElementsToPages(page.children.filter(child => child.type === 'page'))
-        }
-      })
-    }
-
-    attachElementsToPages(pageNodes)
-    elementTree.value = pageNodes
+    const tree = await loadLibrary(requestedProject)
+    // 快速切换项目或离开页面时，旧请求不得覆盖当前树和日志。
+    if (requestId !== elementTreeRequestId || String(projectId.value) !== String(requestedProject)) return
+    elementTree.value = tree
 
     addLog('info', t('uiAutomation.scriptEditor.messages.elementsLoaded', { count: countElements(elementTree.value) }))
   } catch (error) {
+    if (requestId !== elementTreeRequestId || String(projectId.value) !== String(requestedProject)) return
     console.error('Failed to load element tree:', error)
     addLog('error', t('uiAutomation.scriptEditor.messages.loadElementTreeFailed'))
   }
@@ -405,6 +368,7 @@ const updateCursorPosition = () => {
 }
 
 const onProjectChange = async () => {
+  elementTree.value = []
   selectedElementDetail.value = null
   executionLogs.value = []
   scriptContent.value = ''
@@ -697,6 +661,7 @@ watch(scriptLanguage, updateEditorLanguage)
 watch(scriptContent, handleContentChange)
 
 onBeforeUnmount(() => {
+  elementTreeRequestId++
   editorInstance?.dispose()
   editorInstance = null
 })
@@ -704,7 +669,8 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .script-editor-enhanced {
-  height: 100vh;
+  height: 100%;
+  min-height: 0;
   display: flex;
   flex-direction: column;
 }
@@ -731,6 +697,7 @@ onBeforeUnmount(() => {
 .main-content {
   flex: 1;
   min-width: 0;
+  min-height: 0;
   display: flex;
   overflow: hidden;
 }
@@ -842,23 +809,44 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   flex: 1;
+  min-width: 0;
   justify-content: space-between;
   font-size: 14px;
   padding-right: 8px;
 }
 
 .node-icon {
+  flex-shrink: 0;
   margin-right: 5px;
   font-size: 16px;
 }
 
 .node-label {
-  flex: 1;
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .node-actions {
   display: flex;
-  gap: 5px;
+  flex: 0 0 auto;
+  align-items: center;
+  margin-left: auto;
+  gap: 2px;
+}
+
+/* 覆盖 Element Plus 相邻按钮的默认间距，给名称留出更多空间。 */
+.node-actions :deep(.el-button) {
+  width: 24px;
+  height: 24px;
+  margin-left: 0;
+  padding: 0;
+}
+
+.element-library-tree :deep(.el-tree-node__content) {
+  min-width: 0;
 }
 
 .log-controls {

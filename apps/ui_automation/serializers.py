@@ -518,9 +518,21 @@ class ScreenshotSerializer(serializers.ModelSerializer):
         read_only_fields = ('created_at', 'captured_at')
 
 
+class ElementGroupProjectSerializer(UiProjectSerializer):
+    """在一次分组响应内复用项目数据，避免每个节点重复序列化同一项目。"""
+
+    def to_representation(self, instance):
+        project_cache = self.context.get('element_group_projects')
+        if project_cache is None:
+            return super().to_representation(instance)
+        if instance.pk not in project_cache:
+            project_cache[instance.pk] = super().to_representation(instance)
+        return project_cache[instance.pk]
+
+
 # 新增的serializers
 class ElementGroupSerializer(serializers.ModelSerializer):
-    project = UiProjectSerializer(read_only=True)
+    project = ElementGroupProjectSerializer(read_only=True)
     project_id = serializers.IntegerField(write_only=True)
     elements_count = serializers.SerializerMethodField()
     children = serializers.SerializerMethodField()
@@ -532,10 +544,17 @@ class ElementGroupSerializer(serializers.ModelSerializer):
 
     def get_elements_count(self, obj):
         """获取分组下的元素数量"""
+        if hasattr(obj, 'direct_elements_count'):
+            return obj.direct_elements_count
         return obj.elements.count()
 
     def get_children(self, obj):
         """获取子分组"""
+        children_by_parent = self.context.get('element_group_children')
+        if children_by_parent is not None:
+            children = children_by_parent.get(obj.pk, [])
+            return ElementGroupSerializer(children, many=True, context=self.context).data
+
         children = obj.elementgroup_set.all()
         return ElementGroupSerializer(children, many=True, context=self.context).data
 
@@ -879,6 +898,37 @@ class TestCaseSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         validated_data['created_by'] = self.context['request'].user
         return super().create(validated_data)
+
+
+class TestCaseDetailSerializer(TestCaseSerializer):
+    """详情额外返回可访问的正式测试用例，列表和写入接口不加载关联数据。"""
+
+    linked_test_cases = serializers.SerializerMethodField()
+
+    class Meta(TestCaseSerializer.Meta):
+        fields = [*TestCaseSerializer.Meta.fields, 'linked_test_cases']
+
+    def get_linked_test_cases(self, obj):
+        from apps.projects.models import Project
+        from apps.testcases.models import TestCase as FormalTestCase
+        from apps.testcases.serializers import TestCaseListSerializer
+
+        workspace_id = obj.project.workspace_project_id
+        if not workspace_id:
+            return []
+
+        # 同时限制统一项目与用户权限，防止残留关联泄露其他项目的用例。
+        user = self.context['request'].user
+        accessible_projects = Project.objects.filter(Q(owner=user) | Q(members=user))
+        cases = FormalTestCase.objects.filter(
+            project_id=workspace_id,
+            project__in=accessible_projects,
+            automation_links__case_type='ui_test_case',
+            automation_links__object_id=obj.pk,
+        ).select_related('project', 'author', 'assignee', 'module').prefetch_related(
+            'step_details', 'versions'
+        ).order_by('id')
+        return TestCaseListSerializer(cases, many=True, context=self.context).data
 
 
 class TestCaseFolderSerializer(serializers.ModelSerializer):

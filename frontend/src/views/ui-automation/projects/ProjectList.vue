@@ -34,14 +34,14 @@
       </div>
       
       <el-table :data="projects" v-loading="loading" style="width: 100%">
-        <el-table-column prop="name" :label="$t('uiAutomation.project.projectName')" min-width="200">
+        <el-table-column prop="name" :label="$t('uiAutomation.project.projectName')" min-width="150">
           <template #default="{ row }">
             <el-link @click="goToProjectDetail(row.id)" type="primary">
               {{ row.name }}
             </el-link>
           </template>
         </el-table-column>
-        <el-table-column prop="description" :label="$t('uiAutomation.common.description')" min-width="300" show-overflow-tooltip />
+        <el-table-column prop="description" :label="$t('uiAutomation.common.description')" min-width="200" show-overflow-tooltip />
         <el-table-column prop="status" :label="$t('uiAutomation.common.status')" width="100">
           <template #default="{ row }">
             <el-tag :type="getStatusType(row.status)">{{ getStatusText(row.status) }}</el-tag>
@@ -49,9 +49,9 @@
         </el-table-column>
         <el-table-column prop="base_url" :label="$t('uiAutomation.project.baseUrl')" min-width="200" show-overflow-tooltip />
         <el-table-column prop="owner.username" :label="$t('uiAutomation.project.owner')" width="100" />
-        <el-table-column prop="created_at" :label="$t('uiAutomation.common.createTime')" width="180" :formatter="formatDate" />
-        <el-table-column prop="updated_at" :label="$t('uiAutomation.common.updateTime')" width="180" :formatter="formatDate" />
-        <el-table-column :label="$t('uiAutomation.common.operation')" width="280" fixed="right" align="center">
+        <el-table-column prop="created_at" :label="$t('uiAutomation.common.createTime')" width="200" :formatter="formatDate" />
+        <el-table-column prop="updated_at" :label="$t('uiAutomation.common.updateTime')" width="200" :formatter="formatDate" />
+        <el-table-column :label="$t('uiAutomation.common.operation')" width="240" fixed="right" align="center">
           <template #default="{ row }">
             <div class="project-action-buttons">
               <el-button size="small" type="primary" @click="goToProjectDetail(row.id)">

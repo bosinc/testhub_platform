@@ -357,6 +357,7 @@ export default {
     testEngine: 'Test Engine',
     browser: 'Browser',
     browserHint: 'Chromium / Chrome is supported for this release',
+    noLoginState: 'No Login State',
     executionMode: 'Execution Mode',
     headedMode: 'Headed Mode',
     headlessMode: 'Headless Mode',
@@ -1178,6 +1179,22 @@ export default {
     editScript: 'Edit Script',
     scriptEditorPlaceholder: 'Please enter script content...',
     save: 'Save',
+    // Step/code sync dialog; reuse existing common fields and error messages.
+    syncEditor: {
+      title: 'Step and Code Editor',
+      parseCode: 'Parse Code into Steps',
+      regenerateCode: 'Regenerate Code',
+      generatedCode: 'Generated Playwright Code',
+      syncBadge: 'Steps ↔ Code Sync',
+      saveScriptAndSteps: 'Save Script and Steps',
+      states: {
+        synced: 'Synced',
+        steps: 'Code generation pending',
+        code: 'Code parsing pending'
+      },
+      loadStepsFailed: 'Failed to load steps or element library',
+      parseCodeFailed: 'Failed to parse code into steps'
+    },
     scriptTypes: {
       CODE: 'Code Script',
       VISUAL: 'Visual Script',
@@ -1194,6 +1211,56 @@ export default {
       deleteFailed: 'Failed to delete',
       enterScriptName: 'Enter a script name'
     }
+  },
+
+  // Login state management; common actions and fields reuse common messages.
+  storageState: {
+    title: 'Login State Management',
+    label: 'Login State',
+    create: 'Add Login State',
+    edit: 'Edit Login State',
+    sourcePage: 'Source Page',
+    size: 'Size',
+    invalidFile: 'Select a valid JSON file',
+    invalidJson: 'Invalid JSON format',
+    invalidArrays: 'cookies and origins must be arrays',
+    uploadFailed: 'Upload failed',
+    deleteConfirm: 'Delete login state "{name}"?'
+  },
+
+  // Shared step editor
+  stepEditor: {
+    title: 'Structured Steps',
+    recordedSteps: 'Recorded Steps',
+    description: 'Step description',
+    collapseStep: 'Collapse step',
+    expandStep: 'Expand step',
+    page: 'Page',
+    locatorStrategy: 'Locator strategy',
+    locator: 'Locator',
+    optionalName: 'Name (optional)',
+    variableName: 'Variable name',
+    variableValue: 'Variable value',
+    operation: 'Operation',
+    switchStorageState: 'Switch',
+    clearStorageState: 'Clear',
+    overwrite: 'Overwrite',
+    saveAs: 'Save as',
+    selectStorageState: 'Select login state',
+    storageStateName: 'Login state name',
+    saveToVariable: 'Save to temporary variable (optional)',
+    url: 'URL',
+    inputValue: 'Input value',
+    selectFactoryData: 'Select data factory data',
+    assertValue: 'Assertion value',
+    attributeValue: 'Attribute or attribute=value, e.g. href or href=/home',
+    empty: 'No steps yet',
+    elementDescription: '{action} "{name}"',
+    generatedWaitDescription: 'Wait {duration} ms',
+    generatedNavigateDescription: 'Navigate to URL "{url}"',
+    generatedSwitchTabDescription: 'Switch to tab "{tab}"',
+    generatedPressDescription: '{action} "{key}"',
+    generatedStorageStateDescription: 'Save login state'
   },
 
   // Test Case Management
@@ -1231,6 +1298,11 @@ export default {
     foldAll: 'Collapse All',
     expandAll: 'Expand All',
     selectAction: 'Select Action',
+    actionPress: 'Press Key',
+    actionSelect: 'Select Option',
+    actionCheck: 'Check',
+    actionUncheck: 'Uncheck',
+    actionSetVariable: 'Set Temp Variable',
     actionClick: 'Click',
     actionFill: 'Fill Text',
     actionGetText: 'Get Text',
@@ -1256,8 +1328,9 @@ export default {
     assertTextContains: 'Text Contains',
     assertTextEquals: 'Text Equals',
     assertIsVisible: 'Element Visible',
+    assertIsNotVisible: 'Element Not Visible',
     assertExists: 'Element Exists',
-    assertHasAttribute: 'Attribute Value',
+    assertHasAttribute: 'hasAttribute',
     assertUrlContains: 'URL Contains',
     expectedValue: 'Expected Value',
     stepDescription: 'Step Description:',

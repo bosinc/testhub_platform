@@ -23,7 +23,7 @@
             </el-input>
           </el-form-item>
           <el-form-item :label="$t('uiAutomation.common.status')">
-            <el-select v-model="queryParams.status" :placeholder="$t('uiAutomation.execution.statusFilter')" clearable>
+            <el-select v-model="queryParams.status" :placeholder="$t('uiAutomation.execution.statusFilter')" clearable style="width: 150px">
               <el-option :label="$t('uiAutomation.status.pending')" value="pending" />
               <el-option :label="$t('uiAutomation.status.running')" value="running" />
               <el-option :label="$t('uiAutomation.status.passed')" value="passed" />
@@ -32,7 +32,7 @@
             </el-select>
           </el-form-item>
           <el-form-item :label="$t('uiAutomation.execution.browserFilter')">
-            <el-select v-model="queryParams.browser" :placeholder="$t('uiAutomation.execution.browserFilter')" clearable>
+            <el-select v-model="queryParams.browser" :placeholder="$t('uiAutomation.execution.browserFilter')" clearable style="width: 150px">
               <el-option label="Chrome" value="chrome" />
               <el-option label="Firefox" value="firefox" />
               <el-option label="Safari" value="safari" />

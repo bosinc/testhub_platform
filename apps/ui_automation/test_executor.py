@@ -1100,6 +1100,14 @@ class TestExecutor:
                             log += f"  - 期望: '{resolved_assert_value}'\n"
                             log += f"  - 实际: '{text}'"
                             step_result['error'] = log
+                    elif step_data['assert_type'] == 'isNotVisible':
+                        # 隐藏和已移除都满足不可见断言，等待异步页面状态变化。
+                        from playwright.sync_api import TimeoutError as PlaywrightTimeout
+                        try:
+                            target_locator.wait_for(state='hidden', timeout=step_data['wait_time'])
+                            step_result['success'] = True
+                        except PlaywrightTimeout:
+                            step_result['error'] = f"✗ 断言失败: 元素 '{element_name}' 仍然可见"
                     elif step_data['assert_type'] == 'isVisible':
                         is_visible = target_locator.is_visible()
                         if (step_data.get('action_params') or {}).get('negate'):
@@ -1116,7 +1124,7 @@ class TestExecutor:
                         if count == 0:
                             step_result['error'] = f"✗ 断言失败: 元素 '{element_name}' 不存在"
                     elif step_data['assert_type'] == 'hasAttribute':
-                        attr_spec = step_data['assert_value'].strip()
+                        attr_spec = resolved_assert_value.strip()
                         if not attr_spec:
                             step_result['error'] = '✗ hasAttribute 断言需要指定属性名'
                         else:
@@ -2440,6 +2448,14 @@ class TestExecutor:
                     step_result['screenshot'] = screenshot_path
                     step_result['success'] = True
 
+                elif step_data['action_type'] == 'assert' and step_data['assert_type'] == 'isNotVisible':
+                    # 不先等待元素存在，以便已经移除的元素直接通过。
+                    try:
+                        wait.until(EC.invisibility_of_element_located((by, locator_value)))
+                        step_result['success'] = True
+                    except TimeoutException:
+                        step_result['error'] = f"✗ 断言失败: 元素 '{element_name}' 仍然可见"
+
                 elif step_data['action_type'] == 'assert':
                     # 先定位元素
                     element_obj = wait.until(EC.presence_of_element_located((by, locator_value)))
@@ -2476,6 +2492,25 @@ class TestExecutor:
                     elif step_data['assert_type'] == 'exists':
                         # 元素已经找到，说明存在
                         step_result['success'] = True
+
+                    elif step_data['assert_type'] == 'hasAttribute':
+                        # 只读取 DOM 属性，兼容空属性值，并保留期望值中的等号。
+                        attr_name, separator, expected_value = resolved_assert_value.strip().partition('=')
+                        attr_name = attr_name.strip()
+                        if not attr_name:
+                            step_result['error'] = '✗ hasAttribute 断言需要指定属性名'
+                        else:
+                            actual_value = element_obj.get_dom_attribute(attr_name)
+                            step_result['success'] = actual_value is not None and (
+                                not separator or actual_value == expected_value
+                            )
+                            if not step_result['success']:
+                                step_result['error'] = f"✗ 断言失败: 元素 '{element_name}' 不包含属性 '{attr_name}'"
+                                if separator:
+                                    step_result['error'] = (
+                                        f"✗ 断言失败: 属性 '{attr_name}' 值不匹配\n"
+                                        f"  - 期望: '{expected_value}'\n  - 实际: '{actual_value}'"
+                                    )
 
             else:
                 if step_data['action_type'] == 'wait':

@@ -513,7 +513,10 @@ class PlaywrightTestEngine:
             locator_options = dict(element_data.get('locator_options') or {})
             value = locator_value
             strategy = locator_strategy.lower()
-            if strategy in {'css', 'css selector', 'xpath'}:
+            # 不可见及属性断言必须保留隐藏节点，不能套用下拉选项的可见性过滤。
+            if strategy in {'css', 'css selector', 'xpath'} and not (
+                action_type == 'assert' and step.assert_type in {'isNotVisible', 'hasAttribute'}
+            ):
                 dropdown = any(keyword in value.lower() for keyword in ['dropdown', 'el-select', ':has(', 'li'])
                 if dropdown:
                     if 'visible=true' not in value:
@@ -1004,6 +1007,17 @@ class PlaywrightTestEngine:
                         screenshot = await self.page.screenshot()
                         screenshot_base64 = f"data:image/png;base64,{base64.b64encode(screenshot).decode()}"
                         return False, log, screenshot_base64
+
+                elif step.assert_type == 'isNotVisible':
+                    # 等待隐藏或从 DOM 移除，允许异步关闭弹窗等场景完成后再判断。
+                    try:
+                        await locator.wait_for(state='hidden', timeout=timeout_ms)
+                    except PlaywrightTimeout:
+                        log = f"✗ 断言失败: 元素 '{element_name}' 仍然可见"
+                        screenshot = await self.page.screenshot()
+                        screenshot_base64 = f"data:image/png;base64,{base64.b64encode(screenshot).decode()}"
+                        return False, log, screenshot_base64
+                    return True, f"✓ 断言通过: 元素 '{element_name}' 不可见", None
 
                 elif step.assert_type == 'isVisible':
                     is_visible = await locator.is_visible()

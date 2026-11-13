@@ -64,7 +64,7 @@
                 </div>
 
                 <!-- 普通显示模式 -->
-                <span v-else class="node-label">{{ node.label }}</span>
+                <span v-else class="node-label" :title="node.label">{{ node.label }}</span>
 
                 <span v-if="data.type === 'element'" class="element-type-tag" :class="data.element_type?.toLowerCase()">
                   {{ getElementTypeLabel(data.element_type) }}
@@ -209,7 +209,7 @@
               </el-form-item>
 
               <el-form-item :label="$t('uiAutomation.element.locatorOptions')">
-                <el-input v-model="selectedElement.locator_options_json" type="textarea" :rows="3" :placeholder="$t('uiAutomation.element.locatorOptionsPlaceholder')" @blur="validateLocatorOptions" />
+                <el-input v-model="selectedElement.locator_options_json" type="textarea" :rows="4" :placeholder="$t('uiAutomation.element.locatorOptionsPlaceholder')" @blur="validateLocatorOptions" />
               </el-form-item>
 
               <el-form-item :label="$t('uiAutomation.common.description')">
@@ -314,7 +314,6 @@ import {
   deleteElement,
   getElementTree,
   getElementGroupTree,
-  getElementGroups,
   createElementGroup,
   updateElementGroup,
   deleteElementGroup,
@@ -589,44 +588,11 @@ const loadLocatorStrategies = async () => {
   }
 }
 
-// 加载页面（分组）
-const loadPages = async () => {
-  if (!selectedProject.value) return
-
-  try {
-    const response = await getElementGroups({ project: selectedProject.value })
-    pages.value = response.data?.results || response.data || []
-  } catch (error) {
-    console.error('获取页面失败:', error)
-  }
-}
-
-// 加载页面树结构
-const loadPageTree = async () => {
-  if (!selectedProject.value) return
-
-  try {
-    const response = await getElementGroupTree({ project: selectedProject.value })
-    // 构建完整的树形结构
-    const buildTree = (groups) => {
-      return groups.map(group => ({
-        ...group,
-        type: 'page',
-        children: group.children ? buildTree(group.children) : []
-      }))
-    }
-
-    treeData.value = buildTree(response.data || [])
-  } catch (error) {
-    console.error('获取页面树失败:', error)
-    treeData.value = []
-  }
-}
-
 // 加载元素树
 const loadElementTree = async () => {
   if (!selectedProject.value) {
     treeData.value = []
+    pages.value = []
     return
   }
 
@@ -647,6 +613,16 @@ const loadElementTree = async () => {
     }
 
     const pageNodes = buildTree(pageTreeResponse.data || [])
+    // 复用树接口的全部层级生成分组下拉选项，避免重复请求分页列表。
+    const collectPages = (groups, result = []) => {
+      groups.forEach(group => {
+        const { children = [], ...page } = group
+        result.push(page)
+        collectPages(children, result)
+      })
+      return result
+    }
+    pages.value = collectPages(pageTreeResponse.data || [])
 
     // 调试信息 - 检查API返回的完整响应结构
     console.log('=== 加载元素树调试 ===')
@@ -750,10 +726,7 @@ const onProjectChange = async () => {
   console.log('=== 项目切换调试 ===')
   console.log('当前项目ID:', selectedProject.value)
 
-  await Promise.all([
-    loadPages(),
-    loadElementTree()
-  ])
+  await loadElementTree()
 
   console.log('项目切换完成，检查treeData:', treeData.value)
   console.log('treeData长度:', treeData.value.length)
@@ -850,10 +823,7 @@ const createPage = async () => {
     })
 
     // 重新加载页面和树
-    await Promise.all([
-      loadPages(),
-      loadElementTree()
-    ])
+    await loadElementTree()
 
     // 强制刷新树组件
     treeKey.value += 1
@@ -1421,10 +1391,7 @@ const deleteNode = async () => {
     console.log('Reload data after deletion')
 
     // 重新加载数据
-    await Promise.all([
-      loadPages(),
-      loadElementTree()
-    ])
+    await loadElementTree()
 
     // 强制刷新树组件
     treeKey.value += 1
@@ -1475,10 +1442,7 @@ const updatePage = async () => {
     showEditPageDialog.value = false
 
     // 重新加载页面和树
-    await Promise.all([
-      loadPages(),
-      loadElementTree()
-    ])
+    await loadElementTree()
 
     // 强制刷新树组件
     treeKey.value += 1
@@ -1491,7 +1455,8 @@ const updatePage = async () => {
 
 <style scoped>
 .element-manager {
-  height: 100vh;
+  height: 100%;
+  min-height: 0;
   display: flex;
   flex-direction: column;
 }
@@ -1499,6 +1464,7 @@ const updatePage = async () => {
 .element-layout {
   display: flex;
   flex: 1;
+  min-height: 0;
   overflow: hidden;
 }
 
@@ -1507,7 +1473,7 @@ const updatePage = async () => {
   border-right: 1px solid #e4e7ed;
   display: flex;
   flex-direction: column;
-  background: #f5f7fa;
+  background: white;
 }
 
 .sidebar-header {
@@ -1533,18 +1499,25 @@ const updatePage = async () => {
 .tree-node {
   display: flex;
   align-items: center;
+  min-width: 0;
   gap: 5px;
   padding: 5px 0;
 }
 
+.tree-node > .el-icon {
+  flex: 0 0 auto;
+}
+
 .node-label {
-  flex: 1;
+  flex: 1 1 0;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .element-type-tag {
+  flex: 0 0 auto;
   font-size: 12px;
   padding: 2px 6px;
   border-radius: 4px;
@@ -1572,6 +1545,7 @@ const updatePage = async () => {
   min-width: 0;
   overflow: auto;
   padding: 20px;
+  background: white;
 }
 
 .empty-state {

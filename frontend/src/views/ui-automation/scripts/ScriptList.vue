@@ -122,22 +122,22 @@
     </el-dialog>
 
     <!-- 编辑对话框 -->
-    <el-dialog v-model="showEditDialog" title="步骤与代码同步编辑" width="96%" top="3vh" :close-on-click-modal="false" class="sync-editor-dialog" @opened="createMonaco" @closed="disposeMonaco">
+    <el-dialog v-model="showEditDialog" :title="t('uiAutomation.script.syncEditor.title')" width="96%" top="3vh" :close-on-click-modal="false" class="sync-editor-dialog" @opened="createMonaco" @closed="disposeMonaco">
       <div v-if="editingScript" class="script-editor">
         <div class="sync-editor-topbar">
-          <el-input v-model="editingScript.name" maxlength="200" class="script-title-input" />
+          <el-input v-model="editingScript.name" maxlength="200" class="script-title-input" :placeholder="t('uiAutomation.script.messages.enterScriptName')" :aria-label="t('uiAutomation.script.scriptName')" />
           <el-tag :type="syncState === 'synced' ? 'success' : 'warning'">{{ syncStateText }}</el-tag>
           <span class="topbar-actions">
-            <el-button size="small" @click="parseCode" :loading="syncing">代码反解析回步骤</el-button>
-            <el-button size="small" @click="generateFromSteps" :loading="syncing">重新生成代码</el-button>
+            <el-button size="medium" @click="parseCode" :loading="syncing">{{ t('uiAutomation.script.syncEditor.parseCode') }}</el-button>
+            <el-button size="medium" @click="generateFromSteps" :loading="syncing">{{ t('uiAutomation.script.syncEditor.regenerateCode') }}</el-button>
           </span>
         </div>
         <div class="sync-editor-body">
           <div class="steps-pane">
-            <StructuredStepEditor v-model="editingSteps" :elements="editorElements" :storage-states="storageStates" title="录制步骤" @change="onStepsChanged" />
+            <StructuredStepEditor v-model="editingSteps" :elements="editorElements" :pages="editorPages" :elements-ready="true" :storage-states="storageStates" :title="t('uiAutomation.stepEditor.recordedSteps')" @change="onStepsChanged" />
           </div>
           <div class="code-pane">
-            <div class="pane-heading">生成的 Playwright 代码 <el-tag size="small" type="success">步骤 ↔ 代码同步</el-tag></div>
+            <div class="pane-heading">{{ t('uiAutomation.script.syncEditor.generatedCode') }} <el-tag size="small" type="success">{{ t('uiAutomation.script.syncEditor.syncBadge') }}</el-tag></div>
             <div ref="monacoHost" class="monaco-host" />
           </div>
         </div>
@@ -145,7 +145,7 @@
       </div>
       <template #footer>
         <el-button @click="showEditDialog = false">{{ $t('uiAutomation.common.cancel') }}</el-button>
-        <el-button type="primary" @click="saveEditedScript" :loading="saving">保存脚本和步骤</el-button>
+        <el-button type="primary" @click="saveEditedScript" :loading="saving">{{ t('uiAutomation.script.syncEditor.saveScriptAndSteps') }}</el-button>
       </template>
     </el-dialog>
 
@@ -191,6 +191,7 @@ import {
   deleteTestScript,
   importRecordedScript,
   getElements,
+  getElementGroupTree,
   getStorageStates,
   getScriptSteps,
   parseScriptSteps,
@@ -205,6 +206,8 @@ import 'monaco-editor/esm/vs/editor/browser/widget/codeEditor/editor.css'
 import RecordingWizard from './RecordingWizard.vue'
 import ScriptReplayDialog from './ScriptReplayDialog.vue'
 import ScriptHistoryDialog from './ScriptHistoryDialog.vue'
+import { mergeStepElementOptions } from './elementLibrary.mjs'
+import { localizeGeneratedStepDescription } from './stepDescription.mjs'
 
 const router = useRouter()
 const { t, locale } = useI18n()
@@ -238,6 +241,7 @@ const syncing = ref(false)
 const converting = ref(false)
 const editingSteps = ref([])
 const editorElements = ref([])
+const editorPages = ref([])
 const storageStates = ref([])
 const monacoHost = ref(null)
 const editorError = ref('')
@@ -249,7 +253,8 @@ const convertForm = ref({ name: '', startUrl: '', description: '' })
 let codeEditor = null
 let suppressCodeChange = false
 let generateTimer = null
-const syncStateText = computed(() => ({ synced: '已同步', steps: '步骤待生成代码', code: '代码待反解析' }[syncState.value]))
+// 同步状态文案随当前语言更新，不改变内部状态标识。
+const syncStateText = computed(() => t(`uiAutomation.script.syncEditor.states.${syncState.value}`))
 // 兼容后端大写动作和编辑器驼峰动作，保证两侧显示一致。
 const normalizeAction = value => ({
   CLICK: 'click', INPUT: 'fill', FILL: 'fill', PRESS: 'press', SELECT: 'select',
@@ -407,18 +412,29 @@ const viewScript = (script) => {
 const editScript = async (script) => {
   editingScript.value = { ...script, name: (script.name || '').replace(/\.py$/i, '') }
   editingSteps.value = []
+  editorElements.value = []
+  editorPages.value = []
   editorError.value = ''
   syncState.value = 'synced'
   showDetailDialog.value = false
   showEditDialog.value = true
   try {
-    const [stepResponse, elementResponse] = await Promise.all([
+    const projectId = script.project?.id || script.project || selectedProject.value
+    const [stepResponse, elementResponse, pageResponse] = await Promise.all([
       getScriptSteps({ script: script.id, page_size: 1000 }),
-      getElements({ project: script.project?.id || selectedProject.value, page_size: 1000 })
+      // 编辑器只需要名称和定位信息，使用紧凑响应避免序列化项目、脚本引用等详情。
+      getElements({ project: projectId, page_size: 1000, compact: 1 }),
+      getElementGroupTree({ project: projectId })
     ])
     let rawSteps = stepResponse.data.results || stepResponse.data
     editorElements.value = elementResponse.data.results || elementResponse.data
-    const storageResponse = await getStorageStates({ project: script.project?.id || selectedProject.value, page_size: 200 })
+    // 与用例编辑页一致，展开项目页面树，包含尚未绑定元素的页面及嵌套页面。
+    const flattenPages = groups => groups.flatMap(group => [
+      { id: group.id, name: group.name },
+      ...flattenPages(group.children || [])
+    ])
+    editorPages.value = flattenPages(pageResponse.data || [])
+    const storageResponse = await getStorageStates({ project: projectId, page_size: 200 })
     storageStates.value = storageResponse.data.results || storageResponse.data
     if (!rawSteps.length) {
       const parsed = await parseScriptSteps(script.id, script.content || '')
@@ -426,6 +442,8 @@ const editScript = async (script) => {
         ...step, id: `parsed-${index}-${Date.now()}`
       }))
     }
+    // 完整列表已加载的元素优先复用；分页之外的关联元素先补成真实选项再挂载步骤。
+    editorElements.value = mergeStepElementOptions(editorElements.value, rawSteps)
     editingSteps.value = rawSteps.map(step => {
       const element = step.target_element
       const actionType = normalizeAction(step.action_type)
@@ -446,6 +464,7 @@ const editScript = async (script) => {
       return {
         ...step,
         action_type: actionType,
+        description: localizeGeneratedStepDescription({ ...step, action_type: actionType }, t),
         action_params: actionParams,
         id: step.id,
         element_id: element?.id || step.element_id || '',
@@ -491,7 +510,7 @@ const editScript = async (script) => {
       // 一致性检查失败不阻断编辑器打开，仍保留原有同步状态。
     }
   } catch (error) {
-    editorError.value = error.response?.data?.detail || '加载步骤或元素库失败'
+    editorError.value = error.response?.data?.detail || t('uiAutomation.script.syncEditor.loadStepsFailed')
   }
 }
 
@@ -560,7 +579,7 @@ const generateFromSteps = async () => {
     syncState.value = 'synced'
     return true
   } catch (error) {
-    editorError.value = error.response?.data?.error || '代码生成失败'
+    editorError.value = error.response?.data?.error || t('uiAutomation.pageObject.messages.generateCodeFailed')
     return false
   } finally {
     syncing.value = false
@@ -578,8 +597,11 @@ const parseCode = async () => {
   editorError.value = ''
   try {
     const response = await parseScriptSteps(editingScript.value.id, codeEditor?.getValue() || editingScript.value.content)
+    // ID 和真实选项在同一轮更新，选择器无需等待后续请求或使用自定义标签回显。
+    editorElements.value = mergeStepElementOptions(editorElements.value, response.data.steps)
     editingSteps.value = response.data.steps.map((step, index) => ({
       ...step, id: `parsed-${index}-${Date.now()}`, action_type: normalizeAction(step.action_type),
+      description: localizeGeneratedStepDescription({ ...step, action_type: normalizeAction(step.action_type) }, t),
       element_id: step.element_id || step.target_element?.id || '',
       element_page: step.target_element?.page || '', target_element: step.target_element || null,
       locator_strategy: step.action_params?.locator?.strategy || step.target_element?.locator_strategy?.name?.toLowerCase() || 'role',
@@ -592,7 +614,7 @@ const parseCode = async () => {
     syncState.value = 'synced'
     return true
   } catch (error) {
-    editorError.value = error.response?.data?.error || '代码反解析失败'
+    editorError.value = error.response?.data?.error || t('uiAutomation.script.syncEditor.parseCodeFailed')
     return false
   } finally {
     syncing.value = false
@@ -622,6 +644,7 @@ const convertToTestCase = async () => {
   converting.value = true
   try {
     await convertScriptToTestCase(convertScript.value.id, {
+      locale: locale.value,
       name: convertForm.value.name.trim(), description: convertForm.value.description,
       start_url: convertForm.value.startUrl
     })
@@ -656,6 +679,7 @@ const saveEditedScript = async () => {
 
     const content = codeEditor?.getValue() || editingScript.value.content
     await saveScriptEditor(editingScript.value.id, {
+      locale: locale.value,
       name,
       content,
       start_url: editingScript.value.start_url || '',

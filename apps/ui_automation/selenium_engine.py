@@ -573,6 +573,18 @@ class SeleniumTestEngine:
             # 获取定位器
             by_type, by_value = self._get_locator(locator_strategy, locator_value)
 
+            if action_type == 'assert' and step.assert_type == 'isNotVisible':
+                # 在等待元素出现之前处理，DOM 中不存在的元素也视为不可见。
+                try:
+                    WebDriverWait(self.driver, timeout_seconds).until(
+                        EC.invisibility_of_element_located((by_type, by_value))
+                    )
+                except TimeoutException:
+                    screenshot = self.driver.get_screenshot_as_png()
+                    screenshot_base64 = f"data:image/png;base64,{base64.b64encode(screenshot).decode()}"
+                    return False, f"✗ 断言失败: 元素 '{element_name}' 仍然可见", screenshot_base64
+                return True, f"✓ 断言通过: 元素 '{element_name}' 不可见", None
+
             # 根据操作类型选择合适的等待条件
             wait = WebDriverWait(self.driver, timeout_seconds)
             from selenium.common.exceptions import StaleElementReferenceException
@@ -865,6 +877,24 @@ class SeleniumTestEngine:
                     # 元素已经找到，说明存在
                     log = f"✓ 断言通过: 元素 '{element_name}' 存在"
                     return True, log, None
+
+                elif step.assert_type == 'hasAttribute':
+                    # 与 Playwright 一致：属性名检查存在，属性名=期望值检查精确值。
+                    attr_name, separator, expected_value = resolved_assert_value.strip().partition('=')
+                    attr_name = attr_name.strip()
+                    if not attr_name:
+                        return False, '✗ hasAttribute 断言需要指定属性名', None
+                    # 只读取 DOM 属性，避免 get_attribute 回退到同名 JS property。
+                    actual_value = element.get_dom_attribute(attr_name)
+                    passed = actual_value is not None and (not separator or actual_value == expected_value)
+                    if passed:
+                        return True, f"✓ 断言通过: 元素 '{element_name}' 包含属性 '{resolved_assert_value}'", None
+                    log = f"✗ 断言失败: 元素 '{element_name}' 不包含属性 '{attr_name}'"
+                    if separator:
+                        log = f"✗ 断言失败: 属性 '{attr_name}' 值不匹配\n  - 期望: '{expected_value}'\n  - 实际: '{actual_value}'"
+                    screenshot = self.driver.get_screenshot_as_png()
+                    screenshot_base64 = f"data:image/png;base64,{base64.b64encode(screenshot).decode()}"
+                    return False, log, screenshot_base64
 
 
 

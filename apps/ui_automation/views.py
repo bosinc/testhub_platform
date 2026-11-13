@@ -1,3 +1,5 @@
+from collections import defaultdict
+
 from rest_framework import viewsets, status, filters
 from rest_framework.decorators import action, api_view
 from rest_framework.response import Response
@@ -17,7 +19,6 @@ import random
 import time
 import shlex
 from urllib.parse import urlparse
-from urllib.parse import unquote
 
 from .models import (
     UiProject, StorageState, LocatorStrategy, Element, TestScript, TestSuite,
@@ -31,7 +32,6 @@ from .serializers import (
     UiProjectSerializer, UiProjectCreateSerializer, UiProjectUpdateSerializer, StorageStateSerializer,
     LocatorStrategySerializer,
     ElementSerializer, ElementEnhancedSerializer, ElementCompactSerializer,
-    resolve_page_group,
     TestScriptSerializer, TestScriptCreateSerializer, TestScriptUpdateSerializer,
     TestSuiteSerializer, TestSuiteCreateSerializer, TestSuiteUpdateSerializer, TestSuiteWithScriptsSerializer,
     TestSuiteScriptSerializer, TestSuiteTestCaseSerializer,
@@ -41,7 +41,7 @@ from .serializers import (
     PageObjectSerializer, PageObjectCreateSerializer, PageObjectElementSerializer,
     ScriptStepSerializer, ScriptElementUsageSerializer,
     ScriptAnalysisSerializer, ElementValidationSerializer, CodeGenerationSerializer,
-    TestCaseSerializer, TestCaseFolderSerializer, TestCaseStepSerializer, TestCaseExecutionSerializer, TestCaseRunSerializer,
+    TestCaseSerializer, TestCaseDetailSerializer, TestCaseFolderSerializer, TestCaseStepSerializer, TestCaseExecutionSerializer, TestCaseRunSerializer,
     OperationRecordSerializer,
     UiScheduledTaskSerializer, UiNotificationLogSerializer, UiTaskNotificationSettingSerializer,
     AICaseSerializer, AIExecutionRecordSerializer,
@@ -102,16 +102,6 @@ def _canonical_storage_state_params(value):
     return params
 
 
-def _page_name_from_url(value):
-    """从起始 URL 的最后一路径推断元素所属页面名称。"""
-    parsed = urlparse(str(value or ''))
-    segments = [segment for segment in parsed.path.split('/') if segment]
-    if not segments:
-        return ''
-    name = re.sub(r'[-_]+', ' ', unquote(segments[-1])).strip()
-    return name[:200]
-
-
 def _element_metadata(action, locator):
     """根据动作和定位器语义推断元素类型及可辨识名称。"""
     locator = locator or {}
@@ -144,7 +134,7 @@ def _element_metadata(action, locator):
     return element_type, name[:200]
 
 
-def _resolve_element(project, user, action, locator, page_url, strategies):
+def _resolve_element(project, user, action, locator, strategies, element_page=''):
     """按项目、定位策略和值复用元素；不存在时自动创建元素库记录。"""
     if not locator or not locator.get('value'):
         return None
@@ -161,23 +151,33 @@ def _resolve_element(project, user, action, locator, page_url, strategies):
 
     locator_value = str(locator['value'])[:500]
     locator_options = locator.get('options') or {}
-    element = Element.objects.filter(
+    elements = Element.objects.filter(
         project=project,
         locator_strategy=strategy,
         locator_value=locator_value,
         locator_options=locator_options,
-    ).first()
+    )
+    # 手动选择页面时仅复用该页面下的元素，避免同一定位器被归入其他页面。
+    selected_page = str(element_page or '').strip()
+    selected_group = None
+    if selected_page:
+        selected_group = ElementGroup.objects.filter(project=project, name=selected_page).order_by('id').first()
+        if selected_group is None:
+            raise ValidationError({'element_page': '所选页面不存在或不属于当前项目'})
+        elements = elements.filter(group=selected_group)
+    else:
+        # 未选页面只复用未关联页面的记录，避免沿用同定位器在其他页面下的归属。
+        elements = elements.filter(group__isnull=True, page='')
+    element = elements.first()
     if element:
         return element
 
-    page_name = _page_name_from_url(page_url)
-    group = resolve_page_group(project, page_name)
-    if group:
-        page_name = group.name
+    # 仅使用用户明确选择的页面；未选时保持空名称和空分组，不按 URL 推断。
+    page_name = selected_group.name if selected_group else ''
     element_type, element_name = _element_metadata(action, locator)
     return Element.objects.create(
         project=project,
-        group=group,
+        group=selected_group,
         page=page_name,
         name=element_name,
         element_type=element_type,
@@ -188,20 +188,32 @@ def _resolve_element(project, user, action, locator, page_url, strategies):
     )
 
 
-def _find_matching_element(project, locator):
-    """反解析代码时查找完全匹配的已有元素，避免重复建库。"""
-    if not locator or not locator.get('value'):
-        return None
-    strategy_name = _canonical_locator_strategy(locator.get('strategy'))
-    strategy = LocatorStrategy.objects.filter(name__iexact=strategy_name).first()
-    if strategy is None:
-        return None
-    return Element.objects.filter(
-        project=project,
-        locator_strategy=strategy,
-        locator_value=str(locator['value'])[:500],
-        locator_options=locator.get('options') or {},
-    ).first()
+def _find_matching_elements(project_id, locators):
+    """一次读取候选元素并建立索引，避免反解析时按步骤重复查询。"""
+    def locator_key(strategy, value, options):
+        # JSON 对象的键顺序不影响定位语义，name、exact、nth 等参数仍须完全相同。
+        return (strategy.lower(), value, json.dumps(options or {}, sort_keys=True))
+
+    keys = [
+        locator_key(_canonical_locator_strategy(locator.get('strategy')),
+                    str(locator['value'])[:500], locator.get('options'))
+        if locator and locator.get('value') else None
+        for locator in locators
+    ]
+    values = {key[1] for key in keys if key is not None}
+    matches = {}
+    if values:
+        elements = Element.objects.filter(
+            project_id=project_id, locator_value__in=values,
+        ).select_related('locator_strategy').only(
+            'id', 'name', 'page', 'order', 'locator_value', 'locator_options',
+            'locator_strategy__name',
+        )
+        for element in elements:
+            key = locator_key(element.locator_strategy.name, element.locator_value, element.locator_options)
+            # 沿用元素库默认排序，多个完全相同的定位器仍复用原先排在首位的元素。
+            matches.setdefault(key, element)
+    return [matches.get(key) for key in keys]
 
 
 def extract_step_info(s, step_index):
@@ -417,6 +429,13 @@ class ElementViewSet(viewsets.ModelViewSet):
         accessible_projects = UiProject.objects.filter(
             models.Q(owner=user) | models.Q(members=user)
         ).distinct()
+        if self.action == 'tree':
+            # 树响应只使用定位策略和正式用例引用计数，无需联查项目、分组或预取整份脚本。
+            return Element.objects.filter(project__in=accessible_projects).select_related(
+                'locator_strategy'
+            ).annotate(
+                case_step_count=models.Count('testcasestep')
+            ).order_by('page', 'order', 'name')
         queryset = Element.objects.filter(project__in=accessible_projects).select_related(
             'project', 'group', 'locator_strategy', 'created_by', 'parent_element'
         ).annotate(
@@ -611,6 +630,42 @@ class ElementGroupViewSet(viewsets.ModelViewSet):
                                                                                            'parent_group').order_by(
             'order', 'name')
 
+    def _load_group_graph(self, project_ids):
+        """批量加载项目分组及计数，供递归序列化复用，避免逐节点查询。"""
+        groups = list(
+            self.get_queryset().filter(project_id__in=project_ids)
+            .select_related(None).select_related('project__owner')
+            .prefetch_related('project__members')
+            .annotate(direct_elements_count=models.Count('elements'))
+        )
+        children_by_parent = defaultdict(list)
+        for group in groups:
+            children_by_parent[group.parent_group_id].append(group)
+        return groups, children_by_parent
+
+    def list(self, request, *args, **kwargs):
+        """保留标准过滤和分页，同时为当前页的项目预加载完整分组树。"""
+        queryset = self.filter_queryset(self.get_queryset())
+        page = self.paginate_queryset(queryset)
+        selected_groups = list(page if page is not None else queryset)
+        # 过滤和分页只决定顶层结果，不能截掉其子树中未匹配过滤条件的节点。
+        groups, children_by_parent = self._load_group_graph({group.project_id for group in selected_groups})
+        groups_by_id = {group.pk: group for group in groups}
+        selected_groups = [groups_by_id[group.pk] for group in selected_groups if group.pk in groups_by_id]
+
+        serializer = self.get_serializer(
+            selected_groups,
+            many=True,
+            context={
+                **self.get_serializer_context(),
+                'element_group_children': children_by_parent,
+                'element_group_projects': {},
+            },
+        )
+        if page is not None:
+            return self.get_paginated_response(serializer.data)
+        return Response(serializer.data)
+
     @action(detail=False, methods=['get'])
     def tree(self, request):
         """获取分组树形结构"""
@@ -618,8 +673,17 @@ class ElementGroupViewSet(viewsets.ModelViewSet):
         if not project_id:
             return Response({'error': '需要指定项目ID'}, status=status.HTTP_400_BAD_REQUEST)
 
-        groups = self.get_queryset().filter(project_id=project_id, parent_group__isnull=True)
-        serializer = ElementGroupSerializer(groups, many=True)
+        groups, children_by_parent = self._load_group_graph({project_id})
+        roots = [group for group in groups if group.parent_group_id is None]
+        serializer = ElementGroupSerializer(
+            roots,
+            many=True,
+            context={
+                **self.get_serializer_context(),
+                'element_group_children': children_by_parent,
+                'element_group_projects': {},
+            },
+        )
         return Response(serializer.data)
 
 
@@ -877,9 +941,10 @@ class TestScriptViewSet(viewsets.ModelViewSet):
         except (ScriptSecurityError, UnsupportedRecordingCode) as exc:
             return Response({'error': str(exc), 'line': getattr(exc, 'line', None)}, status=status.HTTP_400_BAD_REQUEST)
         start_url = analysis['start_url']
-        for step in steps:
-            locator = (step.get('action_params') or {}).get('locator')
-            element = _find_matching_element(script.project, locator)
+        elements = _find_matching_elements(script.project_id, [
+            (step.get('action_params') or {}).get('locator') for step in steps
+        ])
+        for step, element in zip(steps, elements):
             step['element_id'] = element.id if element else ''
             if element:
                 step['target_element'] = {
@@ -896,6 +961,8 @@ class TestScriptViewSet(viewsets.ModelViewSet):
     def save_editor(self, request, pk=None):
         """事务性保存脚本和步骤，同时创建或复用元素库记录。"""
         script = self.get_object()
+        # 系统界面语言由前端传入，只影响新生成的兜底描述，不翻译已有描述。
+        english = str(request.data.get('locale') or '').lower().startswith('en')
         steps = request.data.get('steps', [])
         content = request.data.get('content', '')
         if not isinstance(steps, list) or not isinstance(content, str):
@@ -909,10 +976,6 @@ class TestScriptViewSet(viewsets.ModelViewSet):
                 script.save(update_fields=['name', 'content', 'start_url', 'updated_at'])
                 script.steps.all().delete()
                 strategies = {item.name.lower(): item for item in LocatorStrategy.objects.all()}
-                page_url = script.start_url or request.data.get('start_url') or ''
-                if not page_url:
-                    page_url = next((str(step.get('input_value') or '') for step in steps
-                                     if step.get('action_type') == 'navigate' and step.get('input_value')), '')
                 created_steps = []
                 for index, raw in enumerate(steps, 1):
                     data = dict(raw)
@@ -939,7 +1002,7 @@ class TestScriptViewSet(viewsets.ModelViewSet):
                     if element is None and locator.get('value'):
                         element = _resolve_element(
                             script.project, request.user, data.get('action_type'), locator,
-                            page_url, strategies
+                            strategies, element_page=data.get('element_page')
                         )
                     action = str(data.get('action_type') or '').strip()
                     if action == 'storageState':
@@ -961,7 +1024,7 @@ class TestScriptViewSet(viewsets.ModelViewSet):
                         wait_time=int(data.get('wait_time') or 1000),
                         assert_type=str(data.get('assert_type') or ''),
                         assert_value=str(data.get('assert_value') or ''),
-                        description=str(data.get('description') or f'步骤{index}')[:500],
+                        description=str(data.get('description') or (f'Step {index}' if english else f'步骤{index}'))[:500],
                         raw_code=str(data.get('raw_code') or ''),
                         source_line_start=data.get('source_line_start'),
                         source_line_end=data.get('source_line_end'),
@@ -983,6 +1046,8 @@ class TestScriptViewSet(viewsets.ModelViewSet):
     def to_test_case(self, request, pk=None):
         """把已同步的脚本步骤复制为可执行 UI 测试用例。"""
         script = self.get_object()
+        # 自动补充的导航步骤使用当前界面语言，已保存步骤描述仍原样复制。
+        english = str(request.data.get('locale') or '').lower().startswith('en')
         steps = list(script.steps.select_related('target_element').order_by('step_order'))
         if not steps:
             return Response({'error': '请先在编辑器中完成步骤同步并保存'}, status=status.HTTP_400_BAD_REQUEST)
@@ -1007,7 +1072,7 @@ class TestScriptViewSet(viewsets.ModelViewSet):
                     step_number=1,
                     action_type='navigate',
                     input_value=start_url,
-                    description='打开起始URL',
+                    description='Open start URL' if english else '打开起始URL',
                 ))
             for index, step in enumerate(conversion_steps, len(case_steps) + 1):
                 action = action_map.get(step.action_type)
@@ -1605,6 +1670,12 @@ class TestCaseViewSet(viewsets.ModelViewSet):
     ordering_fields = ['created_at', 'updated_at', 'name', 'priority', 'status']
     ordering = ['-created_at']
     filterset_fields = ['project', 'status', 'priority', 'created_by']
+
+    def get_serializer_class(self):
+        # 仅详情响应携带正式用例，避免列表逐条反查关联关系。
+        if self.action == 'retrieve':
+            return TestCaseDetailSerializer
+        return super().get_serializer_class()
 
     def get_queryset(self):
         # 只显示用户有权限访问的项目的测试用例

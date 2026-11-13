@@ -316,6 +316,22 @@ class TestCaseStepApiTests(TestCase):
         self.client = APIClient()
         self.client.force_authenticate(self.user)
 
+    def test_new_assertion_modes_can_be_saved_and_read_back(self):
+        # 覆盖接口 ChoiceField 校验和持久化，确保编辑器的新选项可保存。
+        for index, (assert_type, assert_value) in enumerate((
+            ('isNotVisible', ''), ('hasAttribute', 'href=/home'),
+        ), 1):
+            with self.subTest(assert_type=assert_type):
+                response = self.client.post('/api/ui-automation/test-case-steps/', {
+                    'test_case': self.test_case.id, 'step_number': index,
+                    'action_type': 'assert', 'assert_type': assert_type,
+                    'assert_value': assert_value, 'element': self.element.id,
+                }, format='json')
+                self.assertEqual(response.status_code, 201, response.data)
+                saved = self.test_case.steps.get(pk=response.data['id'])
+                self.assertEqual(saved.assert_type, assert_type)
+                self.assertEqual(saved.assert_value, assert_value)
+
     def test_create_step_through_api_assigns_accessible_test_case(self):
         response = self.client.post('/api/ui-automation/test-case-steps/', {
             'test_case': self.test_case.id,

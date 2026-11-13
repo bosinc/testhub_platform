@@ -754,6 +754,7 @@ class TestCaseStep(models.Model):
         ('textContains', '文本包含'),
         ('textEquals', '文本等于'),
         ('isVisible', '元素可见'),
+        ('isNotVisible', '元素不可见'),
         ('exists', '元素存在'),
         ('hasAttribute', '属性值'),
         ('urlContains', 'URL包含'),

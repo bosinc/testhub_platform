@@ -108,17 +108,21 @@
     <el-dialog
       v-model="showCreateDialog"
       :title="isEditing ? $t('uiAutomation.suite.editSuite') : $t('uiAutomation.suite.createSuite')"
-      width="1100px"
+      width="min(1300px, 96vw)"
+      class="suite-editor-dialog"
+      modal-class="suite-editor-overlay"
+      align-center
+      append-to-body
       :close-on-click-modal="false"
     >
-      <el-form ref="createFormRef" :model="createForm" :rules="formRules" label-width="100px">
+      <el-form ref="createFormRef" class="suite-editor-form" :model="createForm" :rules="formRules" label-width="100px">
         <el-form-item :label="$t('uiAutomation.suite.suiteName')" prop="name">
           <el-input v-model="createForm.name" :placeholder="$t('uiAutomation.suite.rules.nameRequired')" />
         </el-form-item>
         <el-form-item :label="$t('uiAutomation.common.description')" prop="description">
-          <el-input v-model="createForm.description" type="textarea" :placeholder="$t('uiAutomation.common.description')" />
+          <el-input v-model="createForm.description" type="textarea" resize="none" :placeholder="$t('uiAutomation.common.description')" />
         </el-form-item>
-        <el-form-item :label="$t('uiAutomation.suite.testCases')">
+        <el-form-item class="suite-cases-form-item" :label="$t('uiAutomation.suite.testCases')">
           <div class="test-case-selector">
             <div class="selector-panel">
               <div class="panel-header">
@@ -126,7 +130,7 @@
                 <el-input
                   v-model="testCaseSearchText"
                   :placeholder="$t('uiAutomation.suite.searchCases')"
-                  size="small"
+                  size="medium"
                   clearable
                   style="width: 200px;"
                 >
@@ -136,7 +140,7 @@
                 </el-input>
               </div>
               <div class="panel-content">
-                <el-scrollbar height="300px">
+                <el-scrollbar height="100%">
                   <el-tree
                     ref="testCaseTreeRef"
                     v-loading="testCasesLoading"
@@ -153,7 +157,9 @@
                     <template #default="{ data }">
                       <span class="tree-node-label">
                         <el-icon><Folder v-if="data.type === 'folder'" /><Document v-else /></el-icon>
-                        <span class="tree-node-name">{{ data.name }}</span>
+                        <el-tooltip :content="data.name" placement="top" :show-after="300">
+                          <span class="tree-node-name">{{ data.name }}</span>
+                        </el-tooltip>
                         <template v-if="data.type === 'testCase'">
                           <el-tag size="small" :type="getPriorityTag(data.testCase.priority)">
                             {{ getPriorityText(data.testCase.priority) }}
@@ -173,10 +179,10 @@
               <div class="panel-header selected-panel-header">
                 <h4>{{ $t('uiAutomation.suite.selectedCases') }} ({{ selectedTestCases.length }})</h4>
                 <div class="panel-actions">
-                  <el-button size="small" text type="danger" :icon="Delete" :disabled="!selectedTestCases.length" @click="clearSelectedTestCases">
+                  <el-button size="medium" text type="danger" :icon="Delete" :disabled="!selectedTestCases.length" @click="clearSelectedTestCases">
                     {{ $t('uiAutomation.suite.clearSelected') }}
                   </el-button>
-                  <el-button size="small" text type="warning" :icon="Minus" :disabled="!checkedSelectedTestCases.length" @click="removeCheckedTestCases">
+                  <el-button size="medium" text type="warning" :icon="Minus" :disabled="!checkedSelectedTestCases.length" @click="removeCheckedTestCases">
                     {{ $t('uiAutomation.suite.removeChecked') }}
                   </el-button>
                 </div>
@@ -186,7 +192,7 @@
                   ref="selectedTableRef"
                   :data="selectedTestCases"
                   row-key="id"
-                  height="300"
+                  height="100%"
                   size="small"
                   @selection-change="checkedSelectedTestCases = $event"
                   @row-click="handleSelectedTestCaseRowClick"
@@ -262,8 +268,8 @@
           </el-select>
         </el-form-item>
         <!-- 套件运行使用同一个初始登录态，登录态步骤仍由用例自身控制。 -->
-        <el-form-item v-if="runConfig.engine === 'playwright'" label="登录态">
-          <el-select v-model="runConfig.storage_state_id" placeholder="无登录态" clearable>
+        <el-form-item v-if="runConfig.engine === 'playwright'" :label="$t('uiAutomation.storageState.label')">
+          <el-select v-model="runConfig.storage_state_id" :placeholder="$t('uiAutomation.suite.noLoginState')" clearable>
             <el-option v-for="state in storageStates" :key="state.id" :label="state.name" :value="state.id" />
           </el-select>
         </el-form-item>
@@ -392,7 +398,7 @@ const testCaseTree = computed(() => {
 const runConfig = reactive({
   engine: 'playwright',
   browser: 'chrome',
-  headless: false,
+  headless: true,
   storage_state_id: null
 })
 const storageStates = ref([])
@@ -624,6 +630,7 @@ const runSuite = async (suite) => {
   currentRunningSuite.value = suite
   // 每次打开运行对话框都重新按套件项目加载登录态。
   runConfig.storage_state_id = null
+  runConfig.headless = true
   try {
     const response = await getStorageStates({ project: suite.project?.id || suite.project_id, page_size: 200 })
     storageStates.value = response.data.results || response.data
@@ -951,11 +958,60 @@ const handleNewSuite = async () => {
   justify-content: flex-end;
 }
 
+// 限制整个弹窗的高度（包含表单和底部按钮），滚动仅发生在左右用例列表中。
+:global(.suite-editor-dialog) {
+  display: flex;
+  flex-direction: column;
+  height: min(80vh, 760px);
+  max-height: calc(100dvh - 32px);
+  overflow: hidden;
+}
+
+:global(.suite-editor-overlay .el-overlay-dialog) {
+  overflow: hidden;
+}
+
+:global(.suite-editor-dialog .el-dialog__header),
+:global(.suite-editor-dialog .el-dialog__footer) {
+  flex: 0 0 auto;
+}
+
+:global(.suite-editor-dialog .el-dialog__body) {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.suite-editor-form {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.suite-editor-form > :deep(.el-form-item) {
+  flex: 0 0 auto;
+}
+
+// 选择区占用表单的剩余空间，逐层允许收缩，避免树或表格将弹窗撑出视口。
+.suite-editor-form > .suite-cases-form-item {
+  flex: 1;
+  min-height: 0;
+  margin-bottom: 0;
+}
+
+.suite-cases-form-item :deep(.el-form-item__content) {
+  min-height: 0;
+  flex-wrap: nowrap;
+  align-items: stretch;
+}
+
 // 测试用例选择器样式
 .test-case-selector {
   display: flex;
-  gap: 20px;
+  gap: 16px;
   width: 100%;
+  height: 100%;
+  min-height: 0;
 }
 
 .selector-panel {
@@ -963,12 +1019,15 @@ const handleNewSuite = async () => {
   min-width: 0;
   border: 1px solid #dcdfe6;
   border-radius: 4px;
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
 }
 
 .panel-header {
+  flex: 0 0 auto;
   background: #f5f7fa;
-  padding: 12px 15px;
+  padding: 8px 12px;
   border-bottom: 1px solid #dcdfe6;
   display: flex;
   justify-content: space-between;
@@ -1016,7 +1075,19 @@ const handleNewSuite = async () => {
 }
 
 .panel-content {
-  padding: 10px;
+  flex: 1;
+  overflow: hidden;
+  padding: 8px;
+  min-height: 0;
+}
+
+.panel-content :deep(.el-scrollbar),
+.panel-content :deep(.el-table) {
+  height: 100%;
+}
+
+.selector-panel :deep(.el-table th.el-table__cell) {
+  padding: 6px 0;
 }
 
 .tree-node-label {
@@ -1071,4 +1142,5 @@ const handleNewSuite = async () => {
     line-height: 1.5;
   }
 }
+
 </style>

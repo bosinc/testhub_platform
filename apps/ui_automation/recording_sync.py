@@ -113,6 +113,8 @@ def _description_for(statement, comments, action, locator, value='', wait_time=1
         verb = '获取文本'
     elif action == 'screenshot':
         verb = '截图'
+    elif action == 'storageState':
+        verb = '保存登录态'
     else:
         verb = action
     target = ''
@@ -168,16 +170,31 @@ def parse_recording(content):
                 if isinstance(statement, ast.Expr) and isinstance(statement.value, ast.Call):
                     call = statement.value
                     method = call.func.attr if isinstance(call.func, ast.Attribute) else ''
-                    if method in {'to_be_visible', 'to_have_text', 'to_contain_text'} and isinstance(call.func.value, ast.Call):
+                    if method in {'to_be_visible', 'to_be_hidden', 'to_have_attribute', 'to_have_text', 'to_contain_text'} and isinstance(call.func.value, ast.Call):
                         expectation = call.func.value
                         target = expectation.args[0] if expectation.args else None
                         locator = _locator(target)
                         if not locator:
                             raise UnsupportedRecordingCode(statement.lineno, ast.unparse(statement))
+                        assert_value = str(_literal(call.args[0])) if call.args else ''
+                        if method == 'to_have_attribute':
+                            # 仅将生成器的任意值正则识别为属性存在，其他正则无法用精确值表达。
+                            if not call.args or len(call.args) > 2 or '=' in assert_value:
+                                raise UnsupportedRecordingCode(statement.lineno, ast.unparse(statement))
+                            if len(call.args) == 2:
+                                expected = call.args[1]
+                                presence_pattern = (
+                                    isinstance(expected, ast.Call)
+                                    and ast.unparse(expected) == "re.compile('(?s).*')"
+                                )
+                                if not presence_pattern:
+                                    if not isinstance(expected, ast.Constant) or not isinstance(expected.value, str):
+                                        raise UnsupportedRecordingCode(statement.lineno, ast.unparse(statement))
+                                    assert_value += '=' + expected.value
                         steps.append({
                             'action_type': 'assert', 'input_value': '', 'wait_time': 1000,
-                            'assert_type': {'to_be_visible': 'isVisible', 'to_have_text': 'textEquals', 'to_contain_text': 'textContains'}[method],
-                            'assert_value': str(_literal(call.args[0])) if call.args else '',
+                            'assert_type': {'to_be_visible': 'isVisible', 'to_be_hidden': 'isNotVisible', 'to_have_attribute': 'hasAttribute', 'to_have_text': 'textEquals', 'to_contain_text': 'textContains'}[method],
+                            'assert_value': assert_value,
                             'description': _description_for(statement, comments, 'assert', locator),
                             'action_params': {'locator': locator},
                             'source_line_start': statement.lineno,
@@ -196,7 +213,7 @@ def parse_recording(content):
                                 'action_type': 'storageState',
                                 'input_value': '',
                                 'wait_time': 1000,
-                                'description': '保存登录态',
+                                'description': _description_for(statement, comments, 'storageState', None),
                                 'action_params': {
                                     'operation': 'save',
                                     'mode': 'save_as',
@@ -237,6 +254,10 @@ def parse_recording(content):
                     })
                     continue
                 raise UnsupportedRecordingCode(getattr(statement, 'lineno', 1), ast.unparse(statement))
+    # 前端按当前界面语言生成默认文案；代码注释属于用户内容，必须保留原文。
+    for step in steps:
+        line = step['source_line_start']
+        step['description_generated'] = not (line in comments or line - 1 in comments)
     return steps
 
 
@@ -260,7 +281,7 @@ def _storage_state_name(params):
 def generate_code(steps, start_url=''):
     """将结构化步骤生成可再次被 AST 反解析的 Playwright Python 代码。"""
     lines = [
-        'from playwright.sync_api import sync_playwright, expect', '',
+        'from playwright.sync_api import sync_playwright, expect', 'import re', '',
         'def run(playwright):',
         '    browser = playwright.chromium.launch(headless=False)',
         '    context = browser.new_context(ignore_https_errors=True)',
@@ -322,6 +343,16 @@ def generate_code(steps, start_url=''):
             assert_type = step.get('assert_type')
             if assert_type == 'isVisible':
                 lines.append(f'    expect({target}).to_be_visible()')
+            elif assert_type == 'isNotVisible':
+                lines.append(f'    expect({target}).to_be_hidden()')
+            elif assert_type == 'hasAttribute':
+                # 用任意值正则检查属性存在，空字符串属性同样通过。
+                attr_name, separator, expected_value = str(step.get('assert_value') or '').strip().partition('=')
+                attr_name = attr_name.strip()
+                if not attr_name:
+                    raise ValueError('hasAttribute 断言需要指定属性名')
+                expected = _py_literal(expected_value) if separator else "re.compile('(?s).*')"
+                lines.append(f'    expect({target}).to_have_attribute({_py_literal(attr_name)}, {expected})')
             elif assert_type in {'textContains', 'textEquals'}:
                 matcher = 'to_contain_text' if assert_type == 'textContains' else 'to_have_text'
                 lines.append(f'    expect({target}).{matcher}({_py_literal(step.get("assert_value", ""))})')

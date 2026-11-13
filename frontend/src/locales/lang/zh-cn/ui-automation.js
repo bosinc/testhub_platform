@@ -357,6 +357,7 @@ export default {
     testEngine: '测试引擎',
     browser: '浏览器',
     browserHint: '本期录制与回放使用 Chromium / Chrome',
+    noLoginState: '无登录态',
     executionMode: '执行模式',
     headedMode: '有头模式',
     headlessMode: '无头模式',
@@ -1179,6 +1180,22 @@ export default {
     editScript: '编辑脚本',
     scriptEditorPlaceholder: '请输入脚本内容...',
     save: '保存',
+    // 步骤与代码同步编辑弹窗，通用字段及错误提示复用现有文案。
+    syncEditor: {
+      title: '步骤与代码同步编辑',
+      parseCode: '代码反解析回步骤',
+      regenerateCode: '重新生成代码',
+      generatedCode: '生成的 Playwright 代码',
+      syncBadge: '步骤 ↔ 代码同步',
+      saveScriptAndSteps: '保存脚本和步骤',
+      states: {
+        synced: '已同步',
+        steps: '步骤待生成代码',
+        code: '代码待反解析'
+      },
+      loadStepsFailed: '加载步骤或元素库失败',
+      parseCodeFailed: '代码反解析失败'
+    },
     scriptTypes: {
       CODE: '代码脚本',
       VISUAL: '可视化脚本',
@@ -1195,6 +1212,56 @@ export default {
       deleteFailed: '删除失败',
       enterScriptName: '请输入脚本名称'
     }
+  },
+
+  // 登录态管理专用文案，通用操作与字段复用 common。
+  storageState: {
+    title: '登录态管理',
+    label: '登录态',
+    create: '新增登录态',
+    edit: '编辑登录态',
+    sourcePage: '来源页面',
+    size: '大小',
+    invalidFile: '请选择有效的 JSON 文件',
+    invalidJson: 'JSON 格式无效',
+    invalidArrays: 'cookies 和 origins 必须为数组',
+    uploadFailed: '上传失败',
+    deleteConfirm: '确定删除登录态“{name}”吗？'
+  },
+
+  // 公共步骤编排组件
+  stepEditor: {
+    title: '结构化步骤',
+    recordedSteps: '录制步骤',
+    description: '步骤描述',
+    collapseStep: '折叠步骤',
+    expandStep: '展开步骤',
+    page: '所属页面',
+    locatorStrategy: '定位策略',
+    locator: '定位器',
+    optionalName: '名称（可选）',
+    variableName: '变量名',
+    variableValue: '变量值',
+    operation: '操作',
+    switchStorageState: '切换',
+    clearStorageState: '清除',
+    overwrite: '覆盖',
+    saveAs: '另存为',
+    selectStorageState: '选择登录态',
+    storageStateName: '登录态名称',
+    saveToVariable: '保存到临时变量（可选）',
+    url: 'URL',
+    inputValue: '输入值',
+    selectFactoryData: '选择数据工厂数据',
+    assertValue: '断言值',
+    attributeValue: '属性名或属性名=期望值，例如 href 或 href=/home',
+    empty: '暂无步骤',
+    elementDescription: '{action}“{name}”',
+    generatedWaitDescription: '等待{duration}ms',
+    generatedNavigateDescription: '跳转URL“{url}”',
+    generatedSwitchTabDescription: '切换到标签页“{tab}”',
+    generatedPressDescription: '{action}“{key}”',
+    generatedStorageStateDescription: '保存登录态'
   },
 
   // 测试用例管理
@@ -1232,6 +1299,11 @@ export default {
     foldAll: '折叠全部',
     expandAll: '展开全部',
     selectAction: '选择操作',
+    actionPress: '按键',
+    actionSelect: '选择选项',
+    actionCheck: '勾选',
+    actionUncheck: '取消勾选',
+    actionSetVariable: '设置临时变量',
     actionClick: '点击',
     actionFill: '输入文本',
     actionGetText: '获取文本',
@@ -1257,8 +1329,9 @@ export default {
     assertTextContains: '文本包含',
     assertTextEquals: '文本等于',
     assertIsVisible: '元素可见',
+    assertIsNotVisible: '元素不可见',
     assertExists: '元素存在',
-    assertHasAttribute: '属性值',
+    assertHasAttribute: '属性断言',
     assertUrlContains: 'URL包含',
     expectedValue: '期望值',
     stepDescription: '步骤描述：',
