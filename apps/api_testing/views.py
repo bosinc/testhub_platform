@@ -63,6 +63,15 @@ from .path_params import resolve_path_parameters
 from .environment_resolver import EnvironmentResolver
 from .request_dto import REQUEST_FIELDS, normalize_request, request_from_model
 from .request_executor import build_transport, execute_request, response_body_preview
+from .scenario_service import (
+    delete_scenario_with_references,
+    import_api_request,
+    import_scenario_steps,
+    load_definition,
+    save_definition,
+    step_capabilities,
+    validate_only,
+)
 from .serializers import (
     ApiProjectSerializer, ApiCollectionSerializer, ApiRequestSerializer,
     EnvironmentSerializer, RequestHistorySerializer, ScenarioCaseSerializer,
@@ -1012,7 +1021,76 @@ class ScenarioCaseViewSet(viewsets.ModelViewSet):
             resource_name=instance.name,
             user=self.request.user
         )
-        instance.delete()
+        delete_scenario_with_references(instance, user=self.request.user)
+
+    def _definition_payload(self, scenario_case):
+        return {
+            'steps': load_definition(scenario_case),
+            'variables': scenario_case.variables or {},
+            'execution_config': scenario_case.execution_config or {},
+            'environment': scenario_case.environment_id,
+        }
+
+    @action(detail=True, methods=['get', 'put'], url_path='definition')
+    def definition(self, request, pk=None):
+        """Read or atomically replace the whole step tree."""
+        scenario_case = self.get_object()
+        if request.method == 'GET':
+            return Response(self._definition_payload(scenario_case))
+        steps = request.data.get('steps')
+        if not isinstance(steps, list):
+            return Response({'errors': {'steps': ['steps 必须是节点列表']}},
+                            status=status.HTTP_400_BAD_REQUEST)
+        save_definition(
+            scenario_case, steps, user=request.user,
+            variables=request.data.get('variables'),
+            execution_config=request.data.get('execution_config'),
+        )
+        scenario_case.refresh_from_db()
+        log_operation(
+            operation_type='edit',
+            resource_type='scenario_case',
+            resource_id=scenario_case.id,
+            resource_name=scenario_case.name,
+            user=request.user,
+        )
+        return Response(self._definition_payload(scenario_case))
+
+    @action(detail=True, methods=['post'], url_path='validate')
+    def validate_definition_view(self, request, pk=None):
+        """Validate a submitted definition without persisting it."""
+        scenario_case = self.get_object()
+        steps = request.data.get('steps')
+        if not isinstance(steps, list):
+            return Response({'errors': {'steps': ['steps 必须是节点列表']}},
+                            status=status.HTTP_400_BAD_REQUEST)
+        validate_only(scenario_case, steps, user=request.user)
+        return Response({'valid': True})
+
+    @action(detail=True, methods=['post'], url_path='import-request')
+    def import_request_step(self, request, pk=None):
+        """Append an HTTP step copied from a saved single-interface case."""
+        scenario_case = self.get_object()
+        steps = import_api_request(
+            scenario_case, request.data.get('request_id'), user=request.user,
+            parent_id=request.data.get('parent_id'),
+        )
+        return Response({'steps': steps}, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['post'], url_path='import-scenario')
+    def import_scenario(self, request, pk=None):
+        """Deep-copy steps from another scenario into this one."""
+        scenario_case = self.get_object()
+        steps = import_scenario_steps(
+            scenario_case, request.data.get('scenario_id'), user=request.user,
+            parent_id=request.data.get('parent_id'),
+        )
+        return Response({'steps': steps}, status=status.HTTP_201_CREATED)
+
+    @action(detail=False, methods=['get'], url_path='step-capabilities')
+    def step_capabilities_view(self, request):
+        """Type capabilities for the editor; unknown types stay unrenderable."""
+        return Response({'types': step_capabilities()})
 
     @action(detail=True, methods=['post'], url_path='add-requests')
     def add_requests(self, request, pk=None):

@@ -165,7 +165,14 @@ def validate_definition(steps, *, previous_steps=None, source_resolver=None, max
         previous = {
             node['id']: node for node in validate_definition(previous_steps, max_depth=max_depth)
         }
-    nodes = [_node(node, previous) for node in steps]
+    nodes = []
+    for node in steps:
+        try:
+            nodes.append(_node(node, previous))
+        except StepValidationError as exc:
+            # Include the offending step so the editor can highlight it.
+            identifier = node.get('id') if isinstance(node, dict) else None
+            raise StepValidationError(f'步骤 {identifier}: {exc}' if identifier else str(exc)) from exc
     ordered = _tree(nodes, max_depth)
     if source_resolver is not None:
         for node in ordered:

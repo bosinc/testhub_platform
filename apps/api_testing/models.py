@@ -2,6 +2,7 @@ from django.db import models
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 import json
+import uuid
 from apps.projects.models import Project
 from apps.projects.managers import ActiveProjectManager
 
@@ -210,6 +211,9 @@ class ScenarioCase(models.Model):
     folder = models.ForeignKey(ScenarioCaseFolder, null=True, blank=True, on_delete=models.SET_NULL,
                                related_name='scenario_cases', verbose_name='所属文件夹')
     requests = models.ManyToManyField(ApiRequest, through='ScenarioCaseRequest', verbose_name='包含请求')
+    # Initial variables only; extracted runtime values are never written back here.
+    variables = models.JSONField(default=dict, verbose_name='场景初始变量')
+    execution_config = models.JSONField(default=dict, verbose_name='执行配置')
     environment = models.ForeignKey(Environment, on_delete=models.SET_NULL, null=True, blank=True,
                                     verbose_name='执行环境')
     created_by = models.ForeignKey(User, on_delete=models.CASCADE, related_name='scenario_cases',
@@ -225,6 +229,43 @@ class ScenarioCase(models.Model):
 
     def __str__(self):
         return self.name
+
+
+class ScenarioStep(models.Model):
+    """Ordered step in a scenario tree.
+
+    Steps keep their own configuration snapshot. ``source_type``/``source_id``
+    only record where a step came from or which scenario it references, so the
+    same source request can appear in several steps.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, verbose_name='步骤ID')
+    scenario_case = models.ForeignKey(ScenarioCase, on_delete=models.CASCADE, related_name='steps',
+                                      verbose_name='所属场景')
+    parent = models.ForeignKey('self', null=True, blank=True, on_delete=models.CASCADE,
+                               related_name='children', verbose_name='父步骤')
+    position = models.PositiveIntegerField(default=0, verbose_name='同级顺序')
+    type = models.CharField(max_length=20, verbose_name='步骤类型')
+    name = models.CharField(max_length=255, verbose_name='步骤名称')
+    enabled = models.BooleanField(default=True, verbose_name='是否启用')
+    config = models.JSONField(default=dict, verbose_name='步骤配置')
+    source_type = models.CharField(max_length=32, null=True, blank=True, verbose_name='来源类型')
+    source_id = models.CharField(max_length=64, null=True, blank=True, verbose_name='来源ID')
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='创建时间')
+    updated_at = models.DateTimeField(auto_now=True, verbose_name='更新时间')
+
+    class Meta:
+        db_table = 'api_scenario_steps'
+        verbose_name = '场景步骤'
+        verbose_name_plural = '场景步骤'
+        ordering = ['position', 'id']
+        indexes = [
+            models.Index(fields=['scenario_case', 'parent', 'position'],
+                         name='api_step_tree_order_idx'),
+            models.Index(fields=['source_type', 'source_id'], name='api_step_source_idx'),
+        ]
+
+    def __str__(self):
+        return f'{self.scenario_case_id} - {self.name}'
 
 
 class ScenarioCaseRequest(models.Model):
