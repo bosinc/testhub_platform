@@ -520,10 +520,11 @@ class StepParserConsistencyTests(DjangoTestCase):
 
     @classmethod
     def setUpClass(cls):
-        super().setUpClass()
+        # 先检查样例再开启 TestCase 事务，避免跳过时遗留事务影响后续迁移测试。
         if not cls.samples_path.exists():
             raise unittest.SkipTest(f'缺少样例文件: {cls.samples_path}')
         cls.samples = json.loads(cls.samples_path.read_text(encoding='utf-8'))
+        super().setUpClass()
 
     def _run_frontend(self) -> dict:
         node = shutil.which('node')

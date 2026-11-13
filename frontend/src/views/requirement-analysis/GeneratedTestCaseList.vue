@@ -345,8 +345,8 @@
               <div class="form-group">
                 <label>{{ $t('generatedTestCases.status') }}</label>
                 <select v-model="adoptForm.status">
-                  <option value="draft">{{ $t('generatedTestCases.statusDraft') }}</option>
                   <option value="active">{{ $t('generatedTestCases.statusActive') }}</option>
+                  <option value="deprecated">{{ $t('generatedTestCases.statusDeprecated') }}</option>
                 </select>
               </div>
             </div>
@@ -382,7 +382,7 @@
 import api from '@/utils/api'
 import { countTestCases } from '@/utils/testCaseParser'
 import { normalizeSteps, parseStepPairs } from '@/utils/testcaseSteps'
-import TestCaseStepEditor from '@/components/TestCaseStepEditor.vue'
+import TestCaseStepEditor from '@/components/testcases/TestCaseStepEditor.vue'
 import { ElMessage } from 'element-plus'
 
 export default {
@@ -406,7 +406,7 @@ export default {
         project_id: null,
         priority: 'low', // 修改默认值为"低"
         test_type: 'functional',
-        status: 'draft',
+        status: 'active', // 正式用例采纳后默认激活
         preconditions: '',
         steps: [],
         version_id: null // 改为单选
@@ -755,7 +755,7 @@ export default {
         project_id: null,
         priority: 'low', // 设置默认值为"低"
         test_type: 'functional',
-        status: 'draft',
+        status: 'active',
         preconditions: testCase.precondition || '',
         steps: parseStepPairs(testCase.test_steps || '', testCase.expected_result || ''),
         version_id: null // 改为单选

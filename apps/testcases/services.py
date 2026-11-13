@@ -55,7 +55,7 @@ class TestCaseImportTemplateService:
         ['模板版本', TEMPLATE_VERSION],
         ['说明', '请勿修改现有表头名称，按模板字段填写并上传；默认提供三级模块列。如需更深层级，可按“4级模块”至“8级模块”自行新增列，并连续填写父级路径'],
         ['工作表', '导入时只读取 Excel 的第一个工作表，工作表名称不限；请把用例数据放在第一个工作表，其他工作表会被忽略'],
-        ['默认处理', '模板中未提供的字段将使用系统默认值：描述为空、状态=draft(草稿)、标签=[]、指派人为空'],
+        ['默认处理', '模板中未提供的字段将使用系统默认值：描述为空、状态=active(激活)、标签=[]、指派人为空'],
         ['用例标题', '必填，测试用例标题，建议唯一且明确'],
         ['前置条件', '可选'],
         ['操作步骤', '必填。一行即一条用例；以 # 开头的一行表示一条步骤，一个 # 对应一条步骤，例如：#打开登录页。'
@@ -122,11 +122,6 @@ class TestCaseExcelImportService:
         'medium': 'medium', '中': 'medium',
         'high': 'high', '高': 'high',
         'critical': 'critical', '紧急': 'critical',
-    }
-    STATUS_MAP = {
-        'draft': 'draft', '草稿': 'draft',
-        'active': 'active', '激活': 'active',
-        'deprecated': 'deprecated', '废弃': 'deprecated',
     }
     TEST_TYPE_MAP = {
         'functional': 'functional', '功能测试': 'functional',
@@ -269,7 +264,6 @@ class TestCaseExcelImportService:
                     notes=row_data.get('notes', ''),
                     preconditions=row_data.get('preconditions', ''),
                     priority=cls.PRIORITY_MAP.get(row_data.get('priority', '').lower(), 'medium'),
-                    status='draft',
                     test_type=cls.TEST_TYPE_MAP.get(row_data.get('test_type', '').lower(), 'functional'),
                     tags=[],
                     author=maintainer or record.created_by,

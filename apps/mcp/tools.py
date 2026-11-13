@@ -1494,7 +1494,7 @@ def preview_update_testcase(ctx: Context, testcase_id: int, data: dict) -> dict:
     steps?: [{id?, sort_order?, action, expected}]（按主键增量同步：带 id 的原地更新、
     不带 id 的新建、未提交的删除；数组顺序即展示顺序；单条步骤的 action 与 expected
     可以只填一项）,
-    priority?（low/medium/high/critical，或中文 低/中/高/紧急）, status?, test_type?, tags?,
+    priority?（low/medium/high/critical，或中文 低/中/高/紧急）, status?（active/deprecated）, test_type?, tags?,
     module_id? 或 module_path?（「父模块/子模块」）, create_missing?,
     assignee_id?, version_ids?}。
     """
@@ -1576,7 +1576,7 @@ def preview_create_testcase(ctx: Context, project_id: int, data: dict) -> dict:
 
     data 结构：{title, description?, notes?, preconditions?,
     steps: [{action, expected}]（必填，一条步骤对应一条预期结果，数组顺序即展示顺序；
-    priority?（low/medium/high/critical，或中文 低/中/高/紧急）, status?, test_type?,
+    priority?（low/medium/high/critical，或中文 低/中/高/紧急）, status?（active/deprecated，默认 active）, test_type?,
     tags?: [str], module_id? 或 module_path?（「父模块/子模块」，只知名称时用路径）,
     create_missing?（末级模块不存在时是否自动创建，默认 false）, assignee_id?,
     version_ids?: [int]}

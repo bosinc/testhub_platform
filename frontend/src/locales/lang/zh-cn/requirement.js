@@ -168,8 +168,8 @@ export default {
     statusReviewing: '用例评审中',
     statusCompleted: '已完成',
     statusFailed: '失败',
-    statusDraft: '草稿',
     statusActive: '激活',
+    statusDeprecated: '废弃',
 
     // Actions
     batchDelete: '批量删除({count})',

@@ -265,7 +265,7 @@ import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Delete } from '@element-plus/icons-vue'
-import TestCaseSelectorDialog from '@/components/TestCaseSelectorDialog.vue'
+import TestCaseSelectorDialog from '@/components/testcases/TestCaseSelectorDialog.vue'
 import api from '@/utils/api'
 
 const { t } = useI18n()

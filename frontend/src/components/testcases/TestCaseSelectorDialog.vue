@@ -95,11 +95,11 @@
             <el-table
               ref="tableRef"
               v-loading="loading"
-              :data="selectorList"
+              :data="pageRows"
               row-key="id"
               height="100%"
               @selection-change="handleSelectionChange">
-              <el-table-column type="selection" width="50" :reserve-selection="true" />
+              <el-table-column type="selection" width="50" />
               <el-table-column :label="$t('execution.testcaseCode')" width="60">
                 <template #default="{ row }">{{ row.id }}</template>
               </el-table-column>
@@ -111,6 +111,12 @@
               </el-table-column>
             </el-table>
           </div>
+          <el-pagination
+            v-model:current-page="currentPage"
+            :page-size="PAGE_SIZE"
+            :total="selectorList.length"
+            layout="total, prev, pager, next"
+            class="testcase-selector-pagination" />
         </section>
       </template>
     </ResizableSplitPane>
@@ -130,6 +136,7 @@ import { ElMessage } from 'element-plus'
 import { Search, Folder, FolderOpened } from '@element-plus/icons-vue'
 import ResizableSplitPane from '@/components/ResizableSplitPane.vue'
 import api from '@/utils/api'
+import { buildTestCaseLibraryTree, updatePageSelection } from '@/utils/testCaseSelector.mjs'
 
 const props = defineProps({
   modelValue: { type: Boolean, default: false },
@@ -156,6 +163,10 @@ const tableRef = ref(null)
 const sidebarWidth = ref(250)
 const filters = reactive({ keyword: '', priority: '', dateRange: [] })
 let syncingSelection = false
+let selectionSyncVersion = 0
+// 候选集保留在内存中用于树计数和筛选，表格只渲染当前页，避免数千行阻塞弹窗。
+const PAGE_SIZE = 50
+const currentPage = ref(1)
 
 // 按用例创建日期过滤（含首尾两天）
 const matchCreatedRange = (createdAt) => {
@@ -178,7 +189,7 @@ const selectorList = computed(() => {
     const moduleIds = new Set((selection.moduleIds || []).map(String))
     scoped = scoped.filter(item => moduleIds.has(String(item.module_id)))
   } else if (selection.type === 'unassigned') {
-    scoped = scoped.filter(item => !item.module_id)
+    scoped = scoped.filter(item => String(item.project_id) === String(selection.projectId) && !item.module_id)
   }
 
   return scoped.filter(item => {
@@ -188,6 +199,10 @@ const selectorList = computed(() => {
     return matchKeyword && matchPriority && matchCreatedRange(item.created_at)
   })
 })
+
+const pageRows = computed(() => selectorList.value.slice(
+  (currentPage.value - 1) * PAGE_SIZE, currentPage.value * PAGE_SIZE
+))
 
 const filteredLibraryTree = computed(() => {
   const keyword = librarySearch.value.trim().toLowerCase()
@@ -205,45 +220,6 @@ const filteredLibraryTree = computed(() => {
     .map(project => ({ ...project, children: filterModules(project.children) }))
     .filter(project => project.children.length)
 })
-
-const buildLibraryTree = (modulesByProject, testcaseList) => {
-  const buildModuleNodes = (nodes, projectId) => nodes.map(module => {
-    const children = buildModuleNodes(module.children || [], projectId)
-    const descendantIds = [module.id, ...children.flatMap(child => child.moduleIds)]
-    return {
-      id: `module-${projectId}-${module.id}`,
-      type: 'module',
-      label: module.name,
-      count: testcaseList.filter(item =>
-        String(item.project_id) === String(projectId) && descendantIds.includes(item.module_id)
-      ).length,
-      moduleIds: descendantIds,
-      children
-    }
-  })
-
-  return props.projects.map(project => {
-    const projectCases = testcaseList.filter(item => String(item.project_id) === String(project.id))
-    return {
-      id: `project-${project.id}`,
-      type: 'project',
-      projectId: project.id,
-      label: project.name,
-      count: projectCases.length,
-      children: [
-        ...buildModuleNodes(modulesByProject[project.id] || [], project.id),
-        {
-          id: `unassigned-${project.id}`,
-          type: 'unassigned',
-          projectId: project.id,
-          label: t('testcase.noModule'),
-          count: projectCases.filter(item => !item.module_id).length,
-          children: []
-        }
-      ]
-    }
-  })
-}
 
 const findModuleNode = (nodes, id) => {
   for (const node of nodes) {
@@ -265,29 +241,26 @@ const selectLibraryNode = (data) => {
 }
 
 const syncTableSelection = async () => {
-  await nextTick()
-  if (!tableRef.value) return
+  const version = ++selectionSyncVersion
+  // 数据切页时 el-table 会先清空旧选中项，提前拦截这次 selection-change。
   syncingSelection = true
+  await nextTick()
   try {
+    if (!tableRef.value || version !== selectionSyncVersion) return
     tableRef.value.clearSelection()
     const selectedSet = new Set(tempSelectedIds.value)
-    selectorList.value.forEach(item => {
+    pageRows.value.forEach(item => {
       if (selectedSet.has(item.id)) tableRef.value.toggleRowSelection(item, true)
     })
     await nextTick()
   } finally {
-    syncingSelection = false
+    if (version === selectionSyncVersion) syncingSelection = false
   }
 }
 
 const handleSelectionChange = (selection) => {
   if (syncingSelection) return
-  // reserve-selection 下 el-table 的 selection 已经包含「被筛选隐藏但仍选中」的行，
-  // 它才是选中状态的唯一来源。这里只额外保留「不在候选列表里」的已关联用例（如已归档），
-  // 两者集合不相交，因此不会出现重复计数。
-  const knownIds = new Set(cases.value.map(item => item.id))
-  const orphanIds = tempSelectedIds.value.filter(id => !knownIds.has(id))
-  tempSelectedIds.value = [...orphanIds, ...selection.map(item => item.id)]
+  tempSelectedIds.value = updatePageSelection(tempSelectedIds.value, pageRows.value, selection)
 }
 
 // 同一会话内按项目缓存候选用例与模块树：再次打开秒开，避免每次闪一次 loading
@@ -304,7 +277,8 @@ const applyData = async (rows, modulesByProject) => {
     if (!rowMap.has(item.id)) rowMap.set(item.id, item)
   })
   cases.value = [...rowMap.values()]
-  moduleTrees.value = buildLibraryTree(modulesByProject, cases.value)
+  moduleTrees.value = buildTestCaseLibraryTree(props.projects, modulesByProject, cases.value, t('testcase.noModule'))
+  currentPage.value = 1
   librarySelection.value = { id: '__all__', type: 'all' }
   librarySearch.value = ''
   filters.keyword = ''
@@ -340,7 +314,7 @@ const loadData = async () => {
     const params = new URLSearchParams()
     props.projects.forEach(project => params.append('project_ids', project.id))
     const [testcaseRes, moduleResponses] = await Promise.all([
-      api.get(`/executions/plans/testcases_by_projects/?${params.toString()}`),
+      api.get(`/testcases/by-projects/?${params.toString()}`),
       Promise.all(props.projects.map(project =>
         api.get('/testcases/modules/', { params: { project: project.id } }).catch(() => ({ data: [] }))
       ))
@@ -384,6 +358,10 @@ const getPriorityText = (priority) => {
 watch(() => props.modelValue, (visible) => {
   if (visible) loadData()
 })
+
+// 切换目录或筛选条件回到第一页；跨页选择以 tempSelectedIds 为准进行回显。
+watch(selectorList, () => { currentPage.value = 1 })
+watch(pageRows, syncTableSelection)
 </script>
 
 <style scoped>
@@ -490,6 +468,12 @@ watch(() => props.modelValue, (visible) => {
 
 .testcase-selector-table :deep(.el-table) {
   height: 100%;
+}
+
+.testcase-selector-pagination {
+  flex: 0 0 auto;
+  justify-content: flex-end;
+  padding-top: 10px;
 }
 
 :global(.testcase-selector-dialog .el-dialog__body) {

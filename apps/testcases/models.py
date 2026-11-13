@@ -40,7 +40,6 @@ class TestCase(models.Model):
     ]
     
     STATUS_CHOICES = [
-        ('draft', '草稿'),
         ('active', '激活'),
         ('deprecated', '废弃'),
     ]
@@ -62,7 +61,7 @@ class TestCase(models.Model):
     notes = models.TextField(blank=True, verbose_name='备注')
     preconditions = models.TextField(blank=True, verbose_name='前置条件')
     priority = models.CharField(max_length=20, choices=PRIORITY_CHOICES, default='medium', verbose_name='优先级')
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='draft', verbose_name='状态')
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='active', verbose_name='状态')
     test_type = models.CharField(max_length=20, choices=TYPE_CHOICES, default='functional', verbose_name='测试类型')
     tags = models.JSONField(default=list, verbose_name='标签')
     author = models.ForeignKey(User, on_delete=models.CASCADE, related_name='authored_testcases', verbose_name='作者')
@@ -78,6 +77,12 @@ class TestCase(models.Model):
         verbose_name = '测试用例'
         verbose_name_plural = '测试用例'
         ordering = ['-created_at']
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(status__in=['active', 'deprecated']),
+                name='testcase_status_valid',
+            ),
+        ]
 
 
 class TestCaseAutomationLink(models.Model):

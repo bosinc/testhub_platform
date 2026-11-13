@@ -168,8 +168,8 @@ export default {
     statusReviewing: 'Reviewing',
     statusCompleted: 'Completed',
     statusFailed: 'Failed',
-    statusDraft: 'Draft',
     statusActive: 'Active',
+    statusDeprecated: 'Deprecated',
 
     // Actions
     batchDelete: 'Batch Delete({count})',

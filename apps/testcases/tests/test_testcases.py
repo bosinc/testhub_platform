@@ -61,7 +61,9 @@ class TestCaseApiTests(APITestCase):
         response = self.client.post(self.list_url, payload, format='json')
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(response.data['title'], '登录功能验证')
+        self.assertEqual(response.data['status'], 'active')
         self.assertEqual(TCModel.objects.count(), 1)
+        self.assertEqual(TCModel.objects.get().status, 'active')
 
     def test_list_testcases_with_pagination(self):
         """列表查询支持分页"""
@@ -321,6 +323,7 @@ class TestCaseModuleImportTests(APITestCase):
         self.assertEqual(leaf.parent.parent.name, '模块6')
         full_path_cases = TCModel.objects.filter(title__startswith='完整路径用例')
         self.assertEqual(full_path_cases.count(), 2)
+        self.assertEqual(set(TCModel.objects.values_list('status', flat=True)), {'active'})
         self.assertEqual(set(full_path_cases.values_list('module_id', flat=True)), {leaf.id})
         self.assertEqual(set(full_path_cases.values_list('priority', flat=True)), {'high'})
         self.assertEqual(TCModel.objects.get(title='一级模块用例').module.name, '模块1')

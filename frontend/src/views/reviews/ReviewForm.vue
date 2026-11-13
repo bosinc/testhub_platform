@@ -142,7 +142,7 @@ import { ref, reactive, onMounted, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
-import TestCaseSelectorDialog from '@/components/TestCaseSelectorDialog.vue'
+import TestCaseSelectorDialog from '@/components/testcases/TestCaseSelectorDialog.vue'
 import api from '@/utils/api'
 
 const route = useRoute()

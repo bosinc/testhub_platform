@@ -40,7 +40,7 @@
 <script setup>
 import { ref, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import TestCaseFormPanel from '@/components/TestCaseFormPanel.vue'
+import TestCaseFormPanel from '@/components/testcases/TestCaseFormPanel.vue'
 
 const props = defineProps({
   modelValue: { type: Boolean, default: false },
@@ -56,8 +56,8 @@ const panelRef = ref()
 const busy = ref(false)
 
 const isEdit = computed(() => props.testCaseId !== null && props.testCaseId !== undefined && props.testCaseId !== '')
-// 新建复用「新建用例」文案；编辑只显示纯用例 ID
-const dialogTitle = computed(() => (isEdit.value ? String(props.testCaseId) : t('testcase.newCase')))
+// 新建复用「新建用例」文案；编辑显示 ID 前缀和用例编号。
+const dialogTitle = computed(() => (isEdit.value ? `ID ${props.testCaseId}` : t('testcase.newCase')))
 
 const close = () => emit('update:modelValue', false)
 const handleVisibility = visible => emit('update:modelValue', visible)

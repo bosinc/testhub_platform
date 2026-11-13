@@ -112,6 +112,8 @@ class PreviewConfirmToolTest(ToolBase):
 
         result = mcp_tools.confirm_create_testcase(self.ctx, preview['confirm_token'])
         self.assertIn('testcase_id', result)
+        self.assertEqual(result['status'], 'active')
+        self.assertEqual(FunctionalTestCase.objects.get(pk=result['testcase_id']).status, 'active')
         self.assertTrue(FunctionalTestCase.objects.filter(
             project=self.project, title='工具创建').exists())
 

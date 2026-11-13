@@ -67,8 +67,8 @@ import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 import api from '@/utils/api'
 import dayjs from 'dayjs'
-import TestCaseStepEditor from '@/components/TestCaseStepEditor.vue'
-import TestCaseFormDialog from '@/components/TestCaseFormDialog.vue'
+import TestCaseStepEditor from '@/components/testcases/TestCaseStepEditor.vue'
+import TestCaseFormDialog from '@/components/testcases/TestCaseFormDialog.vue'
 
 const { t } = useI18n()
 const route = useRoute()

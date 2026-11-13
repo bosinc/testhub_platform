@@ -150,49 +150,6 @@ class TestPlanViewSet(viewsets.ModelViewSet):
         testcase_ids = self.request.data.get('testcases', [])
         self._sync_test_runs(test_plan, project_ids, testcase_ids)
 
-    @action(detail=False, methods=['get'])
-    def testcases_by_projects(self, request):
-        """
-        根据项目获取测试用例
-        """
-        project_ids = request.query_params.getlist('project_ids')
-        if not project_ids:
-            return Response({
-                'error': '请先选择项目',
-                'detail': '请先选择项目后再选择测试用例'
-            }, status=status.HTTP_400_BAD_REQUEST)
-        
-        try:
-            # 过滤数字字符串和空值
-            project_ids = [int(pid) for pid in project_ids if pid and pid.isdigit()]
-            
-            if not project_ids:
-                return Response({
-                    'error': '无效的项目 ID',
-                    'detail': '请选择有效的项目'
-                }, status=status.HTTP_400_BAD_REQUEST)
-            
-            # 获取指定项目的测试用例
-            testcases = TestCase.objects.filter(
-                project_id__in=project_ids,
-                status__in=['draft', 'active']  # 包含草稿和激活状态的测试用例
-            ).values('id', 'title', 'priority', 'test_type', 'project_id', 'project__name', 'module_id', 'created_at')
-            
-            return Response({
-                'results': list(testcases)
-            })
-            
-        except ValueError:
-            return Response({
-                'error': '项目 ID 格式错误',
-                'detail': '请提供有效的项目 ID'
-            }, status=status.HTTP_400_BAD_REQUEST)
-        except Exception as e:
-            return Response({
-                'error': '获取测试用例失败',
-                'detail': str(e)
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
     @action(detail=True, methods=['post'])
     def link_testcases(self, request, pk=None):
         """为已有测试计划关联/取消关联测试用例，并同步各项目的执行记录。"""

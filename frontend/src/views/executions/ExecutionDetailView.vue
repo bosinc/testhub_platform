@@ -415,47 +415,16 @@
       </template>
       <div v-if="currentCase" class="case-execution-layout">
         <section class="case-information">
-          <div class="case-title-row">
-            <div>
-              <div class="case-id">{{ $t('execution.testcaseId') }} {{ currentCase.testcase?.id }}</div>
-              <h2>{{ currentCase.testcase?.title || currentCase.testcase }}</h2>
-            </div>
-            <div class="case-title-actions">
+          <TestCaseDetailPanel :test-case="currentCase.testcase">
+            <template #actions>
               <el-button link type="primary" :icon="EditPen" @click="openCaseEditDialog(currentCase)">
                 {{ $t('execution.editCase') }}
               </el-button>
               <el-button link type="primary" :icon="Clock" @click="viewCaseHistory(currentCase)">
                 {{ $t('execution.viewHistory') }}
               </el-button>
-            </div>
-          </div>
-          <div class="case-meta-grid">
-            <div><span>{{ $t('execution.testcasePriority') }}</span>{{ getPriorityText(currentCase.testcase?.priority) }}</div>
-            <div><span>{{ $t('execution.testcaseType') }}</span>{{ getTestTypeText(currentCase.testcase?.test_type) }}</div>
-            <div><span>{{ $t('execution.maintainer') }}</span>{{ currentCase.testcase?.author?.username || '-' }}</div>
-            <div><span>{{ $t('execution.project') }}</span>{{ currentCase.testcase?.project_name || '-' }}</div>
-          </div>
-          <div class="case-section">
-            <h3>{{ $t('execution.preconditions') }}</h3>
-            <p>{{ currentCase.testcase?.preconditions || $t('execution.noData') }}</p>
-          </div>
-          <div class="case-section">
-            <h3>{{ $t('execution.steps') }}</h3>
-            <TestCaseStepEditor
-              v-if="currentCase.testcase?.steps && currentCase.testcase.steps.length"
-              :model-value="currentCase.testcase.steps"
-              readonly
-            />
-            <p v-else>{{ $t('execution.noData') }}</p>
-          </div>
-          <div class="case-section">
-            <h3>{{ $t('execution.testcaseNotes') }}</h3>
-            <p>{{ currentCase.testcase?.notes || $t('execution.noData') }}</p>
-          </div>
-          <div v-if="currentCase.testcase?.description" class="case-section">
-            <h3>{{ $t('execution.testcaseDescription') }}</h3>
-            <p>{{ currentCase.testcase.description }}</p>
-          </div>
+            </template>
+          </TestCaseDetailPanel>
         </section>
         <aside class="case-result-panel">
           <h3>{{ $t('execution.executionResult') }}</h3>
@@ -499,9 +468,9 @@ import {
   Clock, Stamp, Folder, Files, FolderOpened, Search, Link, ArrowUp, ArrowDown, EditPen
 } from '@element-plus/icons-vue'
 import ResizableSplitPane from '@/components/ResizableSplitPane.vue'
-import TestCaseStepEditor from '@/components/TestCaseStepEditor.vue'
-import TestCaseSelectorDialog from '@/components/TestCaseSelectorDialog.vue'
-import TestCaseFormDialog from '@/components/TestCaseFormDialog.vue'
+import TestCaseDetailPanel from '@/components/testcases/TestCaseDetailPanel.vue'
+import TestCaseSelectorDialog from '@/components/testcases/TestCaseSelectorDialog.vue'
+import TestCaseFormDialog from '@/components/testcases/TestCaseFormDialog.vue'
 import { useUserStore } from '@/stores/user'
 import api from '@/utils/api'
 
@@ -1907,8 +1876,7 @@ onMounted(() => {
   padding: 0;
 }
 
-.case-dialog-count,
-.case-id {
+.case-dialog-count {
   color: var(--el-text-color-secondary);
   font-size: 13px;
 }
@@ -1946,40 +1914,6 @@ onMounted(() => {
   padding: 22px 24px;
 }
 
-.case-title-row {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-  padding-bottom: 18px;
-  border-bottom: 1px solid var(--el-border-color-light);
-}
-
-.case-title-row h2 {
-  margin: 5px 0 0;
-  color: var(--el-text-color-primary);
-  font-size: 19px;
-  line-height: 1.45;
-  overflow-wrap: anywhere;
-}
-
-.case-title-actions {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  flex: 0 0 auto;
-  white-space: nowrap;
-}
-
-.case-meta-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px 20px;
-  padding: 16px 0 20px;
-  border-bottom: 1px solid var(--el-border-color-light);
-}
-
-.case-meta-grid div,
 .last-execution-meta div {
   display: flex;
   gap: 8px;
@@ -1989,31 +1923,16 @@ onMounted(() => {
   overflow-wrap: anywhere;
 }
 
-.case-meta-grid span,
 .last-execution-meta span {
   flex: 0 0 auto;
   color: var(--el-text-color-secondary);
 }
 
-.case-section {
-  padding-top: 18px;
-}
-
-.case-section h3,
 .case-result-panel h3 {
   margin: 0 0 9px;
   color: var(--el-text-color-primary);
   font-size: 14px;
   font-weight: 600;
-}
-
-.case-section p {
-  margin: 0;
-  color: var(--el-text-color-regular);
-  font-size: 13px;
-  line-height: 1.7;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
 }
 
 .case-result-panel {
@@ -2171,8 +2090,5 @@ onMounted(() => {
     justify-content: flex-start;
   }
 
-  .case-meta-grid {
-    grid-template-columns: minmax(0, 1fr);
-  }
 }
 </style>

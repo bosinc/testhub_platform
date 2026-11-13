@@ -476,7 +476,7 @@ export default {
           steps: parseStepPairs(testCase.steps || '', testCase.expected || ''),
           priority: this.mapPriority(testCase.priority),
           test_type: 'functional',
-          status: 'draft'
+          status: 'active'
         }))
 
         const response = await api.post(`/requirement-analysis/testcase-generation/${this.taskId}/batch-adopt-selected/`, {
@@ -727,7 +727,7 @@ export default {
           steps: parseStepPairs(testCase.steps || '', testCase.expected || ''),
           priority: this.mapPriority(testCase.priority),
           test_type: 'functional',
-          status: 'draft',
+          status: 'active', // 单条采纳与模型默认状态一致
           project_id: projectId
         }
 

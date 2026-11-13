@@ -10,6 +10,8 @@ from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.views import APIView
 from rest_framework import serializers
 from django.utils import timezone
+from django.utils.decorators import method_decorator
+from django.views.decorators.gzip import gzip_page
 
 from .models import TestCase, TestCaseAutomationLink, TestCaseModule, TestCaseStep, TestCaseAttachment, TestCaseComment, TestCaseImportRecord
 from .serializers import (
@@ -102,6 +104,37 @@ def validate_module_for_project(module_id, project):
         return TestCaseModule.objects.get(pk=module_id, project=project)
     except (TestCaseModule.DoesNotExist, ValueError, TypeError):
         raise serializers.ValidationError({'module_id': '模块不存在或不属于所选项目'})
+
+
+@method_decorator(gzip_page, name='dispatch')
+class TestCasesByProjectsView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        """按项目返回激活用例，供多个模块共用的选择弹窗使用。"""
+        project_ids = request.query_params.getlist('project_ids')
+        if not project_ids:
+            return Response({
+                'error': '请先选择项目',
+                'detail': '请先选择项目后再选择测试用例'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        project_ids = [int(project_id) for project_id in project_ids
+                       if project_id and project_id.isdigit()]
+        if not project_ids:
+            return Response({
+                'error': '无效的项目 ID',
+                'detail': '请选择有效的项目'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        testcases = TestCase.objects.filter(
+            project_id__in=project_ids,
+            status='active',
+        ).values(
+            'id', 'title', 'priority', 'test_type', 'project_id',
+            'project__name', 'module_id', 'created_at',
+        )
+        return Response({'results': list(testcases)})
 
 
 class TestCaseModuleListCreateView(APIView):

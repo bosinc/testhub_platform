@@ -33,6 +33,9 @@ def create_case_with_steps(project, author, fields, steps_text, expected_text=''
     from apps.testcases.models import TestCase
     from apps.testcases.steps import coerce_steps_payload, replace_steps
 
+    # AI 采纳同样只接受正式用例的两种状态，未传时沿用模型的激活默认值。
+    if 'status' in fields and fields['status'] not in dict(TestCase.STATUS_CHOICES):
+        raise ValueError('用例状态只支持 active（激活）或 deprecated（废弃）')
     steps = coerce_steps_payload(steps_text, expected_text)
     with transaction.atomic():
         case = TestCase.objects.create(project=project, author=author, **fields)
@@ -2440,7 +2443,6 @@ class TestCaseGenerationTaskViewSet(viewsets.ModelViewSet):
                                 'preconditions': test_case.get('precondition', ''),
                                 'priority': self._map_priority(test_case.get('priority', '中')),
                                 'test_type': 'functional',
-                                'status': 'draft',
                             },
                             test_case.get('steps', ''), test_case.get('expected', ''))
                         adopted_count += 1
@@ -2543,7 +2545,6 @@ class TestCaseGenerationTaskViewSet(viewsets.ModelViewSet):
                             'preconditions': test_case.get('precondition', ''),
                             'priority': self._map_priority(test_case.get('priority', '中')),
                             'test_type': 'functional',
-                            'status': 'draft',
                         },
                         test_case.get('steps', ''), test_case.get('expected', ''))
                     adopted_count += 1
@@ -2608,7 +2609,7 @@ class TestCaseGenerationTaskViewSet(viewsets.ModelViewSet):
                             'preconditions': case_data.get('preconditions', ''),
                             'priority': case_data.get('priority', 'medium'),
                             'test_type': case_data.get('test_type', 'functional'),
-                            'status': case_data.get('status', 'draft'),
+                            'status': case_data.get('status', 'active'),
                         },
                         case_data.get('steps', ''), case_data.get('expected_result', ''))
                     adopted_count += 1
