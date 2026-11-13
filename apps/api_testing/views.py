@@ -37,12 +37,13 @@ from .serializers import (
     ApiProjectSerializer, ApiCollectionSerializer, ApiRequestSerializer,
     ApiCollectionTreeSerializer, ApiRequestTreeSerializer,
     EnvironmentSerializer, RequestHistorySerializer, ScenarioCaseSerializer,
-    ScenarioCaseRequestSerializer, ScenarioCaseFolderSerializer, TestExecutionSerializer, UserSerializer,
+    ScenarioCaseRequestSerializer, ScenarioCaseFolderSerializer, TestExecutionSerializer,
+    StepExecutionSerializer, UserSerializer,
     ScheduledTaskSerializer, TaskExecutionLogSerializer,
     NotificationLogSerializer, TaskNotificationSettingSerializer,
     NotificationLogDetailSerializer,
     TaskNotificationSettingDetailSerializer, OperationLogSerializer,
-    TestSuiteSerializer,
+    TestSuiteSerializer, AIServiceConfigSerializer,
 )
 
 logger = logging.getLogger(__name__)
@@ -59,6 +60,7 @@ from .importers import parse_collection
 from .environment_resolver import EnvironmentResolver
 from .request_dto import REQUEST_FIELDS, normalize_request, request_from_model
 from .request_executor import build_transport, execute_request, response_body_preview
+from apps.core.task_queue import enqueue_task
 from .scenario_service import (
     delete_scenario_with_references,
     import_api_request,
@@ -68,15 +70,15 @@ from .scenario_service import (
     step_capabilities,
     validate_only,
 )
-from .serializers import (
-    ApiProjectSerializer, ApiCollectionSerializer, ApiRequestSerializer,
-    EnvironmentSerializer, RequestHistorySerializer, ScenarioCaseSerializer,
-    ScenarioCaseRequestSerializer, TestExecutionSerializer, UserSerializer,
-    ScheduledTaskSerializer, ScheduledTaskSerializer,
-    AIServiceConfigSerializer
-)
-
 User = get_user_model()
+
+
+def _wants_async(payload):
+    """Accept ``async`` as a JSON boolean or a string flag from form posts."""
+    value = payload.get('async') if hasattr(payload, 'get') else None
+    if isinstance(value, bool):
+        return value
+    return str(value).lower() in ('1', 'true', 'yes')
 
 
 from rest_framework.pagination import PageNumberPagination
@@ -974,6 +976,10 @@ class ScenarioCaseViewSet(viewsets.ModelViewSet):
             if environment is None and scenario_case.steps.exists():
                 return Response({'errors': {'environment_id': ['场景执行必须明确选择环境']}},
                                 status=status.HTTP_400_BAD_REQUEST)
+
+        if _wants_async(request.data) and scenario_case.steps.exists():
+            return self._submit_async(scenario_case, environment, request.user)
+
         result = execute_scenario_case(scenario_case, environment, request.user)
 
         # 执行体内部已把异常落成 FAILED；没有执行记录说明记录都没建起来。
@@ -990,6 +996,28 @@ class ScenarioCaseViewSet(viewsets.ModelViewSet):
         )
         execution = TestExecution.objects.get(id=result['execution_id'])
         return Response(TestExecutionSerializer(execution).data)
+
+    def _submit_async(self, scenario_case, environment, user):
+        """Queue a tree execution and return ``202`` with the record id."""
+        from .tasks import run_scenario_execution
+
+        execution = TestExecution.objects.create(
+            scenario_case=scenario_case, status='PENDING', executed_by=user,
+            environment_snapshot={'id': environment.pk if environment else None,
+                                  'base_url': environment.base_url if environment else ''},
+        )
+        environment_id = environment.pk if environment else None
+        transaction.on_commit(
+            lambda: enqueue_task(run_scenario_execution, execution.id, environment_id))
+        log_operation(
+            operation_type='execute',
+            resource_type='scenario_case',
+            resource_id=scenario_case.id,
+            resource_name=scenario_case.name,
+            user=user,
+        )
+        return Response({'execution_id': execution.id, 'status': execution.status},
+                        status=status.HTTP_202_ACCEPTED)
 
     def perform_create(self, serializer):
         """创建场景用例时记录日志"""
@@ -1223,6 +1251,48 @@ class TestExecutionViewSet(viewsets.ReadOnlyModelViewSet):
         if scenario_case_id:
             queryset = queryset.filter(scenario_case_id=scenario_case_id)
         return queryset
+
+    @action(detail=True, methods=['get'], url_path='steps')
+    def steps(self, request, pk=None):
+        """Incrementally read step results; ``after_sequence`` is the cursor."""
+        execution = self.get_object()
+        queryset = execution.step_executions.order_by('sequence')
+        after = request.query_params.get('after_sequence')
+        if after not in (None, ''):
+            try:
+                queryset = queryset.filter(sequence__gt=int(after))
+            except (TypeError, ValueError):
+                return Response({'errors': {'after_sequence': ['必须是整数']}},
+                                status=status.HTTP_400_BAD_REQUEST)
+        return Response({
+            'execution_id': execution.id,
+            'status': execution.status,
+            'conclusion': execution.conclusion,
+            'passed': execution.passed_requests,
+            'failed': execution.failed_requests,
+            'skipped': execution.skipped_steps,
+            'total': execution.total_requests,
+            'cancel_requested': execution.cancel_requested,
+            'steps': StepExecutionSerializer(queryset, many=True).data,
+        })
+
+    @action(detail=True, methods=['post'])
+    def cancel(self, request, pk=None):
+        """Request cancellation; a queued run is cancelled immediately."""
+        execution = self.get_object()
+        if execution.status in ('COMPLETED', 'FAILED', 'CANCELLED'):
+            return Response({'error': '执行已结束，无法取消'},
+                            status=status.HTTP_400_BAD_REQUEST)
+        execution.cancel_requested = True
+        fields = ['cancel_requested']
+        if execution.status == 'PENDING':
+            execution.status = 'CANCELLED'
+            execution.conclusion = 'CANCELLED'
+            execution.end_time = timezone.now()
+            fields += ['status', 'conclusion', 'end_time']
+        execution.save(update_fields=fields)
+        return Response({'execution_id': execution.id, 'status': execution.status,
+                         'cancel_requested': True})
     
     @action(detail=True, methods=['post'], url_path='generate-allure-report')
     def generate_allure_report(self, request, pk=None):

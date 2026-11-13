@@ -344,11 +344,19 @@ class TestExecution(models.Model):
                                       verbose_name='场景用例')
     status = models.CharField(max_length=20, choices=EXECUTION_STATUS_CHOICES, default='PENDING',
                               verbose_name='执行状态')
+    # Lifecycle (status) and test verdict (conclusion) are separate: a run that
+    # finishes normally with failed assertions is COMPLETED + FAILED, while a
+    # crash or a user cancellation is never reported as a passed test.
+    conclusion = models.CharField(max_length=20, blank=True, default='', verbose_name='测试结论')
     start_time = models.DateTimeField(null=True, blank=True, verbose_name='开始时间')
     end_time = models.DateTimeField(null=True, blank=True, verbose_name='结束时间')
+    heartbeat_at = models.DateTimeField(null=True, blank=True, verbose_name='心跳时间')
+    cancel_requested = models.BooleanField(default=False, verbose_name='已请求取消')
+    environment_snapshot = models.JSONField(default=dict, blank=True, verbose_name='执行环境快照')
     total_requests = models.IntegerField(default=0, verbose_name='总请求数')
     passed_requests = models.IntegerField(default=0, verbose_name='通过请求数')
     failed_requests = models.IntegerField(default=0, verbose_name='失败请求数')
+    skipped_steps = models.IntegerField(default=0, verbose_name='跳过步骤数')
     results = models.JSONField(default=dict, verbose_name='执行结果')
     executed_by = models.ForeignKey(User, on_delete=models.CASCADE, verbose_name='执行者')
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='创建时间')
@@ -361,6 +369,55 @@ class TestExecution(models.Model):
 
     def __str__(self):
         return f"{self.scenario_case.name} - {self.created_at}"
+
+
+class StepExecution(models.Model):
+    """One step instance of one run.
+
+    Identity is snapshotted so a report stays readable after the step definition
+    is edited or deleted. ``invocation_id`` nests through scenario references and
+    ``iteration_path`` records the loop rounds, which is what keeps repeated
+    invocations of the same step distinguishable.
+    """
+    STATUS_CHOICES = [
+        ('RUNNING', '执行中'),
+        ('PASSED', '通过'),
+        ('FAILED', '失败'),
+        ('SKIPPED', '跳过'),
+        ('CANCELLED', '已取消'),
+    ]
+
+    execution = models.ForeignKey(TestExecution, on_delete=models.CASCADE,
+                                  related_name='step_executions', verbose_name='所属执行')
+    step_id_snapshot = models.UUIDField(null=True, blank=True, verbose_name='步骤ID快照')
+    name_snapshot = models.CharField(max_length=255, blank=True, default='', verbose_name='步骤名称快照')
+    type_snapshot = models.CharField(max_length=20, blank=True, default='', verbose_name='步骤类型快照')
+    invocation_id = models.CharField(max_length=255, blank=True, default='', verbose_name='调用标识')
+    parent_invocation_id = models.CharField(max_length=255, blank=True, default='', verbose_name='父调用标识')
+    iteration_path = models.CharField(max_length=255, blank=True, default='', verbose_name='循环轮次路径')
+    sequence = models.PositiveIntegerField(default=0, verbose_name='顺序游标')
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='RUNNING',
+                              verbose_name='步骤状态')
+    request_data = models.JSONField(default=dict, blank=True, verbose_name='请求数据')
+    response_data = models.JSONField(default=dict, blank=True, verbose_name='响应数据')
+    assertion_results = models.JSONField(default=list, blank=True, verbose_name='断言结果')
+    extraction_results = models.JSONField(default=list, blank=True, verbose_name='提取结果')
+    logs = models.JSONField(default=list, blank=True, verbose_name='脚本日志')
+    started_at = models.DateTimeField(null=True, blank=True, verbose_name='开始时间')
+    finished_at = models.DateTimeField(null=True, blank=True, verbose_name='结束时间')
+    error = models.TextField(blank=True, default='', verbose_name='错误信息')
+
+    class Meta:
+        db_table = 'api_step_executions'
+        verbose_name = '步骤执行记录'
+        verbose_name_plural = '步骤执行记录'
+        ordering = ['sequence']
+        indexes = [
+            models.Index(fields=['execution', 'sequence'], name='api_step_exec_seq_idx'),
+        ]
+
+    def __str__(self):
+        return f'{self.execution_id} #{self.sequence} {self.name_snapshot}'
 
 
 class ApiSuiteExecution(models.Model):

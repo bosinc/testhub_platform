@@ -12,6 +12,8 @@ session, so cookies carry over while outputs stay per invocation.
 """
 
 import time
+from datetime import timedelta
+from uuid import UUID
 
 import requests
 from django.utils import timezone
@@ -76,10 +78,11 @@ def _body_preview(response, limit=4000):
 
 
 class ExecutionRecorder:
-    """Incremental result writer.
+    """Writes step results and progress.
 
-    Stage 3 replaces the JSON payload with ``StepExecution`` rows; every reader
-    here goes through this object so that change stays local.
+    Each step becomes one ``StepExecution`` row so the page can poll
+    ``?after_sequence=`` incrementally, while ``TestExecution.results`` keeps the
+    aggregate payload the current report view already reads.
     """
 
     def __init__(self, execution=None):
@@ -88,6 +91,7 @@ class ExecutionRecorder:
         self.passed = 0
         self.failed = 0
         self.skipped = 0
+        self.sequence = 0
 
     def add(self, result):
         self.results.append(result)
@@ -98,7 +102,46 @@ class ExecutionRecorder:
             self.failed += 1
         else:
             self.skipped += 1
+        self.sequence += 1
+        if self.execution is not None:
+            self._persist_step(result)
         self.flush()
+
+    def _persist_step(self, result):
+        from .models import StepExecution
+
+        duration = result.get('duration_ms') or 0
+        finished = timezone.now()
+        started = finished - timedelta(milliseconds=float(duration))
+        status = result.get('status')
+        if status == ERROR:
+            status = FAILED
+        elif status == SKIPPED and self.execution.cancel_requested:
+            status = 'CANCELLED'
+        step_id = result.get('step_id')
+        try:
+            snapshot_id = UUID(str(step_id)) if step_id else None
+        except ValueError:
+            snapshot_id = None
+        StepExecution.objects.create(
+            execution=self.execution,
+            step_id_snapshot=snapshot_id,
+            name_snapshot=(result.get('name') or '')[:255],
+            type_snapshot=(result.get('type') or '')[:20],
+            invocation_id=(result.get('invocation_id') or '')[:255],
+            parent_invocation_id=(result.get('parent_invocation_id') or '')[:255],
+            iteration_path=(result.get('iteration_path') or '')[:255],
+            sequence=self.sequence,
+            status=status,
+            request_data=result.get('request') or {},
+            response_data=result.get('response') or {},
+            assertion_results=result.get('assertions') or [],
+            extraction_results=result.get('extractions') or [],
+            logs=result.get('logs') or [],
+            started_at=started,
+            finished_at=finished,
+            error=(result.get('error') or '')[:2000],
+        )
 
     def flush(self):
         if self.execution is None:
@@ -106,9 +149,12 @@ class ExecutionRecorder:
         self.execution.results = list(self.results)
         self.execution.passed_requests = self.passed
         self.execution.failed_requests = self.failed
+        self.execution.skipped_steps = self.skipped
         self.execution.total_requests = self.passed + self.failed
+        self.execution.heartbeat_at = timezone.now()
         self.execution.save(update_fields=[
-            'results', 'passed_requests', 'failed_requests', 'total_requests'])
+            'results', 'passed_requests', 'failed_requests', 'skipped_steps',
+            'total_requests', 'heartbeat_at'])
 
 
 class ScenarioExecutor:
@@ -140,6 +186,9 @@ class ScenarioExecutor:
         self.cancel_check = cancel_check
         self.depth = depth
         self.scenario_stack = tuple(scenario_stack)
+        # Container ids between the current call root and the running step, so a
+        # nested step records which group/loop/branch it belongs to.
+        self.invocation_stack = []
 
         timeout_ms = self.execution_config.get('total_timeout_ms') or DEFAULT_TOTAL_TIMEOUT_MS
         self.deadline = _monotonic() + timeout_ms / 1000
@@ -182,6 +231,14 @@ class ScenarioExecutor:
         return CONTINUE
 
     # -- sequencing --------------------------------------------------------
+    def _run_children(self, node):
+        """Run a container's children while tracking the invocation path."""
+        self.invocation_stack.append(node['id'])
+        try:
+            return self._run_sequence(self.children.get(node['id'], []))
+        finally:
+            self.invocation_stack.pop()
+
     def _run_sequence(self, nodes):
         index = 0
         handled = set()
@@ -244,7 +301,7 @@ class ScenarioExecutor:
             self._record_subtree_skipped(node, '条件不成立')
             return CONTINUE
 
-        flow = self._run_sequence(self.children.get(node['id'], []))
+        flow = self._run_children(node)
         if flow == ABORT:
             return ABORT
         if paired is not None:
@@ -262,13 +319,14 @@ class ScenarioExecutor:
 
     def _run_branch(self, node, status):
         self._record(node, status)
-        flow = self._run_sequence(self.children.get(node['id'], []))
-        return flow
+        return self._run_children(node)
 
     # -- recording ---------------------------------------------------------
     def _record(self, node, status, *, output=None, error=None, started=None,
-                request_info=None, response_info=None, assertions=None):
+                request_info=None, response_info=None, assertions=None,
+                extractions=None):
         duration = None if started is None else round((_monotonic() - started) * 1000, 2)
+        path = self.scope.path + tuple(self.invocation_stack)
         result = {
             'step_id': node['id'],
             'name': node.get('name'),
@@ -279,7 +337,12 @@ class ScenarioExecutor:
             'request': request_info,
             'response': response_info,
             'assertions': assertions or [],
+            'extractions': extractions or [],
             'output': output or {},
+            'invocation_id': '/'.join(path + (node['id'],)),
+            'parent_invocation_id': '/'.join(path),
+            'iteration_path': '/'.join(
+                str(frame.get('index')) for frame in self.scope.loop_stack),
         }
         self.recorder.add(result)
         return result
@@ -348,7 +411,7 @@ class ScenarioExecutor:
         try:
             if self._loop_should_break(node):
                 return BREAK_LOOP
-            flow = self._run_sequence(self.children.get(node['id'], []))
+            flow = self._run_children(node)
         finally:
             self.scope.pop_loop()
         if flow == ABORT:
@@ -432,10 +495,10 @@ def _http_step(executor, node):
     executor._record(
         node, status, started=started, error=error,
         request_info=sent['request'], response_info=output,
-        assertions=assertion_results + [
-            {'name': item['name'], 'type': 'extractor', 'passed': item['success'],
-             'error': item['error']} for item in extraction_results
-        ],
+        assertions=assertion_results,
+        extractions=[{'name': item['name'], 'expression': item['expression'],
+                      'success': item['success'], 'value': item['value'],
+                      'error': item['error']} for item in extraction_results],
     )
     if error:
         return executor._fail(error)
@@ -445,7 +508,7 @@ def _http_step(executor, node):
 def _group_step(executor, node):
     started = _monotonic()
     executor._record(node, PASSED, started=started)
-    return executor._run_sequence(executor.children.get(node['id'], []))
+    return executor._run_children(node)
 
 
 def _wait_step(executor, node):
@@ -486,8 +549,6 @@ def _for_step(executor, node):
         if guard == ABORT:
             executor._record(node, ERROR, error=executor.abort_reason, started=started)
             return ABORT
-        if executor._loop_should_break(node):
-            break
         flow = executor._run_loop_body(node, {'index': index, 'item': None}, policy)
         if flow == BREAK_LOOP:
             break
@@ -518,8 +579,6 @@ def _foreach_step(executor, node):
         if guard == ABORT:
             executor._record(node, ERROR, error=executor.abort_reason, started=started)
             return ABORT
-        if executor._loop_should_break(node):
-            break
         flow = executor._run_loop_body(node, {'index': index, 'item': items[index]}, policy)
         if flow == BREAK_LOOP:
             break
@@ -641,6 +700,12 @@ def _load_referenced_scenario(executor, target_id):
     return scenario
 
 
+def cancel_requested(execution_id):
+    """Read the cancellation flag written by the cancel endpoint."""
+    return TestExecution.objects.filter(
+        pk=execution_id, cancel_requested=True).exists()
+
+
 def execute_scenario_tree(scenario, environment, user, execution=None, cancel_check=None):
     """Run a scenario tree and persist a ``TestExecution`` record.
 
@@ -657,9 +722,11 @@ def execute_scenario_tree(scenario, environment, user, execution=None, cancel_ch
         execution.status = 'RUNNING'
         execution.start_time = execution.start_time or timezone.now()
         execution.end_time = None
+        execution.conclusion = ''
         execution.results = []
         execution.passed_requests = 0
         execution.failed_requests = 0
+        execution.skipped_steps = 0
         execution.total_requests = 0
         execution.save()
 
@@ -668,6 +735,15 @@ def execute_scenario_tree(scenario, environment, user, execution=None, cancel_ch
             environment, user=user, project_id=scenario.project_id)
     except ValidationError as exc:
         return _finish(execution, [], message=_validation_message(exc))
+
+    # The run snapshot is what the execution is judged against; later edits to
+    # the environment do not retroactively change a finished report.
+    execution.environment_snapshot = {
+        'id': snapshot['id'], 'base_url': snapshot['base_url'],
+        'variables': sorted(snapshot['variables'] or {}),
+    }
+    execution.heartbeat_at = timezone.now()
+    execution.save(update_fields=['environment_snapshot', 'heartbeat_at'])
 
     nodes = _load_definition(scenario)
     unsupported = sorted({
@@ -685,7 +761,7 @@ def execute_scenario_tree(scenario, environment, user, execution=None, cancel_ch
         variables=dict(scenario.variables or {}),
         execution_config=scenario.execution_config or {},
         recorder=recorder,
-        cancel_check=cancel_check,
+        cancel_check=cancel_check or (lambda: cancel_requested(execution.pk)),
         scenario_stack=(str(scenario.pk),),
         scenario=scenario,
         user=user,
@@ -699,10 +775,13 @@ def execute_scenario_tree(scenario, environment, user, execution=None, cancel_ch
 
 
 def _finish(execution, results, *, outcome=None, message=''):
+    execution.refresh_from_db(fields=['cancel_requested'])
     execution.end_time = timezone.now()
     execution.results = list(results)
+    cancelled = execution.cancel_requested
     if outcome is None:
-        execution.status = FAILED
+        execution.status = 'CANCELLED' if cancelled else FAILED
+        execution.conclusion = 'CANCELLED' if cancelled else FAILED
         execution.results = list(results) + [{'status': ERROR, 'error': message}]
         execution.passed_requests = 0
         execution.failed_requests = 0
@@ -711,13 +790,24 @@ def _finish(execution, results, *, outcome=None, message=''):
         execution.passed_requests = outcome['passed']
         execution.failed_requests = outcome['failed']
         execution.total_requests = outcome['total']
-        execution.status = (
-            'COMPLETED' if outcome['failed'] == 0 and outcome['total'] else 'FAILED')
         message = outcome['error']
+        if cancelled:
+            # A cancelled run finished, but it is not a green test.
+            execution.status = 'CANCELLED'
+            execution.conclusion = 'CANCELLED'
+        elif outcome['failed'] == 0 and outcome['total']:
+            execution.status = 'COMPLETED'
+            execution.conclusion = 'PASSED'
+        else:
+            execution.status = 'COMPLETED'
+            execution.conclusion = FAILED
+            message = message or '存在失败的步骤'
     execution.save()
     return {
-        'success': execution.status == 'COMPLETED',
+        'success': execution.conclusion == 'PASSED',
         'execution_id': execution.id,
+        'status': execution.status,
+        'conclusion': execution.conclusion,
         'passed_count': execution.passed_requests,
         'failed_count': execution.failed_requests,
         'total_count': execution.total_requests,

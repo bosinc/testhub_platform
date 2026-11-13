@@ -20,7 +20,7 @@ from .models import (
     RequestHistory, ScenarioCase, ScenarioCaseFolder, TestExecution, ScenarioCaseRequest,
     ScheduledTask, TaskExecutionLog, NotificationLog,
     TaskNotificationSetting, OperationLog, AIServiceConfig,
-    TestSuite, TestSuiteItem,
+    TestSuite, TestSuiteItem, StepExecution,
 )
 
 User = get_user_model()
@@ -341,8 +341,9 @@ class TestExecutionSerializer(serializers.ModelSerializer):
     class Meta:
         model = TestExecution
         fields = [
-            'id', 'scenario_case', 'status', 'start_time', 'end_time',
-            'total_requests', 'passed_requests', 'failed_requests',
+            'id', 'scenario_case', 'status', 'conclusion', 'start_time', 'end_time',
+            'heartbeat_at', 'cancel_requested', 'environment_snapshot',
+            'total_requests', 'passed_requests', 'failed_requests', 'skipped_steps',
             'results', 'executed_by', 'created_at'
         ]
 
@@ -353,6 +354,20 @@ class TestExecutionSerializer(serializers.ModelSerializer):
             data['project_name'] = instance.scenario_case.project.name
             data['scenario_case_name'] = instance.scenario_case.name
         return data
+
+
+class StepExecutionSerializer(serializers.ModelSerializer):
+    """One step instance; identity is snapshotted so deleted steps stay readable."""
+
+    class Meta:
+        model = StepExecution
+        fields = [
+            'id', 'execution', 'step_id_snapshot', 'name_snapshot', 'type_snapshot',
+            'invocation_id', 'parent_invocation_id', 'iteration_path', 'sequence',
+            'status', 'request_data', 'response_data', 'assertion_results',
+            'extraction_results', 'logs', 'started_at', 'finished_at', 'error',
+        ]
+        read_only_fields = fields
 
 
 class ScheduledTaskSerializer(serializers.ModelSerializer):
