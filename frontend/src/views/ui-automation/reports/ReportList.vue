@@ -328,7 +328,7 @@ const reports = ref([])
 const projects = ref([])
 const selectedProject = ref('')
 useRememberedProject(selectedProject, projects)
-const loading = ref(false)
+const loading = ref(true)
 const total = ref(0)
 const pagination = reactive({
   currentPage: 1,

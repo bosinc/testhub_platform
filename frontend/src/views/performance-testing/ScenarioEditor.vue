@@ -49,7 +49,7 @@
     </div>
 
     <div class="editor-body">
-      <ResizableSplitPane v-model="stepPanelWidth" min-size="260" max-size="520" second-min-size="480" :storage-key="'performance-testing.scenario-editor.steps-width'">
+      <ResizableSplitPane v-model="stepPanelWidth" :min-size="260" :max-size="520" :second-min-size="480" :storage-key="'performance-testing.scenario-editor.steps-width'">
         <template #first>
           <!-- ---------- 左侧步骤列表 ---------- -->
           <div class="step-panel">

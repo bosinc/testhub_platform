@@ -204,9 +204,9 @@ class Element(models.Model):
         verbose_name_plural = 'UI元素'
         ordering = ['page', 'order', 'name']
         indexes = [
-            models.Index(fields=['project', 'page']),
             models.Index(fields=['project', 'element_type']),
             models.Index(fields=['validation_status']),
+            models.Index(fields=['project', 'page', 'order'], name='ui_elements_tree_idx'),
         ]
 
     def __str__(self):

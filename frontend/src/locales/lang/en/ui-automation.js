@@ -3,14 +3,13 @@ export default {
   remote: {
     liveView: 'Live View',
     latestView: 'View Latest Test Session',
-    title: 'Live Test View',
     preparing: 'Preparing the browser view for this run…',
     browserTitle: 'Live browser for this run',
     ended: 'This test session has ended',
     closeHint: 'Closing the view will not stop the test',
     reconnect: 'Reconnect',
     stopExecution: 'Stop Execution',
-    closeView: 'Close View',
+    closeView: 'Close',
     loadFailed: 'Unable to load the live view',
     stopFailed: 'Failed to stop execution'
   },

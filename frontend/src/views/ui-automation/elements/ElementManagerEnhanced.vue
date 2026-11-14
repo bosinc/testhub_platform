@@ -1,7 +1,7 @@
 <template>
   <div class="element-manager">
     <div class="element-layout">
-      <ResizableSplitPane v-model="sidebarWidth" min-size="240" max-size="520" second-min-size="480" :storage-key="'ui-automation.elements.sidebar-width'">
+      <ResizableSplitPane v-model="sidebarWidth" :min-size="240" :max-size="520" :second-min-size="480" :storage-key="'ui-automation.elements.sidebar-width'">
         <template #first>
       <!-- 左侧页面树 -->
           <div class="sidebar">
@@ -24,7 +24,7 @@
           </div>
         </div>
 
-        <div class="page-tree">
+        <div class="page-tree" v-loading="treeLoading">
           <el-tree
             ref="treeRef"
             :key="treeKey"
@@ -333,6 +333,8 @@ useRememberedProject(selectedProject, projects)
 const pages = ref([])
 const locatorStrategies = ref([])
 const treeData = ref([])
+const treeLoading = ref(true)
+let elementTreeRequestId = 0
 const selectedElement = ref(null)
 const expandedKeys = ref([])
 const treeKey = ref(0) // 用于强制重新渲染树组件
@@ -509,7 +511,7 @@ onMounted(async () => {
   console.log('=== 组件挂载开始 ===')
 
   await loadProjects()
-  await loadLocatorStrategies()
+  void loadLocatorStrategies()
 
   console.log('项目数量:', projects.value.length)
   console.log('定位策略:', locatorStrategies.value.length)
@@ -520,7 +522,7 @@ onMounted(async () => {
     selectedProject.value = preferredProjectId
     await onProjectChange()
     console.log('onProjectChange完成')
-  }
+  } else treeLoading.value = false
 
   // 暴露调试信息
   exposeToWindow()
@@ -590,18 +592,23 @@ const loadLocatorStrategies = async () => {
 
 // 加载元素树
 const loadElementTree = async () => {
+  const requestId = ++elementTreeRequestId
   if (!selectedProject.value) {
     treeData.value = []
     pages.value = []
+    treeLoading.value = false
     return
   }
 
+  const requestedProject = selectedProject.value
+  treeLoading.value = true
   try {
     // 并行加载页面树和元素
     const [pageTreeResponse, elementsResponse] = await Promise.all([
-      getElementGroupTree({ project: selectedProject.value }),
-      getElementTree({ project: selectedProject.value })
+      getElementGroupTree({ project: requestedProject }),
+      getElementTree({ project: requestedProject })
     ])
+    if (requestId !== elementTreeRequestId || String(selectedProject.value) !== String(requestedProject)) return
 
     // 构建完整的树形结构
     const buildTree = (groups) => {
@@ -713,8 +720,11 @@ const loadElementTree = async () => {
       })))
     }
   } catch (error) {
+    if (requestId !== elementTreeRequestId) return
     console.error('获取元素树失败:', error)
     treeData.value = []
+  } finally {
+    if (requestId === elementTreeRequestId) treeLoading.value = false
   }
 }
 

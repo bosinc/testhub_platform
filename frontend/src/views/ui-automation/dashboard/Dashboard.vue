@@ -1,7 +1,7 @@
 <template>
   <div class="dashboard-container">
     <!-- 数据概览 -->
-    <div class="stats-section">
+    <div class="stats-section" v-loading="statsLoading">
       <el-row :gutter="20">
         <el-col :span="6">
           <el-card shadow="hover" class="stat-card">
@@ -62,11 +62,8 @@
     <el-row :gutter="20" class="content-section">
       <!-- 最近活动 -->
       <el-col :span="12">
-        <el-card class="recent-activities" :title="$t('uiAutomation.dashboard.operationRecords')" shadow="hover">
-          <div v-if="loading" class="loading-container">
-            <el-empty :description="$t('uiAutomation.dashboard.loading')" />
-          </div>
-          <div v-else-if="operationRecords.length === 0" class="empty-container">
+        <el-card class="recent-activities" v-loading="loading" :title="$t('uiAutomation.dashboard.operationRecords')" shadow="hover">
+          <div v-if="operationRecords.length === 0" class="empty-container">
             <el-empty :description="$t('uiAutomation.dashboard.noRecords')" />
           </div>
           <div v-else class="activities-list">
@@ -228,25 +225,30 @@ const executionCount = ref(0)
 // 操作记录
 const operationRecords = ref([])
 const loading = ref(false)
+const statsLoading = ref(false)
 
-// 加载数据
-const loadDashboardData = async () => {
-  loading.value = true
+// 统计卡片与最近活动独立加载，任一接口较慢或失败都不阻塞另一块展示。
+const loadStats = async () => {
+  statsLoading.value = true
   try {
-    // 并行加载统计数据和操作记录
-    const [statsRes, recordsRes] = await Promise.all([
-      getDashboardStats(),
-      getOperationRecords({ limit: 10 })
-    ])
-
-    // 更新统计数据
+    const statsRes = await getDashboardStats()
     const stats = statsRes.data
     projectCount.value = stats.project_count || 0
     testCaseCount.value = stats.test_case_count || 0
     suiteCount.value = stats.suite_count || 0
     executionCount.value = stats.execution_count || 0
+  } catch (error) {
+    ElMessage.error(t('uiAutomation.dashboard.messages.loadFailed'))
+    console.error('Failed to load dashboard stats:', error)
+  } finally {
+    statsLoading.value = false
+  }
+}
 
-    // 操作记录
+const loadOperationRecords = async () => {
+  loading.value = true
+  try {
+    const recordsRes = await getOperationRecords({ limit: 10 })
     operationRecords.value = recordsRes.data.results || recordsRes.data || []
   } catch (error) {
     ElMessage.error(t('uiAutomation.dashboard.messages.loadFailed'))
@@ -335,7 +337,8 @@ const goToReports = () => {
 
 // 组件挂载时加载数据
 onMounted(() => {
-  loadDashboardData()
+  void loadStats()
+  void loadOperationRecords()
 })
 </script>
 

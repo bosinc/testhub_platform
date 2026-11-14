@@ -255,6 +255,12 @@ const routes = [
         ]
     },
     {
+        path: '/ui-automation/remote/:sessionId',
+        name: 'UiRemoteDesktop',
+        component: () => import('@/views/ui-automation/RemoteDesktop.vue'),
+        meta: { requiresAuth: true }
+    },
+    {
         path: '/ui-automation',
         component: Layout,
         meta: { requiresAuth: true },

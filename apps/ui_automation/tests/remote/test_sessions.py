@@ -59,6 +59,14 @@ class SessionTests(TestCase):
     def session(self):
         return remote.create_session(self.execution(), self.user)
 
+    def test_remote_desktop_capability_reflects_server_setting(self):
+        response = self.client.get('/api/ui-automation/remote-sessions/capabilities/')
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.data['enabled'])
+        with override_settings(UI_REMOTE_ENABLED=False):
+            response = self.client.get('/api/ui-automation/remote-sessions/capabilities/')
+        self.assertFalse(response.data['enabled'])
+
     def test_users_receive_distinct_slots_and_limit_is_enforced(self):
         first = self.session()
         second = remote.create_session(self.execution(self.other), self.other)

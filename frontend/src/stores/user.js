@@ -2,6 +2,8 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import api from '@/utils/api'
 import { track } from '@/utils/tracker'
+import { redirectToLogin } from '@/utils/authNavigation'
+import { resetUiRemoteCapabilities } from '@/utils/uiRemoteNavigation'
 
 export const useUserStore = defineStore('user', () => {
   const user = ref(null)
@@ -155,6 +157,20 @@ export const useUserStore = defineStore('user', () => {
   // 添加一个标记防止logout过程中的循环调用
   let isLoggingOut = false
 
+  const clearAuth = () => {
+    // 所有退出分支共用本地清理，同时使远程能力缓存及未完成请求失效。
+    stopAutoRefresh()
+    accessToken.value = ''
+    refreshToken.value = ''
+    user.value = null
+    tokenExpiresAt.value = 0
+    localStorage.removeItem('access_token')
+    localStorage.removeItem('refresh_token')
+    localStorage.removeItem('token_expires_at')
+    localStorage.removeItem('user')
+    resetUiRemoteCapabilities()
+  }
+
   const logout = async () => {
     // 防止重复调用logout
     if (isLoggingOut) {
@@ -178,20 +194,12 @@ export const useUserStore = defineStore('user', () => {
       }
     } finally {
       // 清除所有认证信息
-      accessToken.value = ''
-      refreshToken.value = ''
-      user.value = null
-      tokenExpiresAt.value = 0
-
-      localStorage.removeItem('access_token')
-      localStorage.removeItem('refresh_token')
-      localStorage.removeItem('token_expires_at')
-      localStorage.removeItem('user')
+      clearAuth()
 
       // 重置标记
       isLoggingOut = false
 
-      window.location.href = '/login'
+      redirectToLogin()
     }
   }
 
@@ -300,6 +308,7 @@ export const useUserStore = defineStore('user', () => {
     login,
     // smsLogin,
     register,
+    clearAuth,
     logout,
     refreshAccessToken,
     fetchProfile,

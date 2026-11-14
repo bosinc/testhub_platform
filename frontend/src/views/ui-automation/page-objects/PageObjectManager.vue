@@ -14,7 +14,7 @@
     </div>
 
     <div class="main-content">
-      <ResizableSplitPane v-model="leftPanelWidth" min-size="240" max-size="520" second-min-size="480" :storage-key="'ui-automation.page-objects.sidebar-width'">
+      <ResizableSplitPane v-model="leftPanelWidth" :min-size="240" :max-size="520" :second-min-size="480" :storage-key="'ui-automation.page-objects.sidebar-width'">
         <template #first>
       <!-- 页面对象列表 -->
           <div class="left-panel">
@@ -33,7 +33,7 @@
           </el-input>
         </div>
 
-        <div class="page-object-list">
+        <div class="page-object-list" v-loading="pageObjectsLoading">
           <div
             v-for="pageObject in filteredPageObjects"
             :key="pageObject.id"
@@ -100,7 +100,7 @@
                     </template>
                   </el-input>
 
-                  <div class="element-list">
+                  <div class="element-list" v-loading="availableElementsLoading">
                     <div
                       v-for="element in filteredElements"
                       :key="element.id"
@@ -123,6 +123,7 @@
                   <h4>{{ $t('uiAutomation.pageObject.pageObjectElements') }}</h4>
                   <div
                     class="canvas-drop-zone"
+                    v-loading="pageObjectElementsLoading"
                     @drop="handleDrop"
                     @dragover.prevent
                     @dragenter.prevent
@@ -336,10 +337,17 @@ const projects = ref([])
 const projectId = ref('')
 useRememberedProject(projectId, projects)
 const pageObjects = ref([])
+// 各列表只等待自己的接口，请求序号防止快速切换后旧响应覆盖当前内容。
+const pageObjectsLoading = ref(true)
+let pageObjectsRequestId = 0
 const selectedPageObject = ref(null)
 const selectedCanvasElement = ref(null)
 const pageObjectElements = ref([])
+const pageObjectElementsLoading = ref(false)
+let pageObjectElementsRequestId = 0
 const availableElements = ref([])
+const availableElementsLoading = ref(false)
+let availableElementsRequestId = 0
 const searchText = ref('')
 const elementFilter = ref('')
 const generatedCode = ref('')
@@ -421,54 +429,83 @@ const loadProjects = async () => {
 }
 
 const loadPageObjects = async () => {
-  if (!projectId.value) {
+  const requestId = ++pageObjectsRequestId
+  const requestedProject = projectId.value
+  if (!requestedProject) {
     pageObjects.value = []
+    pageObjectsLoading.value = false
     return
   }
 
+  pageObjectsLoading.value = true
   try {
-    const response = await getPageObjects({ project: projectId.value })
-    pageObjects.value = response.data.results || response.data
+    const response = await getPageObjects({ project: requestedProject })
+    if (requestId === pageObjectsRequestId && String(projectId.value) === String(requestedProject)) {
+      pageObjects.value = response.data.results || response.data
+    }
   } catch (error) {
     console.error('获取页面对象列表失败:', error)
+  } finally {
+    if (requestId === pageObjectsRequestId) pageObjectsLoading.value = false
   }
 }
 
 const loadAvailableElements = async () => {
-  if (!projectId.value) {
+  const requestId = ++availableElementsRequestId
+  const requestedProject = projectId.value
+  if (!requestedProject) {
     availableElements.value = []
+    availableElementsLoading.value = false
     return
   }
 
+  availableElementsLoading.value = true
   try {
-    const response = await getElements({ project: projectId.value })
-    availableElements.value = response.data.results || response.data
+    const response = await getElements({ project: requestedProject })
+    if (requestId === availableElementsRequestId && String(projectId.value) === String(requestedProject)) {
+      availableElements.value = response.data.results || response.data
+    }
   } catch (error) {
     console.error('获取可用元素失败:', error)
+  } finally {
+    if (requestId === availableElementsRequestId) availableElementsLoading.value = false
   }
 }
 
 const onProjectChange = () => {
+  pageObjectElementsRequestId += 1
+  pageObjectElementsLoading.value = false
   selectedPageObject.value = null
   selectedCanvasElement.value = null
   pageObjectElements.value = []
+  pageObjects.value = []
+  availableElements.value = []
 
   createForm.project = projectId.value
 
-  loadPageObjects()
-  loadAvailableElements()
+  // 可用元素不阻塞左侧页面对象列表。
+  void loadAvailableElements()
+  return loadPageObjects()
 }
 
 const selectPageObject = async (pageObject) => {
+  const requestId = ++pageObjectElementsRequestId
   selectedPageObject.value = pageObject
   selectedCanvasElement.value = null
+  pageObjectElements.value = []
+  pageObjectElementsLoading.value = true
 
   try {
     const response = await getPageObjectElements(pageObject.id)
-    pageObjectElements.value = response.data
+    if (requestId === pageObjectElementsRequestId && selectedPageObject.value?.id === pageObject.id) {
+      pageObjectElements.value = response.data
+    }
   } catch (error) {
+    if (requestId !== pageObjectElementsRequestId) return
     console.error('获取页面对象元素失败:', error)
     pageObjectElements.value = []
+  } finally {
+    if (requestId === pageObjectElementsRequestId) pageObjectElementsLoading.value = false
   }
 }
 
@@ -745,7 +782,7 @@ onMounted(async () => {
   if (projects.value.length > 0) {
     projectId.value = getPreferredProjectId(projects.value, projects.value[0].id)
     await onProjectChange()
-  }
+  } else pageObjectsLoading.value = false
 })
 </script>
 

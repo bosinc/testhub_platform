@@ -1947,6 +1947,8 @@ class TestExecutor:
             service = ChromeService(ChromeDriverManager().install(), **({"env": self.browser_env} if self.browser_env else {}))
             driver = webdriver.Chrome(service=service, options=options)
 
+        if self.desktop:
+            driver.maximize_window()
         return driver
 
     def execute_test_case_selenium_no_db(self, driver, case_data):

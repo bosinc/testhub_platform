@@ -5,8 +5,7 @@ from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 from rest_framework.test import APIClient, APIRequestFactory, force_authenticate
 
-from apps.ui_automation.models import Element, ElementGroup, LocatorStrategy, UiProject
-from apps.ui_automation.serializers import ElementGroupSerializer
+from apps.ui_automation.models import ElementGroup, UiProject
 from apps.ui_automation.views import ElementGroupViewSet
 
 
@@ -59,35 +58,32 @@ class ElementGroupApiPerformanceTests(TestCase):
         self.assertIsNotNone(list_response.data['next'])
         self.assertEqual(tree_response.data[0]['id'], root.pk)
         self.assertLessEqual(list_queries, 5)
-        self.assertLessEqual(tree_queries, 2)
+        self.assertEqual(tree_queries, 1)
         self.assertEqual(list_queries, small_list_queries)
         self.assertEqual(tree_queries, small_tree_queries)
 
-    def test_response_matches_existing_serializer_with_direct_element_counts(self):
-        root, groups = self._create_groups(3)
-        grandchild = ElementGroup.objects.create(
-            project=self.project, name='Grandchild', parent_group=groups[1],
-        )
-        strategy = LocatorStrategy.objects.create(name='CSS')
-        for group, count in ((root, 1), (groups[1], 2), (grandchild, 3)):
-            Element.objects.bulk_create([
-                Element(project=self.project, group=group, name=f'Submit {index}',
-                        locator_strategy=strategy, locator_value='#submit')
-                for index in range(count)
-            ])
+    def test_tree_returns_lightweight_nodes_without_repeated_project_data(self):
+        root, groups = self._create_groups(30)
+        tree_response, tree_queries = self._get_with_query_count(self.tree_url)
 
-        list_response, _ = self._get_with_query_count(self.list_url)
-        tree_response, _ = self._get_with_query_count(self.tree_url)
-        queryset = ElementGroup.objects.filter(project=self.project).order_by('order', 'name')
-        self.assertEqual(list_response.data['results'], ElementGroupSerializer(queryset, many=True).data)
-        self.assertEqual(tree_response.data, ElementGroupSerializer(queryset.filter(parent_group=None), many=True).data)
         root_data = tree_response.data[0]
-        self.assertEqual(root_data['elements_count'], 1)
-        self.assertEqual(root_data['children'][0]['elements_count'], 2)
-        self.assertEqual(root_data['children'][0]['children'][0]['elements_count'], 3)
-        self.assertEqual(root_data['children'][1]['elements_count'], 0)
-        self.assertEqual(root_data['children'][1]['children'], [])
-        self.assertEqual(len(root_data['project']['members']), 2)
+        self.assertEqual(root_data['id'], root.pk)
+        self.assertEqual(root_data['children'][0]['id'], groups[1].pk)
+        self.assertEqual(root_data['children'][0]['parent_group'], root.pk)
+        self.assertEqual(set(root_data), {
+            'id', 'name', 'description', 'parent_group', 'order', 'children',
+        })
+        self.assertNotIn('project', root_data)
+        self.assertEqual(tree_queries, 1)
+
+    def test_list_keeps_project_data_cache_scoped_to_one_response(self):
+        self._create_groups(2)
+        before, _ = self._get_with_query_count(self.list_url)
+        self.project.name = 'Renamed project'
+        self.project.save(update_fields=['name'])
+        after, _ = self._get_with_query_count(self.list_url)
+        self.assertEqual(before.data['results'][0]['project']['name'], 'Group API project')
+        self.assertEqual(after.data['results'][0]['project']['name'], 'Renamed project')
 
     def test_filters_do_not_truncate_descendants(self):
         root, groups = self._create_groups(3)
@@ -164,16 +160,6 @@ class ElementGroupApiPerformanceTests(TestCase):
         self.client.force_authenticate(user=None)
         self.assertEqual(self.client.get(self.list_url).status_code, 401)
         self.assertEqual(self.client.get(self.tree_url, {'project': self.project.pk}).status_code, 401)
-
-    def test_project_cache_is_scoped_to_one_response(self):
-        self._create_groups(2)
-        before, _ = self._get_with_query_count(self.tree_url)
-        self.project.name = 'Renamed project'
-        self.project.save(update_fields=['name'])
-        after, _ = self._get_with_query_count(self.tree_url)
-        self.assertEqual(before.data[0]['project']['name'], 'Group API project')
-        self.assertEqual(after.data[0]['project']['name'], 'Renamed project')
-        self.assertEqual(after.data[0]['children'][0]['project']['name'], 'Renamed project')
 
     def test_list_without_pagination_preserves_filtered_subtrees(self):
         self._create_groups(3)

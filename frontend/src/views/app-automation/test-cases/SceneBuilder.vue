@@ -130,7 +130,7 @@
         </el-card>
 
         <div class="scene-layout">
-            <ResizableSplitPane v-model="paletteWidth" min-size="260" max-size="520" second-min-size="700" :storage-key="'app-automation.scene-builder.palette-width'">
+            <ResizableSplitPane v-model="paletteWidth" :min-size="260" :max-size="520" :second-min-size="700" :storage-key="'app-automation.scene-builder.palette-width'">
                 <template #first>
                     <div class="scene-pane palette-pane">
                 <el-card class="palette-card" shadow="never">
@@ -217,7 +217,7 @@
                 </template>
 
                 <template #second>
-                    <ResizableSplitPane v-model="configWidth" resize-target="second" min-size="300" max-size="560" first-min-size="520" second-min-size="360" :storage-key="'app-automation.scene-builder.config-width'">
+                    <ResizableSplitPane v-model="configWidth" resize-target="second" :min-size="300" :max-size="560" :first-min-size="520" :second-min-size="360" :storage-key="'app-automation.scene-builder.config-width'">
                         <template #first>
                             <div class="scene-pane steps-pane">
                 <el-card class="scene-card" shadow="never">

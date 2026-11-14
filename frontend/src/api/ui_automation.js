@@ -1205,6 +1205,10 @@ export function exportAIExecutionReportPDF(id, params = {}) {
 }
 
 // 远程有头会话的访问凭据由后端按当前用户签发，不暴露 VNC 内部地址。
+export function getUiRemoteCapabilities() {
+  return request({ url: '/ui-automation/remote-sessions/capabilities/', method: 'get' })
+}
+
 export function getUiRemoteSession(id) {
   return request({ url: `/ui-automation/remote-sessions/${id}/`, method: 'get' })
 }

@@ -45,6 +45,10 @@ def _testhub_launch(self, *args, **kwargs):
         kwargs['headless'] = False
         kwargs['env'] = {**os.environ, **(kwargs.get('env') or {}),
                          'DISPLAY': os.environ['DISPLAY'], 'XAUTHORITY': os.environ['XAUTHORITY']}
+        if self.name == 'chromium':
+            kwargs['args'] = list(kwargs.get('args') or [])
+            if '--start-maximized' not in kwargs['args']:
+                kwargs['args'].append('--start-maximized')
     browser = _testhub_original_launch(self, *args, **kwargs)
     _testhub_path(os.environ['BROWSER_MARKER']).touch()
     return browser
@@ -84,18 +88,34 @@ def _testhub_toggle_click(locator, *args, **kwargs):
 
 def _testhub_configure_page(page):
     page.set_default_navigation_timeout(30000)
+    if os.environ.get('REMOTE_DESKTOP') == '1':
+        try:
+            browser = page.context.browser
+            if browser and browser.browser_type.name == 'chromium':
+                # Playwright 的固定 viewport 不会自动最大化远程 X11 窗口。
+                session = page.context.new_cdp_session(page)
+                window = session.send('Browser.getWindowForTarget')
+                session.send('Browser.setWindowBounds', {
+                    'windowId': window['windowId'], 'bounds': {'windowState': 'maximized'}
+                })
+        except Exception:
+            pass
     return page
 
 def _testhub_browser_new_page(browser, *args, **kwargs):
     storage_state = os.environ.get('STORAGE_STATE_PATH')
     if storage_state and 'storage_state' not in kwargs:
         kwargs['storage_state'] = storage_state
+    if os.environ.get('REMOTE_DESKTOP') == '1' and browser.browser_type.name == 'chromium':
+        kwargs['viewport'] = None
     return _testhub_configure_page(_testhub_original_browser_new_page(browser, *args, **kwargs))
 
 def _testhub_browser_new_context(browser, *args, **kwargs):
     storage_state = os.environ.get('STORAGE_STATE_PATH')
     if storage_state and 'storage_state' not in kwargs:
         kwargs['storage_state'] = storage_state
+    if os.environ.get('REMOTE_DESKTOP') == '1' and browser.browser_type.name == 'chromium':
+        kwargs['viewport'] = None
     return _testhub_original_browser_new_context(browser, *args, **kwargs)
 
 def _testhub_context_new_page(context, *args, **kwargs):

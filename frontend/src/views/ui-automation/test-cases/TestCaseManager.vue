@@ -12,7 +12,7 @@
         </el-button>
         <el-tooltip :content="t('uiAutomation.variables.selectProject')" :disabled="!!projectId">
           <span>
-            <el-button :disabled="!projectId" @click="openVariablesDialog">
+            <el-button :disabled="!projectId || projectVariablesLoading" :loading="projectVariablesLoading" @click="openVariablesDialog">
               <el-icon><Setting /></el-icon>
               {{ t('uiAutomation.variables.title') }}
               <span v-if="currentVariables.length" class="header-count">{{ currentVariables.length }}</span>
@@ -27,7 +27,7 @@
     </div>
 
     <div class="main-content">
-      <ResizableSplitPane v-model="leftPanelWidth" min-size="240" max-size="520" second-min-size="480" :storage-key="'ui-automation.test-cases.sidebar-width'">
+      <ResizableSplitPane v-model="leftPanelWidth" :min-size="240" :max-size="520" :second-min-size="480" :storage-key="'ui-automation.test-cases.sidebar-width'">
         <template #first>
       <!-- 左侧：测试用例列表 -->
           <div class="left-panel">
@@ -67,7 +67,7 @@
             </el-button>
         </div>
 
-        <div class="test-case-list">
+        <div class="test-case-list" v-loading="testCaseTreeLoading">
           <el-tree
             ref="testCaseTreeRef"
             :data="testCaseTree"
@@ -100,7 +100,7 @@
               </div>
             </template>
           </el-tree>
-          <el-empty v-if="!testCaseTree.length" :description="t('uiAutomation.common.noData')" />
+          <el-empty v-if="!testCaseTreeLoading && !testCaseTree.length" :description="t('uiAutomation.common.noData')" />
         </div>
         <ul
           ref="folderContextMenuRef"
@@ -121,7 +121,7 @@
 
         <template #second>
           <!-- 右侧：测试用例详情和步骤编辑 -->
-          <div class="right-panel">
+          <div class="right-panel" v-loading="testCaseDetailLoading">
         <div v-if="selectedTestCase" class="test-case-detail">
           <div class="detail-header">
             <div class="detail-title-row">
@@ -187,7 +187,7 @@
                 <el-icon v-if="!isRunning"><CaretRight /></el-icon>
                 {{ isRunning ? t('uiAutomation.testCase.running') : t('uiAutomation.testCase.runLabel') }}
               </el-button>
-              <el-button v-if="remoteSessionId" @click="remoteDesktop.open(remoteSessionId)">{{ t('uiAutomation.remote.liveView') }}</el-button>
+              <el-button v-if="remoteSessionId" @click="openRemoteDesktop(remoteSessionId)">{{ t('uiAutomation.remote.liveView') }}</el-button>
               <el-button size="default" type="primary" @click="saveTestCase">
                 <el-icon><Check /></el-icon>
                 {{ t('uiAutomation.testCase.saveTestCase') }}
@@ -507,7 +507,7 @@
       :close-on-click-modal="false"
       width="900px"
     >
-      <el-tabs tab-position="left" style="height: 450px">
+      <el-tabs v-loading="loading" tab-position="left" style="height: 450px">
         <el-tab-pane
           v-for="(category, index) in variableCategoriesComputed"
           :key="index"
@@ -569,33 +569,34 @@
       @select="handleDataFactorySelect"
     />
   </div>
-  <UiRemoteDialog ref="remoteDesktop" @finished="remoteCaseFinished" />
 </template>
 
 <script setup>
-import UiRemoteDialog from '@/components/ui-automation/UiRemoteDialog.vue'
 import ResizableSplitPane from '@/components/ResizableSplitPane.vue'
 import TestCaseDetailPanel from '@/components/testcases/TestCaseDetailPanel.vue'
 import StructuredStepEditor from '@/components/ui-automation/StructuredStepEditor.vue'
 import VariableEditor from '@/components/ui-automation/VariableEditor.vue'
 import { loadUiVariables, formatUiVariables } from '@/utils/uiVariables'
-import { ref, reactive, computed, onMounted, watch, nextTick } from 'vue'
+import { ref, reactive, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Search, Plus, Edit, Delete, Check, CaretRight, Picture, Warning, View, ZoomIn, Refresh, WarningFilled, MagicStick, Setting, Upload, Folder, FolderAdd, Document, CopyDocument, Expand, Fold, Link, ArrowUp, ArrowDown
 } from '@element-plus/icons-vue'
 import DataFactorySelector from '@/components/DataFactorySelector.vue'
 import { useI18n } from 'vue-i18n'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import api from '@/utils/api'
 import { createTestCaseAutomationLink } from '@/api/testcases'
+import { closeReservedUiRemoteWindow, loadUiRemoteCapabilities, openUiRemoteSession, reserveUiRemoteWindow } from '@/utils/uiRemoteNavigation'
 
 const { t } = useI18n()
 const route = useRoute()
+const router = useRouter()
 const leftPanelWidth = ref(350)
 
 import {
   getUiProjects,
+  getUiProjectDetail,
   updateUiProject,
   getElements,
   createTestCase,
@@ -620,11 +621,17 @@ import { getPreferredProjectId, useRememberedProject } from '@/utils/projectSele
 const projects = ref([])
 const projectId = ref('')
 useRememberedProject(projectId, projects)
+let projectVariablesRequestId = 0
 const testCases = ref([])
 const testCaseFolders = ref([])
+let testCasesRequestId = 0
+let testCaseFoldersRequestId = 0
+const testCaseTreeLoading = ref(true)
+let testCaseTreeRequestId = 0
 const testCaseTreeRef = ref(null)
 const expandedFolderKeys = ref(new Set())
 const selectedTestCase = ref(null)
+const testCaseDetailLoading = ref(false)
 // 用例切换或项目切换后忽略过期详情，避免错误回显和覆盖当前编辑内容。
 let testCaseDetailRequestId = 0
 const showLinkedTestCases = ref(false)
@@ -661,6 +668,7 @@ watch(linkedTestCases, cases => {
 })
 const currentSteps = ref([])
 const currentVariables = ref([])
+const projectVariablesLoading = ref(false)
 const storageStates = ref([])
 // 登录态总数取自分页响应的 count，列表只取前 200 条也能显示真实数量。
 const storageStateTotal = ref(0)
@@ -676,7 +684,6 @@ const savingVariables = ref(false)
 const availableElements = ref([])
 const elementsLoading = ref(false)
 const elementLibraryLoaded = ref(false)
-const elementsReady = ref(Promise.resolve())
 const elementSearchCache = new Set()
 const elementSearchInFlight = new Set()
 const elementSearchTimers = new Map()
@@ -701,8 +708,8 @@ const showSteps = ref(true)
 const showScreenshotPreview = ref(false)
 const currentScreenshot = ref(null)
 const isRunning = ref(false)
-const remoteDesktop = ref(null)
 const remoteSessionId = ref(null)
+const openRemoteDesktop = (id, target = null) => openUiRemoteSession(router, id, target)
 const selectedEngine = ref('playwright')  // 默认使用Playwright
 const selectedBrowser = ref('chrome')  // 默认使用Chrome
 const headlessMode = ref(true)  // 默认使用无头模式
@@ -880,8 +887,9 @@ const loadProjects = async () => {
   }
 }
 
-const loadTestCases = async () => {
-  if (!projectId.value) {
+const loadTestCases = async (project = projectId.value) => {
+  const requestId = ++testCasesRequestId
+  if (!project) {
     testCases.value = []
     return
   }
@@ -892,20 +900,22 @@ const loadTestCases = async () => {
     let page = 1
     let hasNext = true
     while (hasNext) {
-      const response = await getTestCases({ project: projectId.value, page, page_size: 1000 })
+      const response = await getTestCases({ project, page, page_size: 1000 })
+      if (requestId !== testCasesRequestId) return
       const pageCases = response.data.results || response.data
       cases.push(...pageCases)
       hasNext = Boolean(response.data.next)
       page += 1
     }
-    testCases.value = cases
+    if (String(projectId.value) === String(project)) testCases.value = cases
   } catch (error) {
     console.error('获取测试用例失败:', error)
   }
 }
 
-const loadTestCaseFolders = async () => {
-  if (!projectId.value) {
+const loadTestCaseFolders = async (project = projectId.value) => {
+  const requestId = ++testCaseFoldersRequestId
+  if (!project) {
     testCaseFolders.value = []
     return
   }
@@ -914,15 +924,16 @@ const loadTestCaseFolders = async () => {
     let page = 1
     let hasNext = true
     while (hasNext) {
-      const response = await getTestCaseFolders({ project: projectId.value, page, page_size: 1000 })
+      const response = await getTestCaseFolders({ project, page, page_size: 1000 })
+      if (requestId !== testCaseFoldersRequestId) return
       folders.push(...(response.data.results || response.data))
       hasNext = Boolean(response.data.next)
       page += 1
     }
-    testCaseFolders.value = folders
+    if (String(projectId.value) === String(project)) testCaseFolders.value = folders
   } catch (error) {
     console.error('获取测试用例文件夹失败:', error)
-    testCaseFolders.value = []
+    if (requestId === testCaseFoldersRequestId && String(projectId.value) === String(project)) testCaseFolders.value = []
   }
 }
 
@@ -1076,7 +1087,6 @@ const loadElements = async () => {
 
   if (!projectId.value) {
     elementsLoading.value = false
-    elementsReady.value = Promise.resolve()
     return
   }
 
@@ -1084,7 +1094,7 @@ const loadElements = async () => {
   const request = getElements({ project, page_size: 1000 })
     .then(response => {
       if (String(projectId.value) !== String(project)) return
-      availableElements.value = response.data.results || response.data
+      mergeAvailableElements(response.data.results || response.data)
       elementLibraryLoaded.value = true
     })
     .catch(error => {
@@ -1093,7 +1103,6 @@ const loadElements = async () => {
     .finally(() => {
       if (String(projectId.value) === String(project)) elementsLoading.value = false
     })
-  elementsReady.value = request
   return request
 }
 
@@ -1175,19 +1184,43 @@ const loadPages = async () => {
 
 const onProjectChange = async () => {
   testCaseDetailRequestId += 1
+  testCaseDetailLoading.value = false
   selectedTestCase.value = null
   currentSteps.value = []
-  currentVariables.value = loadUiVariables(projects.value.find(project => String(project.id) === String(projectId.value))?.variables || [])
+  const requestedProjectId = String(projectId.value || '')
+  const treeRequestId = ++testCaseTreeRequestId
+  const variablesRequestId = ++projectVariablesRequestId
+  projectVariablesLoading.value = Boolean(requestedProjectId)
+  testCases.value = []
+  testCaseFolders.value = []
+  testCaseTreeLoading.value = Boolean(requestedProjectId)
+  currentVariables.value = []
   executionResult.value = null
 
   // 元素库在后台加载；用例列表和页面树无需等待全量元素响应。
   loadElements()
-  await Promise.all([
-    loadTestCases(),
-    loadTestCaseFolders(),
-    loadPages(),
-    loadStorageStates()
-  ])
+  const treeRequest = Promise.all([
+    loadTestCases(requestedProjectId),
+    loadTestCaseFolders(requestedProjectId)
+  ]).finally(() => {
+    if (treeRequestId === testCaseTreeRequestId) testCaseTreeLoading.value = false
+  })
+
+  if (requestedProjectId) {
+    getUiProjectDetail(requestedProjectId)
+      .then(response => {
+        if (variablesRequestId === projectVariablesRequestId) {
+          currentVariables.value = loadUiVariables(response.data.variables || [])
+        }
+      })
+      .catch(error => console.error('获取项目变量失败:', error))
+      .finally(() => {
+        if (variablesRequestId === projectVariablesRequestId) projectVariablesLoading.value = false
+      })
+  }
+  void loadPages()
+  void loadStorageStates()
+  await treeRequest
 }
 
 const loadStorageStates = async () => {
@@ -1200,7 +1233,7 @@ const loadStorageStates = async () => {
     storageStateTotal.value = response.data.count ?? storageStates.value.length
   } catch { storageStates.value = []; storageStateTotal.value = 0 } finally { loadingStorageStates.value = false }
 }
-const openStorageStateManager = async () => { await loadStorageStates(); showStorageStateDialog.value = true }
+const openStorageStateManager = () => { showStorageStateDialog.value = true; void loadStorageStates() }
 const formatStorageSize = size => size < 1024 ? `${size} B` : `${(size / 1024).toFixed(1)} KB`
 // 列表时间只保留到分钟，避免后端微秒和时区信息撑开表格。
 const formatStorageStateTime = timestamp => {
@@ -1305,12 +1338,13 @@ const hydrateTestCaseSteps = (steps = []) => steps.map(step => {
 })
 
 const selectTestCase = async (testCase) => {
-  const requestId = ++testCaseDetailRequestId
   // 如果点击的是同一个用例，不做任何处理
   if (selectedTestCase.value && selectedTestCase.value.id === testCase.id) {
     return
   }
 
+  const requestId = ++testCaseDetailRequestId
+  testCaseDetailLoading.value = true
   // 摘要不含步骤，详情失败时保留当前编辑内容，禁止把失败当作空步骤保存。
   const project = projectId.value
   let selected
@@ -1322,9 +1356,10 @@ const selectTestCase = async (testCase) => {
     ElMessage.error(t('uiAutomation.testCase.messages.loadDetailFailed'))
     console.error('获取测试用例详情失败:', error)
     return
+  } finally {
+    if (requestId === testCaseDetailRequestId) testCaseDetailLoading.value = false
   }
-  // 等待项目级元素库缓存完成，再渲染步骤，确保下拉框显示完整元素信息。
-  await elementsReady.value
+  // 详情自带关联元素信息，直接回显；全量元素选项仍在后台加载。
   if (requestId !== testCaseDetailRequestId || project !== projectId.value) return
   selectedTestCase.value = selected
   // 确保步骤数据格式正确，添加前端需要的字段
@@ -1388,8 +1423,6 @@ const saveVariables = async () => {
     // 单独 PATCH 项目变量，避免覆盖当前尚未保存的步骤编辑。
     const response = await updateUiProject(projectId.value, { variables })
     currentVariables.value = loadUiVariables(response.data.variables || variables)
-    const index = projects.value.findIndex(item => String(item.id) === String(projectId.value))
-    if (index !== -1) projects.value[index] = { ...projects.value[index], variables: response.data.variables || variables }
     showVariablesDialog.value = false
     ElMessage.success(t('uiAutomation.variables.saved'))
   } catch (error) {
@@ -1414,7 +1447,6 @@ const saveTestCase = async () => {
     // 保存后重新读取服务端步骤，确保元素、定位策略和定位器来自真实关联数据。
     const detailResponse = await getTestCaseDetail(selectedTestCase.value.id)
     const savedTestCase = detailResponse.data
-    await elementsReady.value
     currentSteps.value = hydrateTestCaseSteps(savedTestCase.steps || [])
     ElMessage.success(t('uiAutomation.testCase.save.success'))
 
@@ -1438,10 +1470,19 @@ const remoteCaseFinished = session => {
   resultActiveTab.value = 'logs'
   showSteps.value = false
 }
+const onRemoteFinished = event => {
+  if (event.origin !== window.location.origin || event.data?.type !== 'testhub-ui-remote-finished') return
+  if (String(event.data.sessionId) !== String(remoteSessionId.value)) return
+  remoteCaseFinished(event.data.session)
+}
+window.addEventListener('message', onRemoteFinished)
+onBeforeUnmount(() => window.removeEventListener('message', onRemoteFinished))
 
 const runTestCase = async (testCase) => {
   remoteSessionId.value = null
   isRunning.value = true
+  const needsRemoteView = !headlessMode.value && !(selectedEngine.value === 'selenium' && selectedBrowser.value === 'safari')
+  const reservedRemoteWindow = needsRemoteView ? reserveUiRemoteWindow(t('uiAutomation.remote.preparing')) : null
   try {
     const modeText = headlessMode.value ? t('uiAutomation.testCase.runMode.headless') : t('uiAutomation.testCase.runMode.headed')
     ElMessage.info(t('uiAutomation.testCase.run.start', { engine: selectedEngine.value.toUpperCase(), browser: selectedBrowser.value.toUpperCase(), mode: modeText }))
@@ -1456,9 +1497,10 @@ const runTestCase = async (testCase) => {
 
     if (response.data.remote_session_id) {
       remoteSessionId.value = response.data.remote_session_id
-      remoteDesktop.value.open(remoteSessionId.value)
+      openRemoteDesktop(remoteSessionId.value, reservedRemoteWindow)
       return
     }
+    closeReservedUiRemoteWindow(reservedRemoteWindow)
     executionResult.value = response.data
     resultActiveTab.value = 'logs'
     showSteps.value = false  // 自动切换到结果视图
@@ -1473,6 +1515,7 @@ const runTestCase = async (testCase) => {
       }
     }
   } catch (error) {
+    closeReservedUiRemoteWindow(reservedRemoteWindow)
     console.error('执行测试用例失败:', error)
 
     // 即使出错也要设置执行结果,显示错误信息
@@ -1543,7 +1586,6 @@ const deleteTestCase = async (testCase) => {
     if (selectedTestCase.value?.id === testCase.id) {
       selectedTestCase.value = null
       currentSteps.value = []
-      currentVariables.value = loadUiVariables(projects.value.find(project => String(project.id) === String(projectId.value))?.variables || [])
       executionResult.value = null
     }
   } catch (error) {
@@ -1926,11 +1968,13 @@ const previewScreenshot = (screenshot) => {
 
 // 组件挂载
 onMounted(async () => {
+  // 登录后预加载可选远程能力，不阻塞用例列表。
+  void loadUiRemoteCapabilities()
   console.log('TestCaseManager onMounted 开始执行...')
   await loadProjects()
-  console.log('loadProjects 完成，准备加载变量函数...')
-  await loadVariableFunctions()
-  console.log('loadVariableFunctions 完成')
+  // 变量函数仅供编辑器辅助使用，不应阻塞用例树首屏加载。
+  void loadVariableFunctions()
+  if (!projects.value.length) testCaseTreeLoading.value = false
 
   const formalCaseId = route.query.automation_for_test_case_id
   if (formalCaseId) {
@@ -1939,6 +1983,7 @@ onMounted(async () => {
       String(project.workspace_project?.id || project.workspace_project) === String(workspaceProjectId)
     )
     if (!linkedProject) {
+      testCaseTreeLoading.value = false
       ElMessage.warning('未找到当前正式用例对应的 UI 自动化项目')
       return
     }
@@ -1958,6 +2003,7 @@ onMounted(async () => {
       const linkedProjectId = linkedCase.project?.id || linkedCase.project
       const accessibleProject = projects.value.find(project => String(project.id) === String(linkedProjectId))
       if (!accessibleProject) {
+        testCaseTreeLoading.value = false
         ElMessage.warning('无权访问该UI自动化项目')
         return
       }
@@ -1967,6 +2013,7 @@ onMounted(async () => {
       await selectTestCase(listedCase || linkedCase)
       return
     } catch (error) {
+      testCaseTreeLoading.value = false
       ElMessage.error('打开关联的UI自动化用例失败')
       return
     }

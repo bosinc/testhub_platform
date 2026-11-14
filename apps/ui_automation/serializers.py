@@ -159,6 +159,23 @@ class UiProjectSerializer(serializers.ModelSerializer):
         read_only_fields = ('created_at', 'updated_at', 'workspace_project', 'is_deleted', 'deleted_at', 'deleted_by')
 
 
+class UiProjectOwnerListSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = User
+        fields = ('id', 'username')
+
+
+class UiProjectListSerializer(serializers.ModelSerializer):
+    owner = UiProjectOwnerListSerializer(read_only=True)
+
+    class Meta:
+        model = UiProject
+        fields = (
+            'id', 'name', 'description', 'status', 'base_url', 'start_date', 'end_date',
+            'owner', 'created_at', 'updated_at', 'workspace_project',
+        )
+
+
 class UiProjectCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = UiProject
@@ -585,10 +602,17 @@ class ElementGroupSerializer(serializers.ModelSerializer):
         children_by_parent = self.context.get('element_group_children')
         if children_by_parent is not None:
             children = children_by_parent.get(obj.pk, [])
-            return ElementGroupSerializer(children, many=True, context=self.context).data
+            return self.__class__(children, many=True, context=self.context).data
 
         children = obj.elementgroup_set.all()
-        return ElementGroupSerializer(children, many=True, context=self.context).data
+        return self.__class__(children, many=True, context=self.context).data
+
+
+class ElementGroupTreeSerializer(ElementGroupSerializer):
+    """页面树只返回展示和编辑所需的分组字段。"""
+
+    class Meta(ElementGroupSerializer.Meta):
+        fields = ('id', 'name', 'description', 'parent_group', 'order', 'children')
 
 
 class ElementGroupCreateSerializer(serializers.ModelSerializer):

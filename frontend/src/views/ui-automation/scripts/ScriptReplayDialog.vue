@@ -21,31 +21,37 @@
     <pre class="log-panel">{{ logs || $t('uiAutomation.replay.emptyLogs') }}</pre>
     <el-alert v-if="errorMessage" :title="errorMessage" type="error" :closable="false" />
     <template #footer>
-      <el-button v-if="remoteSessionId" @click="remoteDesktop.open(remoteSessionId)">{{ $t('uiAutomation.remote.liveView') }}</el-button>
+      <el-button v-if="remoteSessionId" @click="openRemoteDesktop(remoteSessionId)">{{ $t('uiAutomation.remote.liveView') }}</el-button>
       <el-button v-if="running" type="danger" plain @click="abort">{{ $t('uiAutomation.common.stop') }}</el-button>
       <el-button @click="close">{{ $t('uiAutomation.common.close') }}</el-button>
     </template>
   </el-dialog>
-  <UiRemoteDialog ref="remoteDesktop" />
 </template>
 
 <script setup>
-import UiRemoteDialog from '@/components/ui-automation/UiRemoteDialog.vue'
 import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { VideoPlay } from '@element-plus/icons-vue'
 import { useI18n } from 'vue-i18n'
+import { useRouter } from 'vue-router'
 import { abortTestScriptExecution, getStorageStates, getTestExecutionLogs, runRecordedScript, runUnsavedRecordedScript } from '@/api/ui_automation'
+import { closeReservedUiRemoteWindow, loadUiRemoteCapabilities, openUiRemoteSession, reserveUiRemoteWindow } from '@/utils/uiRemoteNavigation'
 
 const props = defineProps({ visible: Boolean, script: { type: Object, default: null } })
 const emit = defineEmits(['update:visible', 'started'])
 const { t } = useI18n()
+const router = useRouter()
 const dialogVisible = computed({ get: () => props.visible, set: value => emit('update:visible', value) })
 const form = reactive({ browser: 'chromium', headless: true, base_url: '', storage_state_id: null })
 const storageStates = ref([])
 const executionId = ref(null)
-const remoteDesktop = ref(null)
 const remoteSessionId = ref(null)
+const openRemoteDesktop = (id, target = null) => openUiRemoteSession(router, id, target)
+const onRemoteFinished = event => {
+  if (event.origin === window.location.origin && event.data?.type === 'testhub-ui-remote-finished'
+      && String(event.data.sessionId) === String(remoteSessionId.value)) remoteSessionId.value = null
+}
+window.addEventListener('message', onRemoteFinished)
 const status = ref('IDLE')
 const logs = ref('')
 const errorMessage = ref('')
@@ -55,7 +61,14 @@ let timer = null
 
 const statusType = computed(() => ({ SUCCESS: 'success', FAILED: 'danger', ABORTED: 'info', RUNNING: 'warning' }[status.value] || 'info'))
 const statusText = computed(() => ({ IDLE: t('uiAutomation.status.ready'), PENDING: t('uiAutomation.status.pending'), RUNNING: t('uiAutomation.status.running'), SUCCESS: t('uiAutomation.status.success'), FAILED: t('uiAutomation.status.failed'), ABORTED: t('uiAutomation.status.aborted') }[status.value] || status.value))
-watch(() => props.visible, value => { if (value) { reset(); loadStorageStates() } })
+watch(() => props.visible, value => {
+  if (value) {
+    reset()
+    loadStorageStates()
+    // 弹窗打开后加载，避免静态导入回放组件时发起鉴权请求。
+    void loadUiRemoteCapabilities()
+  }
+})
 watch(executionId, value => { if (value) poll() })
 
 const reset = () => {
@@ -86,6 +99,7 @@ const run = async () => {
   if (!props.script || running.value) return
   errorMessage.value = ''
   submitting.value = true
+  const reservedRemoteWindow = form.headless ? null : reserveUiRemoteWindow(t('uiAutomation.remote.preparing'))
   try {
     const response = props.script.id
       ? await runRecordedScript(props.script.id, form)
@@ -96,11 +110,13 @@ const run = async () => {
           start_url: props.script.start_url || ''
         })
     remoteSessionId.value = response.data.remote_session_id || null
-    if (remoteSessionId.value) remoteDesktop.value.open(remoteSessionId.value)
+    if (remoteSessionId.value) openRemoteDesktop(remoteSessionId.value, reservedRemoteWindow)
+    else closeReservedUiRemoteWindow(reservedRemoteWindow)
     executionId.value = response.data.id
     status.value = response.data.status || 'PENDING'
     emit('started', response.data)
   } catch (error) {
+    closeReservedUiRemoteWindow(reservedRemoteWindow)
     errorMessage.value = error.response?.data?.error || t('uiAutomation.replay.runFailed')
   } finally {
     submitting.value = false
@@ -129,7 +145,10 @@ const abort = async () => {
 }
 const stopPolling = () => { if (timer) { window.clearInterval(timer); timer = null } }
 const close = () => { stopPolling(); dialogVisible.value = false }
-onBeforeUnmount(stopPolling)
+onBeforeUnmount(() => {
+  stopPolling()
+  window.removeEventListener('message', onRemoteFinished)
+})
 </script>
 
 <style scoped>

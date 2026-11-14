@@ -17,6 +17,11 @@ class RemoteSessionViewSet(viewsets.GenericViewSet):
     permission_classes = [IsAuthenticated]
     lookup_value_regex = '[0-9a-f-]{36}'
 
+    @action(detail=False, methods=['get'])
+    def capabilities(self, request):
+        """Expose only whether this node can provide the optional remote desktop."""
+        return Response({'enabled': settings.UI_REMOTE_ENABLED})
+
     def get_queryset(self):
         return UiRemoteSession.objects.filter(owner=self.request.user).select_related('case_execution', 'execution')
 

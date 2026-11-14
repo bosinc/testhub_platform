@@ -143,7 +143,7 @@
                 <el-scrollbar height="100%">
                   <el-tree
                     ref="testCaseTreeRef"
-                    v-loading="testCasesLoading"
+                    v-loading="testCasesLoading || suiteCasesLoading"
                     :data="testCaseTree"
                     :props="{ label: 'name', children: 'children' }"
                     :filter-node-method="filterTestCaseNode"
@@ -190,6 +190,7 @@
               <div class="panel-content">
                 <el-table
                   ref="selectedTableRef"
+                  v-loading="suiteCasesLoading"
                   :data="selectedTestCases"
                   row-key="id"
                   height="100%"
@@ -245,13 +246,13 @@
       <template #footer>
         <span class="dialog-footer">
           <el-button @click="cancelCreate">{{ $t('uiAutomation.common.cancel') }}</el-button>
-          <el-button type="primary" @click="handleCreate" :loading="saving">{{ $t('uiAutomation.common.confirm') }}</el-button>
+          <el-button type="primary" @click="handleCreate" :disabled="testCasesLoading || suiteCasesLoading" :loading="saving">{{ $t('uiAutomation.common.confirm') }}</el-button>
         </span>
       </template>
     </el-dialog>
 
     <!-- 运行配置对话框 -->
-    <el-button v-if="remoteSessionId" @click="remoteDesktop.open(remoteSessionId)">{{ t('uiAutomation.remote.latestView') }}</el-button>
+    <el-button v-if="remoteSessionId" @click="openRemoteDesktop(remoteSessionId)">{{ t('uiAutomation.remote.latestView') }}</el-button>
     <el-dialog v-model="showRunDialog" :title="$t('uiAutomation.suite.runConfig')" width="600px" :close-on-click-modal="false">
       <el-form :model="runConfig" label-width="120px">
         <el-form-item :label="$t('uiAutomation.suite.testEngine')">
@@ -295,12 +296,10 @@
       </template>
     </el-dialog>
   </div>
-  <UiRemoteDialog ref="remoteDesktop" @finished="remoteSuiteFinished" />
 </template>
 
 <script setup>
-import UiRemoteDialog from '@/components/ui-automation/UiRemoteDialog.vue'
-import { ref, reactive, computed, nextTick, onMounted, watch } from 'vue'
+import { ref, reactive, computed, nextTick, onMounted, onBeforeUnmount, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Plus, Search, Edit, Delete, VideoPlay, Folder, Document,
@@ -321,16 +320,19 @@ import {
   getStorageStates
 } from '@/api/ui_automation'
 import { useI18n } from 'vue-i18n'
+import { useRouter } from 'vue-router'
 import { getPreferredProjectId, useRememberedProject } from '@/utils/projectSelection'
+import { closeReservedUiRemoteWindow, loadUiRemoteCapabilities, openUiRemoteSession, reserveUiRemoteWindow } from '@/utils/uiRemoteNavigation'
 
 const { t } = useI18n()
+const router = useRouter()
 
 // 响应式数据
 const projects = ref([])
 const projectId = ref('')
 useRememberedProject(projectId, projects)
 const suites = ref([])
-const loading = ref(false)
+const loading = ref(true)
 const searchText = ref('')
 const total = ref(0)
 const pagination = reactive({
@@ -345,14 +347,18 @@ const isEditing = ref(false)
 const currentSuiteId = ref(null)
 const saving = ref(false)
 const running = ref(false)
-const remoteDesktop = ref(null)
 const remoteSessionId = ref(null)
-const remoteSuiteFinished = session => {
+const openRemoteDesktop = (id, target = null) => openUiRemoteSession(router, id, target)
+const onRemoteFinished = event => {
+  if (event.origin !== window.location.origin || event.data?.type !== 'testhub-ui-remote-finished') return
+  if (String(event.data.sessionId) !== String(remoteSessionId.value)) return
   remoteSessionId.value = null
   loadSuites()
-  if (session.execution_status === 'SUCCESS') ElMessage.success(t('uiAutomation.suite.messages.executeSuccess'))
-  else if (session.error) ElMessage.error(session.error)
+  if (event.data.session?.execution_status === 'SUCCESS') ElMessage.success(t('uiAutomation.suite.messages.executeSuccess'))
+  else if (event.data.session?.error) ElMessage.error(event.data.session.error)
 }
+window.addEventListener('message', onRemoteFinished)
+onBeforeUnmount(() => window.removeEventListener('message', onRemoteFinished))
 
 // 表单数据
 const createForm = reactive({
@@ -369,6 +375,8 @@ const formRules = computed(() => ({
 const availableTestCases = ref([])
 const testCaseFolders = ref([])
 const testCasesLoading = ref(false)
+const suiteCasesLoading = ref(false)
+let suiteEditorRequestId = 0
 const selectedTestCases = ref([])
 const testCaseSearchText = ref('')
 const testCaseTreeRef = ref(null)
@@ -438,6 +446,7 @@ const loadSuites = async () => {
   if (!projectId.value) {
     suites.value = []
     total.value = 0
+    loading.value = false
     return
   }
 
@@ -583,28 +592,38 @@ const handleCreate = async () => {
 
 // 编辑套件
 const editSuite = async (id) => {
+  let requestId
   try {
     // 加载套件详情
     const suites_data = suites.value.find(s => s.id === id)
     if (!suites_data) return
 
     resetForm()
+    requestId = suiteEditorRequestId
     currentSuiteId.value = id
     isEditing.value = true
     createForm.name = suites_data.name
     createForm.description = suites_data.description
-
-    // 加载已选测试用例
-    const response = await getTestSuiteTestCases(id)
-    selectedTestCases.value = [...response.data].sort((a, b) => a.order - b.order).map(item => item.test_case)
-
-    // 加载可用测试用例
-    await loadAvailableTestCases()
-
     showCreateDialog.value = true
+    suiteCasesLoading.value = true
+
+    // 两侧数据独立请求，先打开弹窗显示各自的加载状态。
+    await Promise.all([
+      getTestSuiteTestCases(id).then(response => {
+        if (requestId === suiteEditorRequestId) {
+          selectedTestCases.value = [...response.data].sort((a, b) => a.order - b.order).map(item => item.test_case)
+        }
+      }).finally(() => {
+        if (requestId === suiteEditorRequestId) suiteCasesLoading.value = false
+      }),
+      loadAvailableTestCases()
+    ])
+    if (requestId !== suiteEditorRequestId || !showCreateDialog.value) return
     await nextTick()
     testCaseTreeRef.value?.setCheckedKeys(selectedTestCases.value.map(testCase => `case:${testCase.id}`))
   } catch (error) {
+    if (requestId !== suiteEditorRequestId) return
+    showCreateDialog.value = false
     console.error('加载套件详情失败:', error)
     ElMessage.error(t('uiAutomation.suite.messages.loadDetailFailed'))
   }
@@ -652,6 +671,8 @@ const runSuite = async (suite) => {
 // 确认运行套件
 const confirmRunSuite = async () => {
   running.value = true
+  const needsRemoteView = !runConfig.headless && !(runConfig.engine === 'selenium' && runConfig.browser === 'safari')
+  const reservedRemoteWindow = needsRemoteView ? reserveUiRemoteWindow(t('uiAutomation.remote.preparing')) : null
   try {
     const requestData = {
       use_ai: false,
@@ -664,7 +685,9 @@ const confirmRunSuite = async () => {
     const response = await runTestSuite(currentRunningSuite.value.id, requestData)
     if (response.data.remote_session_id) {
       remoteSessionId.value = response.data.remote_session_id
-      remoteDesktop.value.open(remoteSessionId.value)
+      openRemoteDesktop(remoteSessionId.value, reservedRemoteWindow)
+    } else {
+      closeReservedUiRemoteWindow(reservedRemoteWindow)
     }
 
     ElMessage.success(t('uiAutomation.suite.messages.startSuccess'))
@@ -676,6 +699,7 @@ const confirmRunSuite = async () => {
     // 开始轮询检查执行状态
     if (!response.data.remote_session_id) pollSuiteStatus(currentRunningSuite.value.id)
   } catch (error) {
+    closeReservedUiRemoteWindow(reservedRemoteWindow)
     console.error('执行测试套件失败:', error)
     // 如果后端返回了错误消息，显示具体错误
     const errorMsg = error.response?.data?.error || t('uiAutomation.suite.messages.executeFailed')
@@ -792,6 +816,8 @@ const moveDown = (index) => {
 
 // 重置表单
 const resetForm = () => {
+  suiteEditorRequestId += 1
+  suiteCasesLoading.value = false
   clearSelectedChecks()
   createForm.name = ''
   createForm.description = ''
@@ -886,11 +912,13 @@ const getCaseStatusText = (status) => {
 // 监听新增套件按钮
 const originalShowCreateDialog = showCreateDialog
 onMounted(async () => {
+  // 登录后预加载可选远程能力，不阻塞套件列表。
+  void loadUiRemoteCapabilities()
   await loadProjects()
   if (projects.value.length > 0) {
     projectId.value = getPreferredProjectId(projects.value, projects.value[0].id)
-    await loadSuites()
   }
+  await loadSuites()
 })
 
 // 监听对话框打开事件
@@ -903,8 +931,8 @@ const openCreateDialog = async () => {
 // 修改新增套件按钮点击事件
 const handleNewSuite = async () => {
   resetForm()
-  await loadAvailableTestCases()
   showCreateDialog.value = true
+  await loadAvailableTestCases()
   await nextTick()
   testCaseTreeRef.value?.setCheckedKeys([])
 }

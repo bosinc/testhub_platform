@@ -25,7 +25,7 @@
     </div>
 
     <div class="main-content">
-      <el-table :data="scripts" stripe style="width: 100%">
+      <el-table :data="scripts" v-loading="scriptsLoading" stripe style="width: 100%">
         <el-table-column type="index" :label="$t('uiAutomation.script.index')" width="60" />
         <el-table-column :label="$t('uiAutomation.script.projectColumn')" min-width="180">
           <template #default="{ row }">
@@ -128,12 +128,12 @@
           <el-input v-model="editingScript.name" maxlength="200" class="script-title-input" :placeholder="t('uiAutomation.script.messages.enterScriptName')" :aria-label="t('uiAutomation.script.scriptName')" />
           <el-tag :type="syncState === 'synced' ? 'success' : 'warning'">{{ syncStateText }}</el-tag>
           <span class="topbar-actions">
-            <el-button size="medium" @click="parseCode" :loading="syncing">{{ t('uiAutomation.script.syncEditor.parseCode') }}</el-button>
-            <el-button size="medium" @click="generateFromSteps" :loading="syncing">{{ t('uiAutomation.script.syncEditor.regenerateCode') }}</el-button>
+            <el-button size="medium" @click="parseCode" :disabled="editorLoading" :loading="syncing">{{ t('uiAutomation.script.syncEditor.parseCode') }}</el-button>
+            <el-button size="medium" @click="generateFromSteps" :disabled="editorLoading" :loading="syncing">{{ t('uiAutomation.script.syncEditor.regenerateCode') }}</el-button>
           </span>
         </div>
         <div class="sync-editor-body">
-          <div class="steps-pane">
+          <div class="steps-pane" v-loading="editorLoading">
             <StructuredStepEditor v-model="editingSteps" :elements="editorElements" :pages="editorPages" :elements-ready="true" :storage-states="storageStates" :title="t('uiAutomation.stepEditor.recordedSteps')" @change="onStepsChanged" />
           </div>
           <div class="code-pane">
@@ -145,7 +145,7 @@
       </div>
       <template #footer>
         <el-button @click="showEditDialog = false">{{ $t('uiAutomation.common.cancel') }}</el-button>
-        <el-button type="primary" @click="saveEditedScript" :loading="saving">{{ t('uiAutomation.script.syncEditor.saveScriptAndSteps') }}</el-button>
+        <el-button type="primary" @click="saveEditedScript" :disabled="editorLoading" :loading="saving">{{ t('uiAutomation.script.syncEditor.saveScriptAndSteps') }}</el-button>
       </template>
     </el-dialog>
 
@@ -220,6 +220,8 @@ const projects = ref([])
 const selectedProject = ref('')
 useRememberedProject(selectedProject, projects)
 const scripts = ref([])
+const scriptsLoading = ref(true)
+let scriptsRequestId = 0
 const currentPage = ref(1)
 const pageSize = ref(20)
 const total = ref(0)
@@ -240,6 +242,8 @@ const saving = ref(false)
 const syncing = ref(false)
 const converting = ref(false)
 const editingSteps = ref([])
+const editorLoading = ref(false)
+let editorRequestId = 0
 const editorElements = ref([])
 const editorPages = ref([])
 const storageStates = ref([])
@@ -292,18 +296,23 @@ const loadProjects = async () => {
 
 // 加载脚本列表
 const loadScripts = async () => {
+  const requestId = ++scriptsRequestId
   if (!selectedProject.value) {
     scripts.value = []
     total.value = 0
+    scriptsLoading.value = false
     return
   }
 
+  const requestedProject = selectedProject.value
+  scriptsLoading.value = true
   try {
     const response = await getTestScripts({
-      project: selectedProject.value,
+      project: requestedProject,
       page: currentPage.value,
       page_size: pageSize.value
     })
+    if (requestId !== scriptsRequestId || String(selectedProject.value) !== String(requestedProject)) return
 
     // 处理分页响应
     if (response.data.results) {
@@ -314,14 +323,19 @@ const loadScripts = async () => {
       total.value = response.data.length
     }
   } catch (error) {
+    if (requestId !== scriptsRequestId) return
     ElMessage.error(t('uiAutomation.script.messages.loadScriptsFailed'))
     console.error('获取脚本列表失败:', error)
+  } finally {
+    if (requestId === scriptsRequestId) scriptsLoading.value = false
   }
 }
 
 // 项目切换
 const onProjectChange = async () => {
   currentPage.value = 1
+  scripts.value = []
+  total.value = 0
   await loadScripts()
 }
 
@@ -410,6 +424,8 @@ const viewScript = (script) => {
 // 编辑脚本
 // 打开同步编辑器时同时加载已保存步骤和项目元素，保证左右两侧能立即回显。
 const editScript = async (script) => {
+  const requestId = ++editorRequestId
+  editorLoading.value = true
   editingScript.value = { ...script, name: (script.name || '').replace(/\.py$/i, '') }
   editingSteps.value = []
   editorElements.value = []
@@ -420,11 +436,19 @@ const editScript = async (script) => {
   showEditDialog.value = true
   try {
     const projectId = script.project?.id || script.project || selectedProject.value
+    // 登录态选项在后台补齐，不阻塞已保存步骤的展示。
+    storageStates.value = []
+    getStorageStates({ project: projectId, page_size: 200 })
+      .then(response => {
+        if (requestId === editorRequestId) storageStates.value = response.data.results || response.data
+      })
+      .catch(error => console.error('获取登录态失败:', error))
     const [stepResponse, elementResponse, pageResponse] = await Promise.all([
       getScriptSteps({ script: script.id, page_size: 1000 }),
       getElements({ project: projectId, page_size: 1000 }),
       getElementGroupTree({ project: projectId })
     ])
+    if (requestId !== editorRequestId) return
     let rawSteps = stepResponse.data.results || stepResponse.data
     editorElements.value = elementResponse.data.results || elementResponse.data
     // 与用例编辑页一致，展开项目页面树，包含尚未绑定元素的页面及嵌套页面。
@@ -433,8 +457,6 @@ const editScript = async (script) => {
       ...flattenPages(group.children || [])
     ])
     editorPages.value = flattenPages(pageResponse.data || [])
-    const storageResponse = await getStorageStates({ project: projectId, page_size: 200 })
-    storageStates.value = storageResponse.data.results || storageResponse.data
     if (!rawSteps.length) {
       await parseCode()
       return
@@ -507,7 +529,9 @@ const editScript = async (script) => {
       // 一致性检查失败不阻断编辑器打开，仍保留原有同步状态。
     }
   } catch (error) {
-    editorError.value = error.response?.data?.detail || t('uiAutomation.script.syncEditor.loadStepsFailed')
+    if (requestId === editorRequestId) editorError.value = error.response?.data?.detail || t('uiAutomation.script.syncEditor.loadStepsFailed')
+  } finally {
+    if (requestId === editorRequestId) editorLoading.value = false
   }
 }
 
@@ -760,7 +784,7 @@ onMounted(async () => {
   if (projects.value.length > 0) {
     selectedProject.value = getPreferredProjectId(projects.value, projects.value[0].id)
     await loadScripts()
-  }
+  } else await loadScripts()
 })
 </script>
 

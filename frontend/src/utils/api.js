@@ -1,6 +1,7 @@
 import axios from 'axios'
 import { ElMessage } from 'element-plus'
 import { useUserStore } from '@/stores/user'
+import { redirectToLogin } from '@/utils/authNavigation'
 
 const api = axios.create({
   baseURL: '/api',
@@ -101,17 +102,8 @@ api.interceptors.response.use(
       // 如果是logout请求失败，直接清除本地状态不再重试logout，防止死循环
       if (originalRequest.url === '/auth/logout/') {
         console.error('Logout请求401，直接清除本地状态')
-        userStore.$patch((state) => {
-          state.accessToken = ''
-          state.refreshToken = ''
-          state.user = null
-          state.tokenExpiresAt = 0
-        })
-        localStorage.removeItem('access_token')
-        localStorage.removeItem('refresh_token')
-        localStorage.removeItem('token_expires_at')
-        localStorage.removeItem('user')
-        window.location.href = '/login'
+        userStore.clearAuth()
+        redirectToLogin()
         return Promise.reject(error)
       }
 

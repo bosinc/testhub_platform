@@ -29,7 +29,7 @@ from .models import (
     AICase, AIExecutionRecord
 )
 from .serializers import (
-    UiProjectSerializer, UiProjectCreateSerializer, UiProjectUpdateSerializer, StorageStateSerializer,
+    UiProjectSerializer, UiProjectListSerializer, UiProjectCreateSerializer, UiProjectUpdateSerializer, StorageStateSerializer,
     LocatorStrategySerializer,
     ElementSerializer, ElementEnhancedSerializer, ElementListSerializer, ElementTreeSerializer,
     TestScriptSerializer, TestScriptCreateSerializer, TestScriptUpdateSerializer,
@@ -38,6 +38,7 @@ from .serializers import (
     TestExecutionSerializer, TestExecutionListSerializer, TestExecutionCreateSerializer,
     ScreenshotSerializer,
     ElementGroupSerializer, ElementGroupCreateSerializer,
+    ElementGroupTreeSerializer,
     PageObjectSerializer, PageObjectCreateSerializer, PageObjectElementSerializer,
     ScriptStepSerializer, ScriptElementUsageSerializer,
     ScriptAnalysisSerializer, ElementValidationSerializer, CodeGenerationSerializer,
@@ -311,6 +312,8 @@ class UiProjectViewSet(viewsets.ModelViewSet):
     ordering = ['-created_at']
 
     def get_serializer_class(self):
+        if self.action == 'list':
+            return UiProjectListSerializer
         if self.action == 'create':
             return UiProjectCreateSerializer
         elif self.action in ['update', 'partial_update']:
@@ -320,9 +323,16 @@ class UiProjectViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         # 只显示用户有权限访问的项目
         user = self.request.user
-        return UiProject.objects.filter(is_deleted=False).filter(
+        queryset = UiProject.objects.filter(
             models.Q(owner=user) | models.Q(members=user)
         ).distinct()
+        if self.action == 'list':
+            return queryset.select_related('owner').only(
+                'id', 'name', 'description', 'status', 'base_url', 'start_date', 'end_date',
+                'owner_id', 'owner__username',
+                'created_at', 'updated_at', 'workspace_project_id',
+            )
+        return queryset.select_related('owner', 'workspace_project').prefetch_related('members')
 
     def perform_create(self, serializer):
         # 创建项目时，当前用户自动成为负责人
@@ -517,7 +527,7 @@ class ElementViewSet(viewsets.ModelViewSet):
         if not project_id:
             return Response({'error': '需要指定项目ID'}, status=status.HTTP_400_BAD_REQUEST)
 
-        elements = self.get_queryset().filter(project_id=project_id)
+        elements = self.get_queryset().filter(project_id=project_id).order_by('page', 'order', 'id')
         return Response(self.get_serializer(elements, many=True).data)
 
     @action(detail=True, methods=['post'])
@@ -662,15 +672,23 @@ class ElementGroupViewSet(viewsets.ModelViewSet):
         if not project_id:
             return Response({'error': '需要指定项目ID'}, status=status.HTTP_400_BAD_REQUEST)
 
-        groups, children_by_parent = self._load_group_graph({project_id})
+        # 页面树不需要重复返回每个分组所属项目的成员和配置详情。
+        groups = list(
+            self.get_queryset().filter(project_id=project_id)
+            .select_related(None)
+            .only('id', 'name', 'description', 'project_id', 'parent_group_id', 'order')
+            .order_by('order', 'name', 'id')
+        )
+        children_by_parent = defaultdict(list)
+        for group in groups:
+            children_by_parent[group.parent_group_id].append(group)
         roots = [group for group in groups if group.parent_group_id is None]
-        serializer = ElementGroupSerializer(
+        serializer = ElementGroupTreeSerializer(
             roots,
             many=True,
             context={
                 **self.get_serializer_context(),
                 'element_group_children': children_by_parent,
-                'element_group_projects': {},
             },
         )
         return Response(serializer.data)

@@ -46,6 +46,7 @@ TestHub is an AI-powered, full-stack test management platform that supports the 
 - Edit scripts visually, run suites in batches, and capture logs, screenshots, and video recordings.
 - Schedule runs with cron expressions, fixed intervals, or one-time execution.
 - Use AI mode to understand page structure and carry out testing tasks.
+- Watch live browser views for headed case runs, script replays, and suite runs in Docker, with separate views for concurrent users.
 
 ### Android app automation
 

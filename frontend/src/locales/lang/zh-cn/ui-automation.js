@@ -3,14 +3,13 @@ export default {
   remote: {
     liveView: '实时画面',
     latestView: '查看最近一次测试画面',
-    title: '实时测试画面',
     preparing: '正在准备本次执行的浏览器画面…',
     browserTitle: '本次执行的实时浏览器',
     ended: '本次测试已结束',
     closeHint: '关闭画面不会停止测试',
     reconnect: '重新连接',
     stopExecution: '停止执行',
-    closeView: '关闭画面',
+    closeView: '关闭',
     loadFailed: '无法获取实时画面',
     stopFailed: '停止执行失败'
   },

@@ -241,7 +241,7 @@ const elements = ref([])
 // 定位策略数据
 const strategies = ref([])
 const pages = ref([])
-const loading = ref(false)
+const loading = ref(true)
 const total = ref(0)
 const pagination = reactive({
   currentPage: 1,
@@ -586,17 +586,16 @@ watch(projectId, (newValue) => {
 
 // 组件挂载时加载数据
 onMounted(async () => {
-  await Promise.all([
-    loadProjects(),
-    loadStrategies()
-  ])
+  await loadProjects()
+  // 定位策略仅用于筛选和编辑选项，列表无需等待该接口。
+  void loadStrategies()
 
   // 如果有项目，默认选择第一个
   if (projects.value.length > 0) {
     projectId.value = getPreferredProjectId(projects.value, projects.value[0].id)
     createForm.project = projectId.value
     await loadElements()
-  }
+  } else loading.value = false
 })
 </script>
 

@@ -74,13 +74,22 @@ class ElementTreeApiTests(TestCase):
                     locator_strategy=self.strategy, locator_value='button', page='Another page')
             for index in range(100)
         ])
+        ordered = [
+            Element.objects.create(
+                project=self.project, name=name, page='Product', order=1,
+                locator_strategy=self.strategy, locator_value='button',
+            )
+            for name in ('Zulu', 'Alpha')
+        ]
         with self.assertNumQueries(1):
             response = self.client.get(self.url, {'project': self.project.pk})
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(len(response.data), 101)
+        self.assertEqual(len(response.data), 103)
         self.assertEqual(response.data[0]['name'], 'Extra 000')
         self.assertNotIn('usage_count', response.data[0])
-        self.assertEqual(response.data[-1]['id'], self.element.pk)
+        self.assertEqual([item['id'] for item in response.data[-3:]], [
+            ordered[0].pk, ordered[1].pk, self.element.pk,
+        ])
 
     def test_tree_preserves_owner_member_and_soft_delete_permissions(self):
         self.client.force_authenticate(user=self.other_user)

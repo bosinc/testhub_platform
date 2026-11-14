@@ -1,6 +1,6 @@
 <template>
   <div class="assistant-layout">
-    <ResizableSplitPane v-model="sidebarWidth" min-size="220" max-size="480" second-min-size="480" :storage-key="'assistant.sidebar-width'">
+    <ResizableSplitPane v-model="sidebarWidth" :min-size="220" :max-size="480" :second-min-size="480" :storage-key="'assistant.sidebar-width'">
       <template #first>
         <!-- 左侧侧边栏 -->
         <div class="sidebar">

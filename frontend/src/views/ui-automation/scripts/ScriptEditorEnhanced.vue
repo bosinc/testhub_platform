@@ -10,7 +10,7 @@
     </div>
 
     <div class="main-content">
-      <ResizableSplitPane v-model="elementLibraryWidth" min-size="240" max-size="520" second-min-size="560" :storage-key="'ui-automation.script-editor.element-library-width'">
+      <ResizableSplitPane v-model="elementLibraryWidth" :min-size="240" :max-size="520" :second-min-size="560" :storage-key="'ui-automation.script-editor.element-library-width'">
         <template #first>
           <!-- 左侧:元素库(页面树形式) -->
           <div class="left-panel">
@@ -29,7 +29,7 @@
           </el-input>
         </div>
 
-        <div class="panel-content">
+        <div class="panel-content" v-loading="elementTreeLoading">
           <el-tree
             class="element-library-tree"
             :data="elementTree"
@@ -61,7 +61,7 @@
         </template>
 
         <template #second>
-          <ResizableSplitPane v-model="detailsPanelWidth" resize-target="second" min-size="280" max-size="520" first-min-size="480" second-min-size="480" :storage-key="'ui-automation.script-editor.details-width'">
+          <ResizableSplitPane v-model="detailsPanelWidth" resize-target="second" :min-size="280" :max-size="520" :first-min-size="480" :second-min-size="480" :storage-key="'ui-automation.script-editor.details-width'">
             <template #first>
               <!-- 中间:代码编辑器 -->
               <div class="center-panel">
@@ -240,6 +240,7 @@ const recordingVisible = ref(false)
 const replayVisible = ref(false)
 
 const elementTree = ref([])
+const elementTreeLoading = ref(true)
 const loadLibrary = createElementLibraryLoader(getElementGroupTree, getElementTree)
 let elementTreeRequestId = 0
 const elementFilter = ref('')
@@ -321,9 +322,11 @@ const loadElementTree = async () => {
   const requestId = ++elementTreeRequestId
   if (!requestedProject) {
     elementTree.value = []
+    elementTreeLoading.value = false
     return
   }
 
+  elementTreeLoading.value = true
   try {
     const tree = await loadLibrary(requestedProject)
     // 快速切换项目或离开页面时，旧请求不得覆盖当前树和日志。
@@ -335,6 +338,8 @@ const loadElementTree = async () => {
     if (requestId !== elementTreeRequestId || String(projectId.value) !== String(requestedProject)) return
     console.error('Failed to load element tree:', error)
     addLog('error', t('uiAutomation.scriptEditor.messages.loadElementTreeFailed'))
+  } finally {
+    if (requestId === elementTreeRequestId) elementTreeLoading.value = false
   }
 }
 
@@ -661,12 +666,13 @@ onMounted(async () => {
       const response = await getTestScriptDetail(route.query.scriptId)
       await handleImportedScript(response.data)
     } catch (error) {
+      elementTreeLoading.value = false
       ElMessage.error(t('uiAutomation.scriptEditor.messages.loadScriptFailed'))
     }
   } else if (projects.value.length > 0) {
     projectId.value = getPreferredProjectId(projects.value, projects.value[0].id)
     await onProjectChange()
-  }
+  } else elementTreeLoading.value = false
 
 })
 
