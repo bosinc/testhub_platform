@@ -1,4 +1,19 @@
 export default {
+  // Live view, actions and messages for remote headed runs.
+  remote: {
+    liveView: 'Live View',
+    latestView: 'View Latest Test Session',
+    title: 'Live Test View',
+    preparing: 'Preparing the browser view for this run…',
+    browserTitle: 'Live browser for this run',
+    ended: 'This test session has ended',
+    closeHint: 'Closing the view will not stop the test',
+    reconnect: 'Reconnect',
+    stopExecution: 'Stop Execution',
+    closeView: 'Close View',
+    loadFailed: 'Unable to load the live view',
+    stopFailed: 'Failed to stop execution'
+  },
   variables: {
     title: 'Variable management',
     hint: 'Project variables initialize at the start of each run; temporary values only affect that run copy.',
@@ -423,6 +438,7 @@ export default {
     confirmRerun: 'Confirm Rerun',
     messages: {
       loadFailed: 'Failed to load execution records',
+      loadDetailFailed: 'Failed to load execution details. Please try again.',
       deleteConfirm: 'Are you sure to delete this execution record?',
       deleteSuccess: 'Deleted successfully',
       deleteFailed: 'Failed to delete',
@@ -489,6 +505,7 @@ export default {
     caseFailed: 'Failed',
     messages: {
       loadFailed: 'Failed to load test reports',
+      loadDetailFailed: 'Failed to load report details. Please try again.',
       loadProjectsFailed: 'Failed to load projects',
       refreshed: 'Reports refreshed',
       deleteConfirm: 'Are you sure to delete report "{name}"? This action cannot be undone.',
@@ -1430,6 +1447,7 @@ export default {
     messages: {
       loadProjectsFailed: 'Failed to load projects',
       loadTestCasesFailed: 'Failed to load test cases',
+      loadDetailFailed: 'Failed to load test case details. Please try again.',
       loadElementsFailed: 'Failed to load elements',
       saveSuccess: 'Test case saved successfully',
       saveFailed: 'Failed to save test case',

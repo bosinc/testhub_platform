@@ -30,7 +30,9 @@ class TestExecutor:
     """测试执行器基类"""
 
     def __init__(self, test_suite=None, engine='playwright', browser='chrome', headless=False, executed_by=None,
-                 storage_state_id=None, execution=None, project=None):
+                 storage_state_id=None, execution=None, project=None, desktop=None):
+        self.desktop = desktop
+        self.browser_env = desktop.env if desktop else None
         self.test_suite = test_suite
         # 单用例执行没有套件，直接由调用方传入项目；套件执行时从套件取。
         self.project = project or (test_suite.project if test_suite else None)
@@ -195,6 +197,8 @@ class TestExecutor:
                 print(f"[TestExecutor] 启动 Selenium 执行...")
                 self.run_with_selenium()
 
+            if self.desktop:
+                self.desktop.check()
             print(f"[TestExecutor] 执行完成")
 
         except Exception as e:
@@ -323,8 +327,10 @@ class TestExecutor:
 
                 # 为每个测试用例启动新的浏览器实例
                 try:
+                    if self.desktop:
+                        self.desktop.check()
                     browser = _launch_playwright_browser(
-                        p, self.browser, self.headless)
+                        p, self.browser, self.headless, **({'env': self.browser_env} if self.browser_env else {}))
 
                     print(f"✓ 浏览器已启动")
 
@@ -663,6 +669,8 @@ class TestExecutor:
 
     def execute_step_playwright(self, step_data):
         """使用 Playwright 执行单个步骤（同步版本）"""
+        if getattr(self, 'desktop', None):
+            self.desktop.check()
         result = self._execute_step_playwright(step_data)
         if self.variables.strict:
             # 将变量状态附在步骤结果上，供执行记录查看。
@@ -1755,6 +1763,8 @@ class TestExecutor:
 
     def create_selenium_driver(self):
         """创建 Selenium WebDriver"""
+        if self.desktop:
+            self.desktop.check()
         from selenium.webdriver.chrome.service import Service as ChromeService
         from selenium.webdriver.firefox.service import Service as FirefoxService
         from selenium.webdriver.edge.service import Service as EdgeService
@@ -1842,7 +1852,7 @@ class TestExecutor:
             options.add_argument('--disable-device-discovery-notifications')
 
             # 使用缓存优先策略
-            service = ChromeService(ChromeDriverManager().install())
+            service = ChromeService(ChromeDriverManager().install(), **({"env": self.browser_env} if self.browser_env else {}))
             driver = webdriver.Chrome(service=service, options=options)
         elif self.browser == 'firefox':
             options = FirefoxOptions()
@@ -1867,13 +1877,15 @@ class TestExecutor:
             options.set_preference('extensions.update.autoUpdateDefault', False)
 
             # 使用缓存优先策略
-            service = FirefoxService(GeckoDriverManager().install())
+            service = FirefoxService(GeckoDriverManager().install(), **({"env": self.browser_env} if self.browser_env else {}))
             driver = webdriver.Firefox(service=service, options=options)
         elif self.browser == 'safari':
             # Safari 不支持 headless 模式
             # 需要先启用：sudo safaridriver --enable
             # 并在 Safari 设置 -> 开发菜单中启用"允许远程自动化"
             try:
+                if getattr(self, 'desktop', None):
+                    raise ValueError('远程桌面不支持 Selenium Safari，请使用 Chromium/Firefox/Edge')
                 driver = webdriver.Safari()
                 driver.set_window_size(1920, 1080)
             except Exception as e:
@@ -1898,7 +1910,7 @@ class TestExecutor:
             options.add_argument('--window-size=1920,1080')
 
             # 使用缓存优先策略
-            service = EdgeService(EdgeChromiumDriverManager().install())
+            service = EdgeService(EdgeChromiumDriverManager().install(), **({"env": self.browser_env} if self.browser_env else {}))
             driver = webdriver.Edge(service=service, options=options)
         else:
             # 默认使用Chrome
@@ -1932,7 +1944,7 @@ class TestExecutor:
             options.add_argument('--disable-infobars')  # 禁用信息栏
 
             # 使用缓存优先策略
-            service = ChromeService(ChromeDriverManager().install())
+            service = ChromeService(ChromeDriverManager().install(), **({"env": self.browser_env} if self.browser_env else {}))
             driver = webdriver.Chrome(service=service, options=options)
 
         return driver
@@ -2076,6 +2088,8 @@ class TestExecutor:
 
     def execute_step_selenium(self, driver, step_data):
         """使用 Selenium 执行单个步骤"""
+        if getattr(self, 'desktop', None):
+            self.desktop.check()
         result = self._execute_step_selenium(driver, step_data)
         if self.variables.strict:
             # 保存脱敏后的项目变量快照，不把运行时凭据写入执行日志。
@@ -2754,14 +2768,15 @@ def check_engine_environment(engine, browser):
     return PlaywrightTestEngine.check_execution_environment_sync(browser)
 
 
-def _launch_playwright_browser(playwright, browser, headless):
+def _launch_playwright_browser(playwright, browser, headless, env=None):
     """按浏览器类型启动 Playwright 浏览器（与套件执行同一套参数）。"""
     args = list(_PLAYWRIGHT_LAUNCH_ARGS)
+    launch_options = {'env': env} if env else {}
     if browser == 'firefox':
-        return playwright.firefox.launch(headless=headless, args=args)
+        return playwright.firefox.launch(headless=headless, args=args, **launch_options)
     if browser == 'safari':
-        return playwright.webkit.launch(headless=headless, args=args)
-    return playwright.chromium.launch(headless=headless, args=args)
+        return playwright.webkit.launch(headless=headless, args=args, **launch_options)
+    return playwright.chromium.launch(headless=headless, args=args, **launch_options)
 
 
 def _wait_after_navigation():
@@ -2776,7 +2791,8 @@ def _run_case_playwright(executor, case_data):
 
     with sync_playwright() as playwright:
         browser = _launch_playwright_browser(
-            playwright, executor.browser, executor.headless)
+            playwright, executor.browser, executor.headless,
+            **({'env': executor.browser_env} if executor.browser_env else {}))
         try:
             executor.browser_instance = browser
             executor._active_project_id = case_data['project_id']
@@ -2849,7 +2865,7 @@ def _persist_case_execution(execution, case_result, started):
 
 
 def run_single_case(case, *, engine='playwright', browser='chrome', headless=False,
-                    executed_by=None, execution=None, storage_state_id=None):
+                    executed_by=None, execution=None, storage_state_id=None, desktop=None):
     """执行单个 UI 用例并把结果写入执行记录。
 
     与套件执行共用 ``execute_test_case_*_no_db``，因此 storageState、navigate、
@@ -2866,7 +2882,7 @@ def run_single_case(case, *, engine='playwright', browser='chrome', headless=Fal
     executor = TestExecutor(
         test_suite=None, engine=engine, browser=browser, headless=headless,
         executed_by=executed_by, storage_state_id=storage_state_id,
-        execution=execution, project=case.project,
+        execution=execution, project=case.project, **({'desktop': desktop} if desktop else {}),
     )
     executor.run_variables = {}
     executor.variables = UiVariableContext(
@@ -2879,6 +2895,8 @@ def run_single_case(case, *, engine='playwright', browser='chrome', headless=Fal
             case_result = _run_case_selenium(executor, case_data)
         else:
             case_result = _run_case_playwright(executor, case_data)
+        if desktop:
+            desktop.check()
     except Exception as exc:  # noqa: BLE001 - 执行异常必须落库，不能留给调用方
         logger.exception('[UiSingleCase] 用例执行异常 case_id=%s', case.id)
         case_result = {

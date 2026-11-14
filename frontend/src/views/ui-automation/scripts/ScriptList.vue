@@ -422,8 +422,7 @@ const editScript = async (script) => {
     const projectId = script.project?.id || script.project || selectedProject.value
     const [stepResponse, elementResponse, pageResponse] = await Promise.all([
       getScriptSteps({ script: script.id, page_size: 1000 }),
-      // 编辑器只需要名称和定位信息，使用紧凑响应避免序列化项目、脚本引用等详情。
-      getElements({ project: projectId, page_size: 1000, compact: 1 }),
+      getElements({ project: projectId, page_size: 1000 }),
       getElementGroupTree({ project: projectId })
     ])
     let rawSteps = stepResponse.data.results || stepResponse.data
@@ -437,10 +436,8 @@ const editScript = async (script) => {
     const storageResponse = await getStorageStates({ project: projectId, page_size: 200 })
     storageStates.value = storageResponse.data.results || storageResponse.data
     if (!rawSteps.length) {
-      const parsed = await parseScriptSteps(script.id, script.content || '')
-      rawSteps = parsed.data.steps.map((step, index) => ({
-        ...step, id: `parsed-${index}-${Date.now()}`
-      }))
+      await parseCode()
+      return
     }
     // 完整列表已加载的元素优先复用；分页之外的关联元素先补成真实选项再挂载步骤。
     editorElements.value = mergeStepElementOptions(editorElements.value, rawSteps)

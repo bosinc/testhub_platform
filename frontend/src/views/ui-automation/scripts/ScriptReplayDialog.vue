@@ -21,13 +21,16 @@
     <pre class="log-panel">{{ logs || $t('uiAutomation.replay.emptyLogs') }}</pre>
     <el-alert v-if="errorMessage" :title="errorMessage" type="error" :closable="false" />
     <template #footer>
+      <el-button v-if="remoteSessionId" @click="remoteDesktop.open(remoteSessionId)">{{ $t('uiAutomation.remote.liveView') }}</el-button>
       <el-button v-if="running" type="danger" plain @click="abort">{{ $t('uiAutomation.common.stop') }}</el-button>
       <el-button @click="close">{{ $t('uiAutomation.common.close') }}</el-button>
     </template>
   </el-dialog>
+  <UiRemoteDialog ref="remoteDesktop" />
 </template>
 
 <script setup>
+import UiRemoteDialog from '@/components/ui-automation/UiRemoteDialog.vue'
 import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { VideoPlay } from '@element-plus/icons-vue'
@@ -41,6 +44,8 @@ const dialogVisible = computed({ get: () => props.visible, set: value => emit('u
 const form = reactive({ browser: 'chromium', headless: true, base_url: '', storage_state_id: null })
 const storageStates = ref([])
 const executionId = ref(null)
+const remoteDesktop = ref(null)
+const remoteSessionId = ref(null)
 const status = ref('IDLE')
 const logs = ref('')
 const errorMessage = ref('')
@@ -56,6 +61,7 @@ watch(executionId, value => { if (value) poll() })
 const reset = () => {
   stopPolling()
   executionId.value = null
+  remoteSessionId.value = null
   status.value = 'IDLE'
   submitting.value = false
   logs.value = ''
@@ -89,6 +95,8 @@ const run = async () => {
           content: props.script.content,
           start_url: props.script.start_url || ''
         })
+    remoteSessionId.value = response.data.remote_session_id || null
+    if (remoteSessionId.value) remoteDesktop.value.open(remoteSessionId.value)
     executionId.value = response.data.id
     status.value = response.data.status || 'PENDING'
     emit('started', response.data)

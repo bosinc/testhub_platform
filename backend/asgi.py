@@ -63,11 +63,13 @@ try:
     from channels.routing import ProtocolTypeRouter, URLRouter
     from apps.app_automation import routing as app_automation_routing
     from apps.perf_testing import routing as perf_testing_routing
+    from apps.ui_automation.remote import routing as ui_remote_routing
 
     # 合并各模块 WebSocket 路由：APP 自动化执行进度 + 性能测试实时监控
     websocket_urlpatterns = (
         app_automation_routing.websocket_urlpatterns
         + perf_testing_routing.websocket_urlpatterns
+        + ui_remote_routing.websocket_urlpatterns
     )
 
     application = ProtocolTypeRouter({

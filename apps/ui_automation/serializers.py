@@ -444,6 +444,19 @@ class TestSuiteSerializer(serializers.ModelSerializer):
         return obj.suite_test_cases.count()
 
 
+class TestSuiteListSerializer(serializers.ModelSerializer):
+    """套件列表只返回摘要与用例数，不展开项目、脚本或用例关联。"""
+    project_name = serializers.CharField(source='project.name', read_only=True)
+    test_case_count = serializers.IntegerField(read_only=True)
+
+    class Meta:
+        model = TestSuite
+        fields = (
+            'id', 'project', 'project_name', 'name', 'description', 'execution_status',
+            'passed_count', 'failed_count', 'test_case_count', 'created_at', 'updated_at',
+        )
+
+
 class TestSuiteCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = TestSuite
@@ -500,6 +513,25 @@ class TestExecutionSerializer(serializers.ModelSerializer):
     def get_pass_rate(self, obj):
         """获取通过率"""
         return obj.pass_rate
+
+
+class TestExecutionListSerializer(serializers.ModelSerializer):
+    """执行列表仅返回状态、统计和关联名称，大字段由详情与日志接口按需读取。"""
+    project_name = serializers.CharField(source='project.name', read_only=True)
+    test_suite_name = serializers.CharField(source='test_suite.name', default='-', read_only=True)
+    test_script_name = serializers.CharField(source='test_script.name', default='-', read_only=True)
+    executed_by_name = serializers.CharField(source='executed_by.username', default='-', read_only=True)
+    pass_rate = serializers.ReadOnlyField()
+
+    class Meta:
+        model = TestExecution
+        fields = (
+            'id', 'project', 'project_name', 'test_suite', 'test_suite_name',
+            'test_script', 'test_script_name', 'executed_by', 'executed_by_name',
+            'environment', 'status', 'engine', 'browser', 'headless', 'execution_type',
+            'total_cases', 'passed_cases', 'failed_cases', 'skipped_cases', 'pass_rate',
+            'started_at', 'finished_at', 'duration', 'report_url', 'created_at',
+        )
 
 
 class TestExecutionCreateSerializer(serializers.ModelSerializer):
@@ -670,8 +702,8 @@ class ElementEnhancedSerializer(serializers.ModelSerializer):
         return super().update(instance, validated_data)
 
 
-class ElementCompactSerializer(serializers.ModelSerializer):
-    """测试步骤元素选择器使用的轻量元素数据。"""
+class ElementListSerializer(serializers.ModelSerializer):
+    """元素列表和选择器共用扁平字段，不加载项目、分组及引用详情。"""
     locator_strategy = serializers.CharField(source='locator_strategy.name', read_only=True)
 
     class Meta:
@@ -679,6 +711,20 @@ class ElementCompactSerializer(serializers.ModelSerializer):
         fields = (
             'id', 'name', 'element_type', 'locator_strategy', 'locator_value',
             'locator_options', 'page', 'group_id',
+            'description', 'created_at', 'updated_at',
+        )
+
+
+class ElementTreeSerializer(ElementListSerializer):
+    """树节点只保留展示和定位所需字段，引用次数由详情接口提供。"""
+    type = serializers.ReadOnlyField(default='element')
+    children = serializers.ListField(read_only=True, default=list)
+
+    class Meta(ElementListSerializer.Meta):
+        fields = (
+            'id', 'name', 'element_type', 'locator_strategy', 'locator_value',
+            'locator_options', 'page', 'group_id', 'validation_status', 'order',
+            'type', 'children',
         )
 
 
@@ -900,6 +946,17 @@ class TestCaseSerializer(serializers.ModelSerializer):
         return super().create(validated_data)
 
 
+class TestCaseListSerializer(serializers.ModelSerializer):
+    """列表只返回用例摘要和步骤数，完整步骤由详情接口按需加载。"""
+    created_by_name = serializers.CharField(source='created_by.username', read_only=True)
+    project_name = serializers.CharField(source='project.name', read_only=True)
+    steps_count = serializers.IntegerField(read_only=True)
+
+    class Meta:
+        model = TestCase
+        fields = [field for field in TestCaseSerializer.Meta.fields if field != 'steps'] + ['steps_count']
+
+
 class TestCaseDetailSerializer(TestCaseSerializer):
     """详情额外返回可访问的正式测试用例，列表和写入接口不加载关联数据。"""
 
@@ -975,6 +1032,16 @@ class TestCaseExecutionSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         validated_data['created_by'] = self.context['request'].user
         return super().create(validated_data)
+
+
+class TestCaseExecutionListSerializer(TestCaseExecutionSerializer):
+    """执行列表仅返回摘要，日志、错误正文和截图由详情接口按需加载。"""
+
+    class Meta(TestCaseExecutionSerializer.Meta):
+        fields = [
+            field for field in TestCaseExecutionSerializer.Meta.fields
+            if field not in ('execution_logs', 'error_message', 'screenshots')
+        ]
 
 
 class TestCaseRunSerializer(serializers.Serializer):

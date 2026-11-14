@@ -62,7 +62,7 @@ class _CodegenNormalizer(ast.NodeTransformer):
         if isinstance(function, ast.Attribute) and function.attr == 'goto' and node.args:
             first = node.args[0]
             if isinstance(first, ast.Constant) and isinstance(first.value, str):
-                node.args[0] = self._env_value('TESTHUB_BASE_URL', first.value)
+                node.args[0] = self._env_value('BASE_URL', first.value)
                 self.changed = True
         if isinstance(function, ast.Attribute) and function.attr == 'click' and self._is_toggle_target(function.value):
             node = ast.Call(
@@ -92,7 +92,7 @@ class _CodegenNormalizer(ast.NodeTransformer):
             if re.match(r'^(?:/(?:Users|home|private|tmp|var)/|[A-Za-z]:\\)', value):
                 name = os.path.basename(value) or 'artifact'
                 keyword.value = ast.parse(
-                    f"os.path.join(os.environ.get('TESTHUB_WORKDIR') or '.', {name!r})",
+                    f"os.path.join(os.environ.get('WORKDIR') or '.', {name!r})",
                     mode='eval',
                 ).body
                 self.changed = True

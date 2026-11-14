@@ -40,8 +40,13 @@ _testhub_original_goto = _TestHubPage.goto
 _testhub_original_reload = _TestHubPage.reload
 
 def _testhub_launch(self, *args, **kwargs):
+    # 仅远程桌面会话强制使用有头，普通回放保留原脚本适配行为。
+    if os.environ.get('REMOTE_DESKTOP') == '1':
+        kwargs['headless'] = False
+        kwargs['env'] = {**os.environ, **(kwargs.get('env') or {}),
+                         'DISPLAY': os.environ['DISPLAY'], 'XAUTHORITY': os.environ['XAUTHORITY']}
     browser = _testhub_original_launch(self, *args, **kwargs)
-    _testhub_path(os.environ['TESTHUB_BROWSER_MARKER']).touch()
+    _testhub_path(os.environ['BROWSER_MARKER']).touch()
     return browser
 
 def _testhub_click(locator, *args, **kwargs):
@@ -82,13 +87,13 @@ def _testhub_configure_page(page):
     return page
 
 def _testhub_browser_new_page(browser, *args, **kwargs):
-    storage_state = os.environ.get('TESTHUB_STORAGE_STATE_PATH')
+    storage_state = os.environ.get('STORAGE_STATE_PATH')
     if storage_state and 'storage_state' not in kwargs:
         kwargs['storage_state'] = storage_state
     return _testhub_configure_page(_testhub_original_browser_new_page(browser, *args, **kwargs))
 
 def _testhub_browser_new_context(browser, *args, **kwargs):
-    storage_state = os.environ.get('TESTHUB_STORAGE_STATE_PATH')
+    storage_state = os.environ.get('STORAGE_STATE_PATH')
     if storage_state and 'storage_state' not in kwargs:
         kwargs['storage_state'] = storage_state
     return _testhub_original_browser_new_context(browser, *args, **kwargs)
@@ -158,16 +163,31 @@ def get_playwright_browsers_path() -> str:
     return str(Path(cache_home) / 'ms-playwright')
 
 
-def start_script_execution(execution_id: int, script_content: str | None = None):
-    thread = threading.Thread(target=execute_script, args=(execution_id, script_content), daemon=True)
+def start_script_execution(execution_id: int, script_content: str | None = None, remote_session=None):
+    def worker():
+        if remote_session is None:
+            execute_script(execution_id, script_content)
+            return
+        from .remote.sessions import Desktop
+        close_old_connections()
+        try:
+            with Desktop(remote_session) as desktop:
+                execute_script(execution_id, script_content, desktop=desktop)
+        except Exception:
+            import logging
+            logging.getLogger(__name__).exception('远程回放桌面执行失败')
+        finally:
+            close_old_connections()
+    thread = threading.Thread(target=worker, daemon=True)
     thread.start()
 
 
-def execute_script(execution_id: int, script_content: str | None = None):
+def execute_script(execution_id: int, script_content: str | None = None, desktop=None):
     close_old_connections()
     execution = TestExecution.objects.select_related('test_script').get(pk=execution_id)
     started = time.monotonic()
     analysis = None
+    watchdog_done = threading.Event()
     try:
         source = script_content if script_content is not None else execution.test_script.content
         analysis = analyze_script(source)
@@ -212,18 +232,24 @@ def execute_script(execution_id: int, script_content: str | None = None):
                 'HOME': str(Path(workdir) / 'home'),
                 'PYTHONUNBUFFERED': '1',
                 'HEADLESS': '1' if execution.headless else '0',
-                'TESTHUB_BASE_URL': (
+                'BASE_URL': (
                     execution.run_config.get('base_url')
                     or execution.run_config.get('start_url')
                     or (execution.test_script.start_url if execution.test_script else '')
                 ),
                 'PLAYWRIGHT_BROWSERS_PATH': get_playwright_browsers_path(),
-                'TESTHUB_BROWSER_MARKER': str(browser_marker),
-                'TESTHUB_WORKDIR': workdir,
+                'BROWSER_MARKER': str(browser_marker),
+                'WORKDIR': workdir,
             }
+            if desktop:
+                desktop.check()
+                # 保留脚本的临时 HOME，仅传入当前会话的显示凭据。
+                env.update({key: desktop.env[key] for key in ('DISPLAY', 'XAUTHORITY')})
+                env['REMOTE_DESKTOP'] = '1'
+                env['REMOTE_SESSION'] = str(desktop.session.pk)
             # 通过环境变量把临时文件位置传给脚本运行时适配器。
             if storage_state_path:
-                env['TESTHUB_STORAGE_STATE_PATH'] = str(storage_state_path)
+                env['STORAGE_STATE_PATH'] = str(storage_state_path)
             Path(env['HOME']).mkdir(parents=True, exist_ok=True)
             process = subprocess.Popen(
                 [sys.executable, str(script_path)],
@@ -238,6 +264,17 @@ def execute_script(execution_id: int, script_content: str | None = None):
             with _lock:
                 _running[execution.id] = process
             _append_log(execution.id, '回放子进程已启动\n')
+            def watch_remote_stop():
+                close_old_connections()
+                try:
+                    while not watchdog_done.wait(0.5):
+                        if desktop and desktop.cancelled.is_set():
+                            _terminate_process(process)
+                            return
+                finally:
+                    close_old_connections()
+            if desktop:
+                threading.Thread(target=watch_remote_stop, daemon=True).start()
             output_bytes = 0
             log_truncated = False
             assert process.stdout is not None
@@ -254,6 +291,7 @@ def execute_script(execution_id: int, script_content: str | None = None):
             except subprocess.TimeoutExpired:
                 _terminate_process(process)
                 raise TimeoutError('脚本执行超过5分钟，已自动终止')
+            watchdog_done.set()
             return_code = process.returncode
             browser_started = browser_marker.exists()
 
@@ -289,6 +327,7 @@ def execute_script(execution_id: int, script_content: str | None = None):
         if guidance:
             _append_log(execution.id, f'排查建议：{guidance}\n')
     finally:
+        watchdog_done.set()
         with _lock:
             _running.pop(execution.id, None)
             _aborted.discard(execution.id)

@@ -22,7 +22,7 @@ from urllib.parse import urlparse
 
 from .models import (
     UiProject, StorageState, LocatorStrategy, Element, TestScript, TestSuite,
-    TestSuiteScript, TestExecution, Screenshot,
+    TestSuiteScript, TestSuiteTestCase, TestExecution, Screenshot,
     ElementGroup, PageObject, PageObjectElement, ScriptStep, ScriptElementUsage,
     TestCase, TestCaseFolder, TestCaseStep, TestCaseExecution, OperationRecord,
     UiScheduledTask, UiNotificationLog, UiTaskNotificationSetting,
@@ -31,17 +31,17 @@ from .models import (
 from .serializers import (
     UiProjectSerializer, UiProjectCreateSerializer, UiProjectUpdateSerializer, StorageStateSerializer,
     LocatorStrategySerializer,
-    ElementSerializer, ElementEnhancedSerializer, ElementCompactSerializer,
+    ElementSerializer, ElementEnhancedSerializer, ElementListSerializer, ElementTreeSerializer,
     TestScriptSerializer, TestScriptCreateSerializer, TestScriptUpdateSerializer,
-    TestSuiteSerializer, TestSuiteCreateSerializer, TestSuiteUpdateSerializer, TestSuiteWithScriptsSerializer,
+    TestSuiteSerializer, TestSuiteListSerializer, TestSuiteCreateSerializer, TestSuiteUpdateSerializer, TestSuiteWithScriptsSerializer,
     TestSuiteScriptSerializer, TestSuiteTestCaseSerializer,
-    TestExecutionSerializer, TestExecutionCreateSerializer,
+    TestExecutionSerializer, TestExecutionListSerializer, TestExecutionCreateSerializer,
     ScreenshotSerializer,
     ElementGroupSerializer, ElementGroupCreateSerializer,
     PageObjectSerializer, PageObjectCreateSerializer, PageObjectElementSerializer,
     ScriptStepSerializer, ScriptElementUsageSerializer,
     ScriptAnalysisSerializer, ElementValidationSerializer, CodeGenerationSerializer,
-    TestCaseSerializer, TestCaseDetailSerializer, TestCaseFolderSerializer, TestCaseStepSerializer, TestCaseExecutionSerializer, TestCaseRunSerializer,
+    TestCaseSerializer, TestCaseListSerializer, TestCaseDetailSerializer, TestCaseFolderSerializer, TestCaseStepSerializer, TestCaseExecutionSerializer, TestCaseExecutionListSerializer, TestCaseRunSerializer,
     OperationRecordSerializer,
     UiScheduledTaskSerializer, UiNotificationLogSerializer, UiTaskNotificationSettingSerializer,
     AICaseSerializer, AIExecutionRecordSerializer,
@@ -53,6 +53,7 @@ from .script_security import MAX_SCRIPT_BYTES, ScriptSecurityError, analyze_scri
 from .recording_import import import_recorded_script
 from .recording_sync import UnsupportedRecordingCode, generate_code, parse_recording
 from .script_runner import start_script_execution, stop_script_execution
+from .remote import sessions as remote
 
 logger = logging.getLogger(__name__)
 User = get_user_model()
@@ -289,6 +290,17 @@ class StandardPagination(PageNumberPagination):
     max_page_size = 1000
 
 
+def _execution_list_queryset(queryset):
+    """报告列表和脚本执行历史共用轻量查询，避免读取日志、结果 JSON 及脚本正文。"""
+    return queryset.select_related('project', 'test_suite', 'test_script', 'executed_by').only(
+        'id', 'project_id', 'project__name', 'test_suite_id', 'test_suite__name',
+        'test_script_id', 'test_script__name', 'executed_by_id', 'executed_by__username',
+        'environment', 'status', 'engine', 'browser', 'headless', 'execution_type',
+        'total_cases', 'passed_cases', 'failed_cases', 'skipped_cases',
+        'started_at', 'finished_at', 'duration', 'report_url', 'created_at',
+    ).order_by('-created_at', '-id')
+
+
 class UiProjectViewSet(viewsets.ModelViewSet):
     queryset = UiProject.objects.all()
     permission_classes = [IsAuthenticated]
@@ -417,9 +429,12 @@ class ElementViewSet(viewsets.ModelViewSet):
     search_fields = ['name', 'description', 'page', 'component_name']
 
     def get_serializer_class(self):
-        if self.action in ['list', 'retrieve'] and self.request.query_params.get('compact') == '1':
-            return ElementCompactSerializer
-        if self.action in ['list', 'retrieve']:
+        # 所有列表默认使用轻量响应，只有详情需要完整关联信息。
+        if self.action == 'list':
+            return ElementListSerializer
+        if self.action == 'tree':
+            return ElementTreeSerializer
+        if self.action == 'retrieve':
             return ElementEnhancedSerializer
         return ElementSerializer
 
@@ -429,20 +444,18 @@ class ElementViewSet(viewsets.ModelViewSet):
         accessible_projects = UiProject.objects.filter(
             models.Q(owner=user) | models.Q(members=user)
         ).distinct()
-        if self.action == 'tree':
-            # 树响应只使用定位策略和正式用例引用计数，无需联查项目、分组或预取整份脚本。
-            return Element.objects.filter(project__in=accessible_projects).select_related(
-                'locator_strategy'
-            ).annotate(
-                case_step_count=models.Count('testcasestep')
-            ).order_by('page', 'order', 'name')
-        queryset = Element.objects.filter(project__in=accessible_projects).select_related(
-            'project', 'group', 'locator_strategy', 'created_by', 'parent_element'
-        ).annotate(
-            case_step_count=models.Count('testcasestep')
-        ).order_by('page', 'order', 'name')
-        if self.request.query_params.get('compact') != '1':
-            queryset = queryset.prefetch_related('script_usages__script')
+        queryset = Element.objects.filter(project__in=accessible_projects).order_by('page', 'order', 'name', 'id')
+        if self.action in ['list', 'tree']:
+            # 轻量响应只读取标量字段及定位策略，分页计数也无需关联步骤表聚合。
+            return queryset.select_related('locator_strategy').only(
+                'id', 'name', 'element_type', 'locator_strategy_id', 'locator_strategy__name',
+                'locator_value', 'locator_options', 'page', 'group_id',
+                'description', 'created_at', 'updated_at', 'validation_status', 'order',
+            )
+        if self.action == 'retrieve':
+            queryset = queryset.select_related(
+                'project', 'group', 'locator_strategy', 'created_by', 'parent_element'
+            ).annotate(case_step_count=models.Count('testcasestep'))
         return queryset
 
     def filter_queryset(self, queryset):
@@ -505,8 +518,7 @@ class ElementViewSet(viewsets.ModelViewSet):
             return Response({'error': '需要指定项目ID'}, status=status.HTTP_400_BAD_REQUEST)
 
         elements = self.get_queryset().filter(project_id=project_id)
-        tree_data = self._build_element_tree(elements)
-        return Response(tree_data)
+        return Response(self.get_serializer(elements, many=True).data)
 
     @action(detail=True, methods=['post'])
     def add_backup_locator(self, request, pk=None):
@@ -563,29 +575,6 @@ class ElementViewSet(viewsets.ModelViewSet):
                 'suggestions': []
             }
 
-    def _build_element_tree(self, elements):
-        """构建元素树形结构 - 返回元素列表而不是页面分组，因为前端会自己处理页面关联"""
-        element_data_list = []
-        for element in elements:
-            element_data = {
-                'id': element.id,
-                'name': element.name,
-                'type': 'element',
-                'element_type': element.element_type,
-                'locator_strategy': element.locator_strategy.name if element.locator_strategy else None,
-                'locator_value': element.locator_value,
-                'locator_options': element.locator_options or {},
-                'validation_status': element.validation_status,
-                'usage_count': element.case_step_count,
-                'order': element.order,
-                'group_id': element.group_id,  # 用于前端关联到页面
-                'page': element.page,  # 保留向后兼容
-                'children': []
-            }
-            element_data_list.append(element_data)
-
-        return element_data_list
-
     def _generate_element_suggestions(self, element):
         """生成元素使用建议"""
         suggestions = []
@@ -599,7 +588,7 @@ class ElementViewSet(viewsets.ModelViewSet):
             suggestions.append("建议测试下拉框的所有选项")
 
         # 基于使用频率生成建议
-        usage_count = element.case_step_count
+        usage_count = TestCaseStep.objects.filter(element_id=element.pk).count()
         if usage_count == 0:
             suggestions.append("此元素尚未被任何正式用例步骤引用，考虑是否需要删除")
         elif usage_count > 10:
@@ -1226,8 +1215,18 @@ class TestScriptViewSet(viewsets.ModelViewSet):
                 },
             )
             log_operation('run', 'script', script.id, script.name, request.user)
-            start_script_execution(execution.id)
-            return Response(TestExecutionSerializer(execution, context={'request': request}).data, status=status.HTTP_202_ACCEPTED)
+            try:
+                session = remote.create_session(execution, request.user)
+            except Exception as exc:
+                execution.status = 'FAILED'
+                execution.error_message = str(exc)
+                execution.finished_at = timezone.now()
+                execution.save()
+                raise
+            start_script_execution(execution.id, **({'remote_session': session} if session else {}))
+            data = TestExecutionSerializer(execution, context={'request': request}).data
+            data.update(remote.payload(session))
+            return Response(data, status=status.HTTP_202_ACCEPTED)
         except Exception as exc:
             logger.exception('创建脚本回放失败')
             return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
@@ -1276,9 +1275,19 @@ class TestScriptViewSet(viewsets.ModelViewSet):
                     'storage_state_id': selected_state.id if selected_state else None,
                 },
             )
-            start_script_execution(execution.id, analysis['normalized_content'])
+            try:
+                session = remote.create_session(execution, request.user)
+            except Exception as exc:
+                execution.status = 'FAILED'
+                execution.error_message = str(exc)
+                execution.finished_at = timezone.now()
+                execution.save()
+                raise
+            start_script_execution(execution.id, analysis['normalized_content'], **({'remote_session': session} if session else {}))
+            data = TestExecutionSerializer(execution, context={'request': request}).data
+            data.update(remote.payload(session))
             return Response(
-                TestExecutionSerializer(execution, context={'request': request}).data,
+                data,
                 status=status.HTTP_202_ACCEPTED,
             )
         except (UnicodeDecodeError, ScriptSecurityError) as exc:
@@ -1290,9 +1299,9 @@ class TestScriptViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['get'], url_path='executions')
     def script_executions(self, request, pk=None):
         script = self.get_object()
-        queryset = TestExecution.objects.filter(test_script=script).select_related('executed_by')
+        queryset = _execution_list_queryset(TestExecution.objects.filter(test_script=script))
         page = self.paginate_queryset(queryset)
-        serializer = TestExecutionSerializer(page or queryset, many=True, context={'request': request})
+        serializer = TestExecutionListSerializer(page if page is not None else queryset, many=True)
         return self.get_paginated_response(serializer.data) if page is not None else Response(serializer.data)
 
 
@@ -1305,6 +1314,8 @@ class TestSuiteViewSet(viewsets.ModelViewSet):
     ordering = ['-created_at']
 
     def get_serializer_class(self):
+        if self.action == 'list':
+            return TestSuiteListSerializer
         if self.action == 'create':
             return TestSuiteCreateSerializer
         elif self.action in ['update', 'partial_update']:
@@ -1319,7 +1330,19 @@ class TestSuiteViewSet(viewsets.ModelViewSet):
         accessible_projects = UiProject.objects.filter(
             models.Q(owner=user) | models.Q(members=user)
         ).distinct()
-        return TestSuite.objects.filter(project__in=accessible_projects)
+        queryset = TestSuite.objects.filter(project__in=accessible_projects).order_by('-created_at', '-id')
+        if self.action == 'list':
+            # 在关联表按套件索引计数，不加载用例正文，也不与脚本关联产生计数乘积。
+            case_counts = TestSuiteTestCase.objects.filter(
+                test_suite_id=models.OuterRef('pk')
+            ).order_by().values('test_suite_id').annotate(total=models.Count('pk')).values('total')
+            return queryset.select_related('project').only(
+                'id', 'project_id', 'project__name', 'name', 'description', 'execution_status',
+                'passed_count', 'failed_count', 'created_at', 'updated_at',
+            ).annotate(test_case_count=models.functions.Coalesce(
+                models.Subquery(case_counts, output_field=models.IntegerField()), models.Value(0)
+            ))
+        return queryset
 
     def perform_create(self, serializer):
         instance = serializer.save()
@@ -1371,7 +1394,7 @@ class TestSuiteViewSet(viewsets.ModelViewSet):
     def test_cases(self, request, pk=None):
         """获取测试套件中的所有测试用例"""
         test_suite = self.get_object()
-        test_cases = test_suite.suite_test_cases.all()
+        test_cases = test_suite.suite_test_cases.select_related('test_case')
         serializer = TestSuiteTestCaseSerializer(test_cases, many=True)
         return Response(serializer.data)
 
@@ -1444,7 +1467,7 @@ class TestSuiteViewSet(viewsets.ModelViewSet):
 
         engine = request.data.get('engine', 'playwright')
         browser = request.data.get('browser', 'chrome')
-        headless = request.data.get('headless', False)
+        headless = _request_bool(request.data.get('headless'), False)
         storage_state_id = request.data.get('storage_state_id') if engine == 'playwright' else None
         if storage_state_id:
             initial_state = StorageState.objects.filter(
@@ -1472,6 +1495,24 @@ class TestSuiteViewSet(viewsets.ModelViewSet):
                     'message': 'Playwright 浏览器未就绪，请先安装后再执行测试套件'
                 }, status=status.HTTP_400_BAD_REQUEST)
 
+        # 普通/无头执行保持原路径；仅远程有头执行预建记录并分配桌面。
+        remote_session = None
+        remote_execution = None
+        if remote.enabled(headless):
+            remote_execution = TestExecution.objects.create(
+                project=test_suite.project, test_suite=test_suite, status='PENDING',
+                engine=engine, browser=browser, headless=headless, executed_by=request.user,
+                run_config={'storage_state_id': storage_state_id},
+            )
+            try:
+                remote_session = remote.create_session(remote_execution, request.user)
+            except Exception as exc:
+                remote_execution.status = 'FAILED'
+                remote_execution.error_message = str(exc)
+                remote_execution.finished_at = timezone.now()
+                remote_execution.save()
+                raise
+
         # 更新套件执行状态为运行中
         test_suite.execution_status = 'running'
         test_suite.save()
@@ -1489,15 +1530,20 @@ class TestSuiteViewSet(viewsets.ModelViewSet):
                 print(f"[测试套件] 开始执行: {test_suite.name} (ID: {test_suite.id})")
                 print(f"[测试套件] 配置: engine={engine}, browser={browser}, headless={headless}")
 
-                executor = TestExecutor(
-                    test_suite=test_suite,
-                    engine=engine,
-                    browser=browser,
-                    headless=headless,
-                    executed_by=request.user,
-                    storage_state_id=storage_state_id
-                )
-                executor.run()
+                from contextlib import nullcontext
+                # 浏览器和 Playwright 对象只在此执行线程内创建、使用及关闭。
+                with remote.Desktop(remote_session) if remote_session else nullcontext(None) as desktop:
+                    executor = TestExecutor(
+                        test_suite=test_suite, engine=engine, browser=browser,
+                        headless=headless, executed_by=request.user,
+                        storage_state_id=storage_state_id,
+                        **({'execution': remote_execution, 'desktop': desktop} if desktop else {}),
+                    )
+                    if remote_execution:
+                        remote_execution.status = 'RUNNING'
+                        remote_execution.started_at = timezone.now()
+                        remote_execution.save(update_fields=['status', 'started_at'])
+                    executor.run()
 
                 print(f"[测试套件] 执行完成: {test_suite.name}")
             except Exception as e:
@@ -1518,6 +1564,8 @@ class TestSuiteViewSet(viewsets.ModelViewSet):
         thread.start()
 
         return Response({
+            **remote.payload(remote_session),
+            **({'execution_id': remote_execution.id} if remote_execution else {}),
             'message': '测试套件开始执行',
             'suite_id': test_suite.id,
             'test_case_count': test_case_count,
@@ -1543,13 +1591,16 @@ class TestExecutionViewSet(viewsets.ModelViewSet):
         accessible_projects = UiProject.objects.filter(
             models.Q(owner=user) | models.Q(members=user)
         ).distinct()
-        return TestExecution.objects.filter(
-            project__in=accessible_projects
-        ).select_related('project', 'test_suite', 'test_script', 'executed_by')
+        queryset = TestExecution.objects.filter(project__in=accessible_projects)
+        if self.action == 'list':
+            return _execution_list_queryset(queryset)
+        return queryset.select_related('project', 'test_suite', 'test_script', 'executed_by')
 
     def get_serializer_class(self):
         if self.action == 'create':
             return TestExecutionCreateSerializer
+        if self.action == 'list':
+            return TestExecutionListSerializer
         return TestExecutionSerializer
 
     def perform_destroy(self, instance):
@@ -1574,7 +1625,15 @@ class TestExecutionViewSet(viewsets.ModelViewSet):
         execution = self.get_object()
         if execution.status not in {'PENDING', 'RUNNING'}:
             return Response({'error': '当前执行已结束'}, status=status.HTTP_400_BAD_REQUEST)
-        stop_script_execution(execution.id)
+        from .models import UiRemoteSession
+        remote_session = (UiRemoteSession.objects.filter(execution=execution).first()
+                         if remote.enabled(execution.headless) else None)
+        if remote_session:
+            if remote_session.owner_id != request.user.id:
+                return Response({'error': '只能停止自己的调试会话'}, status=status.HTTP_403_FORBIDDEN)
+            UiRemoteSession.objects.filter(pk=remote_session.pk).update(stop_requested=True)
+        else:
+            stop_script_execution(execution.id)
         execution.status = 'ABORTED'
         execution.finished_at = timezone.now()
         execution.error_message = '用户手动终止执行'
@@ -1668,11 +1727,12 @@ class TestCaseViewSet(viewsets.ModelViewSet):
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     search_fields = ['name', 'description']
     ordering_fields = ['created_at', 'updated_at', 'name', 'priority', 'status']
-    ordering = ['-created_at']
+    ordering = ['-created_at', '-id']
     filterset_fields = ['project', 'status', 'priority', 'created_by']
 
     def get_serializer_class(self):
-        # 仅详情响应携带正式用例，避免列表逐条反查关联关系。
+        if self.action == 'list':
+            return TestCaseListSerializer
         if self.action == 'retrieve':
             return TestCaseDetailSerializer
         return super().get_serializer_class()
@@ -1683,15 +1743,22 @@ class TestCaseViewSet(viewsets.ModelViewSet):
         accessible_projects = UiProject.objects.filter(
             models.Q(owner=user) | models.Q(members=user)
         ).distinct()
-
-    def get_queryset(self):
-        # 只显示用户有权限访问的项目的测试用例
-        user = self.request.user
-        accessible_projects = UiProject.objects.filter(
-            models.Q(owner=user) | models.Q(members=user)
-        ).distinct()
-        # 预取步骤及元素定位信息，保证详情序列化时能完整返回步骤回显数据。
-        return TestCase.objects.filter(project__in=accessible_projects).select_related(
+        queryset = TestCase.objects.filter(project__in=accessible_projects)
+        if self.action == 'list':
+            # 使用步骤表现有的用例索引计数，不实例化步骤或联查元素，也不增加逐用例查询。
+            step_counts = TestCaseStep.objects.filter(
+                test_case_id=models.OuterRef('pk')
+            ).order_by().values('test_case_id').annotate(total=models.Count('pk')).values('total')
+            return queryset.select_related('project', 'created_by').only(
+                'id', 'name', 'description', 'folder_id', 'project_id', 'project__name',
+                'status', 'priority', 'created_by_id', 'created_by__username', 'created_at', 'updated_at',
+            ).annotate(
+                steps_count=models.functions.Coalesce(
+                    models.Subquery(step_counts, output_field=models.IntegerField()), models.Value(0)
+                )
+            )
+        # 详情及写入响应继续加载完整步骤，保证步骤回显与现有编辑流程一致。
+        return queryset.select_related(
             'project', 'created_by', 'folder'
         ).prefetch_related('steps__element__locator_strategy')
 
@@ -2094,7 +2161,7 @@ class TestCaseViewSet(viewsets.ModelViewSet):
         test_case = self.get_object()
         engine_type = request.data.get('engine', 'playwright')
         browser = request.data.get('browser', 'chrome')
-        headless = request.data.get('headless', False)
+        headless = _request_bool(request.data.get('headless'), False)
 
         if engine_type == 'selenium' and test_case.steps.filter(
                 action_type='storageState').exists():
@@ -2151,6 +2218,24 @@ class TestCaseViewSet(viewsets.ModelViewSet):
                     'description': '执行前浏览器与驱动环境检查'
                 }]
             }, status=status.HTTP_400_BAD_REQUEST)
+
+        if remote.enabled(headless):
+            try:
+                session = remote.create_session(execution, request.user)
+            except Exception as exc:
+                execution.status = 'failed'
+                execution.error_message = str(exc)
+                execution.finished_at = timezone.now()
+                execution.save()
+                raise
+            remote.launch_case(
+                session, test_case, engine=engine_type, browser=browser,
+                user=request.user, execution=execution,
+                storage_state_id=request.data.get('storage_state_id') if engine_type == 'playwright' else None,
+            )
+            log_operation('run', 'test_case', test_case.id, test_case.name, request.user)
+            return Response({'execution_id': execution.id, **remote.payload(session)},
+                            status=status.HTTP_202_ACCEPTED)
 
         try:
             case_result = run_single_case(
@@ -2288,17 +2373,20 @@ class TestCaseStepViewSet(viewsets.ModelViewSet):
 
 class TestCaseExecutionViewSet(viewsets.ModelViewSet):
     """测试用例执行记录视图集"""
-    queryset = TestCaseExecution.objects.all().select_related(
-        'test_case', 'project', 'test_suite', 'executed_by'
-    )
+    queryset = TestCaseExecution.objects.all()
     serializer_class = TestCaseExecutionSerializer
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     search_fields = ['test_case__name', 'error_message']
     ordering_fields = ['created_at', 'started_at', 'finished_at', 'status']
-    ordering = ['-created_at']
+    ordering = ['-created_at', '-id']
     filterset_fields = ['project', 'test_suite', 'test_case', 'status', 'execution_source']
     pagination_class = StandardPagination
+
+    def get_serializer_class(self):
+        if self.action == 'list':
+            return TestCaseExecutionListSerializer
+        return self.serializer_class
 
     def get_queryset(self):
         # 只显示用户有权限访问的项目的执行记录
@@ -2306,11 +2394,19 @@ class TestCaseExecutionViewSet(viewsets.ModelViewSet):
         accessible_projects = UiProject.objects.filter(
             models.Q(owner=user) | models.Q(members=user)
         ).distinct()
-        return TestCaseExecution.objects.filter(
+        queryset = TestCaseExecution.objects.filter(
             project__in=accessible_projects
         ).select_related(
             'test_case', 'project', 'test_suite', 'created_by'
         )
+        if self.action == 'list':
+            return queryset.only(
+                'id', 'test_case_id', 'test_case__name', 'project_id', 'project__name',
+                'test_suite_id', 'test_suite__name', 'created_by_id', 'created_by__username',
+                'execution_source', 'status', 'engine', 'browser', 'headless',
+                'execution_time', 'started_at', 'finished_at', 'created_at',
+            )
+        return queryset
 
     def perform_destroy(self, instance):
         # 记录操作

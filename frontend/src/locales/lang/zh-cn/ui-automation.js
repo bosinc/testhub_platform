@@ -1,4 +1,19 @@
 export default {
+  // 远程有头执行的实时画面、操作和提示。
+  remote: {
+    liveView: '实时画面',
+    latestView: '查看最近一次测试画面',
+    title: '实时测试画面',
+    preparing: '正在准备本次执行的浏览器画面…',
+    browserTitle: '本次执行的实时浏览器',
+    ended: '本次测试已结束',
+    closeHint: '关闭画面不会停止测试',
+    reconnect: '重新连接',
+    stopExecution: '停止执行',
+    closeView: '关闭画面',
+    loadFailed: '无法获取实时画面',
+    stopFailed: '停止执行失败'
+  },
   variables: {
     title: '变量管理',
     hint: '项目变量在每次运行开始时初始化；运行期间的临时值只作用于本次运行副本。',
@@ -423,6 +438,7 @@ export default {
     confirmRerun: '确认重跑',
     messages: {
       loadFailed: '获取执行列表失败',
+      loadDetailFailed: '加载执行详情失败，请重试',
       deleteConfirm: '确认删除该执行记录吗？',
       deleteSuccess: '删除成功',
       deleteFailed: '删除失败',
@@ -489,6 +505,7 @@ export default {
     caseFailed: '失败',
     messages: {
       loadFailed: '加载测试报告失败',
+      loadDetailFailed: '加载测试报告详情失败，请重试',
       loadProjectsFailed: '获取项目列表失败',
       refreshed: '报告已刷新',
       deleteConfirm: '确定要删除报告"{name}"吗？此操作不可恢复。',
@@ -1431,6 +1448,7 @@ export default {
     messages: {
       loadProjectsFailed: '获取项目列表失败',
       loadTestCasesFailed: '获取测试用例失败',
+      loadDetailFailed: '获取测试用例详情失败，请重试',
       loadElementsFailed: '获取元素列表失败',
       saveSuccess: '测试用例保存成功',
       saveFailed: '保存测试用例失败',

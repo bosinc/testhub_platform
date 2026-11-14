@@ -94,7 +94,7 @@
                       <el-button size="small" text :title="t('uiAutomation.testCase.copy.title')" @click.stop="copyTestCase(data)"><el-icon><CopyDocument /></el-icon></el-button>
                       <el-button size="small" text type="danger" :title="t('uiAutomation.testCase.delete.title')" @click.stop="deleteTestCase(data)"><el-icon><Delete /></el-icon></el-button>
                     </div>
-                    <span v-if="data.type === 'testCase'" class="case-step-count">{{ data.steps?.length || 0 }}</span>
+                    <span v-if="data.type === 'testCase'" class="case-step-count">{{ data.steps_count }}</span>
                   </div>
                 </div>
               </div>
@@ -187,6 +187,7 @@
                 <el-icon v-if="!isRunning"><CaretRight /></el-icon>
                 {{ isRunning ? t('uiAutomation.testCase.running') : t('uiAutomation.testCase.runLabel') }}
               </el-button>
+              <el-button v-if="remoteSessionId" @click="remoteDesktop.open(remoteSessionId)">{{ t('uiAutomation.remote.liveView') }}</el-button>
               <el-button size="default" type="primary" @click="saveTestCase">
                 <el-icon><Check /></el-icon>
                 {{ t('uiAutomation.testCase.saveTestCase') }}
@@ -568,9 +569,11 @@
       @select="handleDataFactorySelect"
     />
   </div>
+  <UiRemoteDialog ref="remoteDesktop" @finished="remoteCaseFinished" />
 </template>
 
 <script setup>
+import UiRemoteDialog from '@/components/ui-automation/UiRemoteDialog.vue'
 import ResizableSplitPane from '@/components/ResizableSplitPane.vue'
 import TestCaseDetailPanel from '@/components/testcases/TestCaseDetailPanel.vue'
 import StructuredStepEditor from '@/components/ui-automation/StructuredStepEditor.vue'
@@ -622,6 +625,8 @@ const testCaseFolders = ref([])
 const testCaseTreeRef = ref(null)
 const expandedFolderKeys = ref(new Set())
 const selectedTestCase = ref(null)
+// 用例切换或项目切换后忽略过期详情，避免错误回显和覆盖当前编辑内容。
+let testCaseDetailRequestId = 0
 const showLinkedTestCases = ref(false)
 const activeLinkedTestCaseId = ref(null)
 const linkedTestCases = computed(() => selectedTestCase.value?.linked_test_cases || [])
@@ -696,6 +701,8 @@ const showSteps = ref(true)
 const showScreenshotPreview = ref(false)
 const currentScreenshot = ref(null)
 const isRunning = ref(false)
+const remoteDesktop = ref(null)
+const remoteSessionId = ref(null)
 const selectedEngine = ref('playwright')  // 默认使用Playwright
 const selectedBrowser = ref('chrome')  // 默认使用Chrome
 const headlessMode = ref(true)  // 默认使用无头模式
@@ -1028,6 +1035,12 @@ const openMoveTestCaseDialog = testCase => {
   showMoveTestCaseDialog.value = true
 }
 
+// 写入接口返回完整步骤，本地列表只保存摘要，步骤计数以保存结果为准。
+const toTestCaseSummary = ({ steps, ...testCase }) => {
+  delete testCase.linked_test_cases
+  return { ...testCase, steps_count: steps.length }
+}
+
 const moveTestCaseToFolder = async () => {
   const testCase = contextTreeNode.value
   if (!testCase) return
@@ -1036,7 +1049,7 @@ const moveTestCaseToFolder = async () => {
     const response = await updateTestCase(testCase.id, { folder: moveTargetFolder.value || null, project: projectId.value })
     const updatedTestCase = response.data
     testCases.value = testCases.value.map(item => (
-      String(item.id) === String(updatedTestCase.id) ? { ...item, ...updatedTestCase } : item
+      String(item.id) === String(updatedTestCase.id) ? toTestCaseSummary(updatedTestCase) : item
     ))
     ElMessage.success(t('uiAutomation.testCase.folder.moved'))
     showMoveTestCaseDialog.value = false
@@ -1068,7 +1081,7 @@ const loadElements = async () => {
   }
 
   const project = projectId.value
-  const request = getElements({ project, page_size: 1000, compact: 1 })
+  const request = getElements({ project, page_size: 1000 })
     .then(response => {
       if (String(projectId.value) !== String(project)) return
       availableElements.value = response.data.results || response.data
@@ -1107,7 +1120,6 @@ const fetchElementsForStep = async (step, keyword = '') => {
       project: projectId.value,
       page_name: step.element_page || undefined,
       search: normalizedKeyword || undefined,
-      compact: 1,
       page_size: 50
     })
     mergeAvailableElements(response.data.results || response.data)
@@ -1162,6 +1174,7 @@ const loadPages = async () => {
 }
 
 const onProjectChange = async () => {
+  testCaseDetailRequestId += 1
   selectedTestCase.value = null
   currentSteps.value = []
   currentVariables.value = loadUiVariables(projects.value.find(project => String(project.id) === String(projectId.value))?.variables || [])
@@ -1292,22 +1305,27 @@ const hydrateTestCaseSteps = (steps = []) => steps.map(step => {
 })
 
 const selectTestCase = async (testCase) => {
+  const requestId = ++testCaseDetailRequestId
   // 如果点击的是同一个用例，不做任何处理
   if (selectedTestCase.value && selectedTestCase.value.id === testCase.id) {
     return
   }
 
-  // 列表数据可能没有最新步骤，切换时读取详情确保元素关联信息完整。
-  let selected = testCase
+  // 摘要不含步骤，详情失败时保留当前编辑内容，禁止把失败当作空步骤保存。
+  const project = projectId.value
+  let selected
   try {
     const response = await getTestCaseDetail(testCase.id)
     selected = response.data
   } catch (error) {
-    console.warn('获取测试用例详情失败，使用列表数据:', error)
+    if (requestId !== testCaseDetailRequestId || project !== projectId.value) return
+    ElMessage.error(t('uiAutomation.testCase.messages.loadDetailFailed'))
+    console.error('获取测试用例详情失败:', error)
+    return
   }
   // 等待项目级元素库缓存完成，再渲染步骤，确保下拉框显示完整元素信息。
-  currentSteps.value = []
   await elementsReady.value
+  if (requestId !== testCaseDetailRequestId || project !== projectId.value) return
   selectedTestCase.value = selected
   // 确保步骤数据格式正确，添加前端需要的字段
   if (selected.steps && selected.steps.length > 0) {
@@ -1403,7 +1421,7 @@ const saveTestCase = async () => {
     // 更新本地数据
     const index = testCases.value.findIndex(tc => tc.id === selectedTestCase.value.id)
     if (index !== -1) {
-      testCases.value[index] = savedTestCase
+      testCases.value[index] = toTestCaseSummary(savedTestCase)
     }
     selectedTestCase.value = savedTestCase
   } catch (error) {
@@ -1412,7 +1430,17 @@ const saveTestCase = async () => {
     }
 }
 
+// 异步远程执行完成后，复用现有结果面板。
+const remoteCaseFinished = session => {
+  remoteSessionId.value = null
+  isRunning.value = false
+  executionResult.value = session.result || { success: false, logs: session.error || t('uiAutomation.remote.ended'), errors: [], screenshots: [] }
+  resultActiveTab.value = 'logs'
+  showSteps.value = false
+}
+
 const runTestCase = async (testCase) => {
+  remoteSessionId.value = null
   isRunning.value = true
   try {
     const modeText = headlessMode.value ? t('uiAutomation.testCase.runMode.headless') : t('uiAutomation.testCase.runMode.headed')
@@ -1426,6 +1454,11 @@ const runTestCase = async (testCase) => {
       storage_state_id: selectedEngine.value === 'playwright' ? selectedStorageStateId.value : null
     })
 
+    if (response.data.remote_session_id) {
+      remoteSessionId.value = response.data.remote_session_id
+      remoteDesktop.value.open(remoteSessionId.value)
+      return
+    }
     executionResult.value = response.data
     resultActiveTab.value = 'logs'
     showSteps.value = false  // 自动切换到结果视图
@@ -1443,7 +1476,7 @@ const runTestCase = async (testCase) => {
     console.error('执行测试用例失败:', error)
 
     // 即使出错也要设置执行结果,显示错误信息
-    const errorMessage = error.response?.data?.message || error.message || '执行失败'
+    const errorMessage = error.response?.data?.error || error.response?.data?.message || error.message || '执行失败'
     const errorLogs = error.response?.data?.logs || `测试用例执行出错\n\n错误信息: ${errorMessage}`
 
     // 格式化错误信息为统一的对象格式
@@ -1468,7 +1501,7 @@ const runTestCase = async (testCase) => {
 
     ElMessage.error(t('uiAutomation.testCase.run.failedWithMessage', { message: errorMessage }))
   } finally {
-    isRunning.value = false
+    if (!remoteSessionId.value) isRunning.value = false
   }
 }
 
@@ -1540,10 +1573,10 @@ const copyTestCase = async (testCase) => {
     const index = testCases.value.findIndex(tc => tc.id === testCase.id)
     if (index !== -1) {
       // 在原用例下方插入新用例
-      testCases.value.splice(index + 1, 0, response.data)
+      testCases.value.splice(index + 1, 0, toTestCaseSummary(response.data))
     } else {
       // 如果找不到，就添加到末尾
-      testCases.value.push(response.data)
+      testCases.value.push(toTestCaseSummary(response.data))
     }
   } catch (error) {
     if (error !== 'cancel') {
@@ -1766,7 +1799,7 @@ const saveTestCaseForm = async () => {
       const response = await createTestCase(data)
       savedAutomationCaseId = response.data.id
       ElMessage.success(t('uiAutomation.testCase.create.success'))
-      testCases.value.push(response.data)
+      testCases.value.push(toTestCaseSummary(response.data))
     }
 
     const formalCaseId = route.query.automation_for_test_case_id

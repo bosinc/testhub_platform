@@ -27,7 +27,10 @@ from .views import (
 )
 from .views_config import EnvironmentConfigViewSet, AIIntelligentModeConfigViewSet
 
+from .remote.views import RemoteSessionViewSet
+
 router = DefaultRouter()
+router.register(r'remote-sessions', RemoteSessionViewSet, basename='ui-remote-session')
 router.register(r'dashboard', UiDashboardViewSet, basename='dashboard')
 router.register(r'projects', UiProjectViewSet)
 router.register(r'storage-states', StorageStateViewSet)

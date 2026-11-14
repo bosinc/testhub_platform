@@ -836,6 +836,31 @@ class TestCaseExecution(models.Model):
         return f"{self.test_case.name} - {self.created_at.strftime('%Y-%m-%d %H:%M:%S')}"
 
 
+class UiRemoteSession(models.Model):
+    """一次有头执行的私有桌面；槽位跨应用 worker 唯一，结束后释放。"""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    owner = models.ForeignKey(User, on_delete=models.CASCADE)
+    execution = models.OneToOneField(TestExecution, null=True, blank=True, on_delete=models.CASCADE)
+    case_execution = models.OneToOneField(TestCaseExecution, null=True, blank=True, on_delete=models.CASCADE)
+    node = models.CharField(max_length=100)
+    slot = models.CharField(max_length=150, unique=True, null=True, blank=True)
+    display = models.CharField(max_length=20)
+    port = models.PositiveIntegerField()
+    status = models.CharField(max_length=20, default='starting')
+    error = models.TextField(blank=True)
+    stop_requested = models.BooleanField(default=False)
+    connected_at = models.DateTimeField(null=True, blank=True)
+    heartbeat_at = models.DateTimeField(default=timezone.now)
+    expires_at = models.DateTimeField()
+    # 仅用于定向回收异常退出后遗留的显示进程，不向前端暴露。
+    resources = models.JSONField(default=dict)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'ui_remote_sessions'
+
+
 class OperationRecord(models.Model):
     """操作记录模型"""
     OPERATION_TYPE_CHOICES = [

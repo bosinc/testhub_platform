@@ -216,6 +216,7 @@ import {
   getTestScriptDetail,
   updateTestScript,
   getElementTree,
+  getElementDetail,
   getElementGroupTree,
   validateElementLocator
 } from '@/api/ui_automation'
@@ -368,6 +369,8 @@ const updateCursorPosition = () => {
 }
 
 const onProjectChange = async () => {
+  // 切换项目时使旧详情请求失效，包括快速切回原项目的情况。
+  elementDetailRequestId += 1
   elementTree.value = []
   selectedElementDetail.value = null
   executionLogs.value = []
@@ -407,15 +410,25 @@ const filterElementNode = (value, data) => {
 }
 
 const handleElementClick = (data) => {
-  if (data.type === 'element') {
-    selectedElementDetail.value = data
-    rightActiveTab.value = 'elementDetail'
-  }
+  if (data.type === 'element') showElementDetail(data)
 }
 
-const showElementDetail = (element) => {
-  selectedElementDetail.value = element
-  rightActiveTab.value = 'elementDetail'
+let elementDetailRequestId = 0
+const showElementDetail = async (element) => {
+  // 树不再携带描述和引用统计，查看详情时按需读取；忽略快速切换后的过期响应。
+  const requestId = ++elementDetailRequestId
+  const project = projectId.value
+  selectedElementDetail.value = null
+  try {
+    const response = await getElementDetail(element.id)
+    if (requestId !== elementDetailRequestId || project !== projectId.value) return
+    selectedElementDetail.value = { ...response.data, type: 'element' }
+    rightActiveTab.value = 'elementDetail'
+  } catch (error) {
+    if (requestId !== elementDetailRequestId || project !== projectId.value) return
+    ElMessage.error(t('uiAutomation.element.messages.loadFailed'))
+    console.error('获取元素详情失败:', error)
+  }
 }
 
 const insertElementCode = (element) => {

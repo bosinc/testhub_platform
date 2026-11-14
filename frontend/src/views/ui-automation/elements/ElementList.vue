@@ -52,7 +52,7 @@
         <el-table-column prop="description" :label="$t('uiAutomation.common.description')" min-width="200" show-overflow-tooltip />
         <el-table-column :label="$t('uiAutomation.element.locatorStrategy')" width="100">
           <template #default="{ row }">
-            {{ row.locator_strategy?.name || $t('uiAutomation.element.unknown') }}
+            {{ row.locator_strategy || $t('uiAutomation.element.unknown') }}
           </template>
         </el-table-column>
         <el-table-column prop="locator_value" :label="$t('uiAutomation.element.locatorValue')" min-width="200" show-overflow-tooltip />

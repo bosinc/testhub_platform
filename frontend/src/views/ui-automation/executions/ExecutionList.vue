@@ -275,6 +275,7 @@ import { useI18n } from 'vue-i18n'
 import { getPreferredProjectId, useRememberedProject } from '@/utils/projectSelection'
 import {
   getTestCaseExecutions,
+  getTestCaseExecutionDetail,
   getUiProjects,
   deleteTestCaseExecution,
   batchDeleteTestCaseExecutions,
@@ -308,6 +309,7 @@ const selectedIds = ref([])
 const showDetailDialog = ref(false)
 const activeTab = ref('logs')
 const currentExecution = ref(null)
+let executionDetailRequestId = 0
 
 // 重跑对话框相关
 const showRerunDialogVisible = ref(false)
@@ -482,6 +484,10 @@ const loadExecutions = async () => {
 
 // 项目变更处理
 const onProjectChange = () => {
+  // 项目切换使在途详情请求失效，避免回显上一个项目的执行信息。
+  executionDetailRequestId++
+  showDetailDialog.value = false
+  currentExecution.value = null
   queryParams.search = ''
   queryParams.status = ''
   queryParams.browser = ''
@@ -561,10 +567,20 @@ const handleBatchDelete = () => {
 }
 
 // 查看执行详情
-const viewExecutionDetail = (execution) => {
-  currentExecution.value = execution
-  activeTab.value = 'logs'
-  showDetailDialog.value = true
+const viewExecutionDetail = async (execution) => {
+  // 列表只含摘要；按需加载完整详情，并忽略快速切换记录后的过期响应。
+  const requestId = ++executionDetailRequestId
+  try {
+    const response = await getTestCaseExecutionDetail(execution.id)
+    if (requestId !== executionDetailRequestId) return
+    currentExecution.value = response.data
+    activeTab.value = 'logs'
+    showDetailDialog.value = true
+  } catch (error) {
+    if (requestId !== executionDetailRequestId) return
+    ElMessage.error(t('uiAutomation.execution.messages.loadDetailFailed'))
+    console.error('加载执行详情失败:', error)
+  }
 }
 
 // 显示重跑对话框

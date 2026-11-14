@@ -35,6 +35,12 @@ services:
       TRUST_PROXY_SSL_HEADER: ${TRUST_PROXY_SSL_HEADER:-False}
       CSRF_COOKIE_SECURE: ${CSRF_COOKIE_SECURE:-False}
       SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-False}
+      # 仅远程有头执行创建私有桌面；默认关闭，不改变本地或无头执行路径。
+      UI_REMOTE_ENABLED: ${UI_REMOTE_ENABLED:-False}
+      UI_REMOTE_MAX_SESSIONS: ${UI_REMOTE_MAX_SESSIONS:-4}
+      UI_REMOTE_TIMEOUT: ${UI_REMOTE_TIMEOUT:-900}
+      UI_REMOTE_CONNECT_WAIT: ${UI_REMOTE_CONNECT_WAIT:-15}
+      UI_REMOTE_NODE: ${UI_REMOTE_NODE:-local}
     ports:
       # BIND_HOST=127.0.0.1 用于同机宿主机 Nginx 终止 TLS；默认 0.0.0.0 用于 ALB/负载均衡回源（由安全组限制来源）
       - "${BIND_HOST:-0.0.0.0}:${FRONTEND_PORT:-80}:80"

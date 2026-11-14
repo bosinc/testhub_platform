@@ -856,6 +856,14 @@ export function getTestCaseExecutions(params) {
   })
 }
 
+// 获取测试用例执行详情（日志、截图及错误信息不随列表返回）
+export function getTestCaseExecutionDetail(id) {
+  return request({
+    url: `/ui-automation/test-case-executions/${id}/`,
+    method: 'get'
+  })
+}
+
 // 删除测试用例执行记录
 export function deleteTestCaseExecution(id) {
   return request({
@@ -1194,4 +1202,17 @@ export function exportAIExecutionReportPDF(id, params = {}) {
     params,
     responseType: 'blob'
   })
+}
+
+// 远程有头会话的访问凭据由后端按当前用户签发，不暴露 VNC 内部地址。
+export function getUiRemoteSession(id) {
+  return request({ url: `/ui-automation/remote-sessions/${id}/`, method: 'get' })
+}
+
+export function connectUiRemoteSession(id) {
+  return request({ url: `/ui-automation/remote-sessions/${id}/connect/`, method: 'post' })
+}
+
+export function stopUiRemoteSession(id) {
+  return request({ url: `/ui-automation/remote-sessions/${id}/stop/`, method: 'post' })
 }

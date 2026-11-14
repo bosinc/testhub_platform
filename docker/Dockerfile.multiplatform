@@ -26,6 +26,7 @@ RUN printf '#!/bin/sh\nexit 101\n' > /usr/sbin/policy-rc.d \
        build-essential libffi-dev libssl-dev libgl1 libglib2.0-0 libzbar0 \
        adb default-jre-headless ca-certificates curl xz-utils libaio1 libnuma1 \
        libncurses6 libtirpc3 redis-server nginx supervisor \
+       xvfb xauth x11-utils x11vnc fluxbox novnc \
     && rm -rf /var/lib/apt/lists/* \
     && rm -f /etc/nginx/sites-enabled/default \
     && groupadd --system mysql \
@@ -157,6 +158,7 @@ subprocess.run(
         'worker',
         'scheduler',
         'nginx',
+        *(['ui-remote-reaper'] if os.environ.get('UI_REMOTE_ENABLED', 'False').lower() in ('true', '1', 'yes', 'on') else []),
     ],
     check=True,
 )
@@ -245,6 +247,20 @@ stderr_logfile_maxbytes=0
 command=/usr/local/bin/python manage.py run_all_scheduled_tasks --interval=60
 directory=/app
 priority=30
+autostart=false
+autorestart=true
+stopasgroup=true
+killasgroup=true
+stdout_logfile=/dev/stdout
+stdout_logfile_maxbytes=0
+stderr_logfile=/dev/stderr
+stderr_logfile_maxbytes=0
+
+# 清理器只在显式开启远程调试时由 bootstrap 启动。
+[program:ui-remote-reaper]
+command=/usr/local/bin/python -m apps.ui_automation.remote.cleanup --watch
+directory=/app
+priority=35
 autostart=false
 autorestart=true
 stopasgroup=true

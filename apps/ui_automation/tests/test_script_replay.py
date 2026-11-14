@@ -39,7 +39,7 @@ with sync_playwright() as playwright:
         self.assertEqual(result['locator_count'], 1)
         self.assertEqual(result['start_url'], 'https://example.com/login')
         self.assertIn("os.environ.get('HEADLESS', '0')", result['normalized_content'])
-        self.assertIn("os.environ.get('TESTHUB_BASE_URL') or 'https://example.com/login'", result['normalized_content'])
+        self.assertIn("os.environ.get('BASE_URL') or 'https://example.com/login'", result['normalized_content'])
 
     def test_dangerous_import_is_rejected(self):
         with self.assertRaisesRegex(ScriptSecurityError, '不允许导入 subprocess'):
@@ -80,7 +80,7 @@ with sync_playwright() as p:
 
         normalized = analyze_script(source)['normalized_content']
 
-        self.assertIn("os.environ.get('TESTHUB_BASE_URL') or 'https://example.com'", normalized)
+        self.assertIn("os.environ.get('BASE_URL') or 'https://example.com'", normalized)
 
     def test_preflight_reports_the_four_recording_risk_categories(self):
         content = '''from playwright.sync_api import sync_playwright
@@ -116,7 +116,7 @@ with sync_playwright() as p:
 ''')
 
         self.assertIn('_testhub_toggle_click', result['normalized_content'])
-        self.assertIn('TESTHUB_WORKDIR', result['normalized_content'])
+        self.assertIn('WORKDIR', result['normalized_content'])
         self.assertEqual({item['category'] for item in result['optimizations']}, {'toggle_state', 'environment_coupling'})
 
 
@@ -331,7 +331,7 @@ with sync_playwright() as p:
         self.assertNotIn('运行时适配已启用', execution.execution_logs)
         self.assertIn('执行结果：failed', execution.execution_logs)
         self.assertIn('排查建议：', execution.execution_logs)
-        self.assertIn('TESTHUB_WORKDIR', analyze_script(content)['normalized_content'])
+        self.assertIn('WORKDIR', analyze_script(content)['normalized_content'])
 
     def test_actual_headless_chromium_launch_is_recorded_as_passed(self):
         browser_cache = Path(get_playwright_browsers_path())

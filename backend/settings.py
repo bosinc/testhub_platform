@@ -350,6 +350,15 @@ CHANNEL_LAYERS = {
     },
 }
 
+# 只有显式开启且使用有头模式时才分配远程桌面；本地/无头执行不受影响。
+UI_REMOTE_ENABLED = config('UI_REMOTE_ENABLED', default=False, cast=bool)
+UI_REMOTE_MAX_SESSIONS = config('UI_REMOTE_MAX_SESSIONS', default=4, cast=int)
+UI_REMOTE_TIMEOUT = config('UI_REMOTE_TIMEOUT', default=900, cast=int)
+UI_REMOTE_CONNECT_WAIT = config('UI_REMOTE_CONNECT_WAIT', default=15, cast=int)
+UI_REMOTE_DISPLAY_BASE = config('UI_REMOTE_DISPLAY_BASE', default=100, cast=int)
+UI_REMOTE_PORT_BASE = config('UI_REMOTE_PORT_BASE', default=5900, cast=int)
+UI_REMOTE_NODE = config('UI_REMOTE_NODE', default='local')
+
 # 短信配置当前停用；保留环境变量映射，恢复短信功能时再取消注释。
 # SMS_ACCESS_KEY_ID = config('SMS_ACCESS_KEY_ID', default='')
 # SMS_ACCESS_KEY_SECRET = config('SMS_ACCESS_KEY_SECRET', default='')

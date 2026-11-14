@@ -251,6 +251,7 @@
     </el-dialog>
 
     <!-- 运行配置对话框 -->
+    <el-button v-if="remoteSessionId" @click="remoteDesktop.open(remoteSessionId)">{{ t('uiAutomation.remote.latestView') }}</el-button>
     <el-dialog v-model="showRunDialog" :title="$t('uiAutomation.suite.runConfig')" width="600px" :close-on-click-modal="false">
       <el-form :model="runConfig" label-width="120px">
         <el-form-item :label="$t('uiAutomation.suite.testEngine')">
@@ -294,9 +295,11 @@
       </template>
     </el-dialog>
   </div>
+  <UiRemoteDialog ref="remoteDesktop" @finished="remoteSuiteFinished" />
 </template>
 
 <script setup>
+import UiRemoteDialog from '@/components/ui-automation/UiRemoteDialog.vue'
 import { ref, reactive, computed, nextTick, onMounted, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
@@ -342,6 +345,14 @@ const isEditing = ref(false)
 const currentSuiteId = ref(null)
 const saving = ref(false)
 const running = ref(false)
+const remoteDesktop = ref(null)
+const remoteSessionId = ref(null)
+const remoteSuiteFinished = session => {
+  remoteSessionId.value = null
+  loadSuites()
+  if (session.execution_status === 'SUCCESS') ElMessage.success(t('uiAutomation.suite.messages.executeSuccess'))
+  else if (session.error) ElMessage.error(session.error)
+}
 
 // 表单数据
 const createForm = reactive({
@@ -632,7 +643,7 @@ const runSuite = async (suite) => {
   runConfig.storage_state_id = null
   runConfig.headless = true
   try {
-    const response = await getStorageStates({ project: suite.project?.id || suite.project_id, page_size: 200 })
+    const response = await getStorageStates({ project: suite.project, page_size: 200 })
     storageStates.value = response.data.results || response.data
   } catch { storageStates.value = [] }
   showRunDialog.value = true
@@ -651,6 +662,10 @@ const confirmRunSuite = async () => {
     }
 
     const response = await runTestSuite(currentRunningSuite.value.id, requestData)
+    if (response.data.remote_session_id) {
+      remoteSessionId.value = response.data.remote_session_id
+      remoteDesktop.value.open(remoteSessionId.value)
+    }
 
     ElMessage.success(t('uiAutomation.suite.messages.startSuccess'))
     showRunDialog.value = false
@@ -659,7 +674,7 @@ const confirmRunSuite = async () => {
     await loadSuites()
 
     // 开始轮询检查执行状态
-    pollSuiteStatus(currentRunningSuite.value.id)
+    if (!response.data.remote_session_id) pollSuiteStatus(currentRunningSuite.value.id)
   } catch (error) {
     console.error('执行测试套件失败:', error)
     // 如果后端返回了错误消息，显示具体错误

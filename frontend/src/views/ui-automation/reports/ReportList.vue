@@ -318,6 +318,7 @@ import { Refresh, Document, Delete, WarningFilled } from '@element-plus/icons-vu
 import {
   getUiProjects,
   getTestExecutions,
+  getTestExecutionDetail,
   deleteTestExecution
 } from '@/api/ui_automation'
 
@@ -386,6 +387,9 @@ const loadReports = async () => {
 
 // 项目切换
 const onProjectChange = async () => {
+  reportDetailRequestId += 1
+  showDetailDialog.value = false
+  currentReport.value = null
   pagination.currentPage = 1
   await loadReports()
 }
@@ -407,9 +411,20 @@ const handleCurrentChange = async () => {
 }
 
 // 查看报告详情
-const viewReportDetail = (report) => {
-  currentReport.value = report
-  showDetailDialog.value = true
+let reportDetailRequestId = 0
+const viewReportDetail = async (report) => {
+  // 列表不包含执行结果和日志，打开详情时再读取，并忽略快速切换后的过期响应。
+  const requestId = ++reportDetailRequestId
+  try {
+    const response = await getTestExecutionDetail(report.id)
+    if (requestId !== reportDetailRequestId) return
+    currentReport.value = response.data
+    showDetailDialog.value = true
+  } catch (error) {
+    if (requestId !== reportDetailRequestId) return
+    ElMessage.error(t('uiAutomation.report.messages.loadDetailFailed'))
+    console.error('加载报告详情失败:', error)
+  }
 }
 
 // 获取用例执行列表
