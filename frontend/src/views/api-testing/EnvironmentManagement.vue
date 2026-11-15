@@ -93,6 +93,11 @@
           </el-select>
         </el-form-item>
 
+        <el-form-item :label="$t('apiTesting.requestEditor.baseUrl')" prop="base_url">
+          <el-input v-model="form.base_url" :placeholder="$t('apiTesting.requestEditor.baseUrlPlaceholder')" />
+          <el-text size="small" type="info">{{ $t('apiTesting.requestEditor.baseUrlHint') }}</el-text>
+        </el-form-item>
+
         <el-form-item :label="$t('apiTesting.environment.environmentVariables')" prop="variables">
           <div class="variables-editor">
             <div class="variables-header">
@@ -166,6 +171,7 @@
       width="600px"
     >
       <div v-if="viewingEnvironment" class="view-variables">
+        <p>{{ $t('apiTesting.requestEditor.baseUrl') }} {{ viewingEnvironment.base_url }}</p>
         <el-table :data="viewVariables" style="width: 100%">
           <el-table-column prop="key" :label="$t('apiTesting.environment.variableName')" width="150" />
           <el-table-column prop="initialValue" :label="$t('apiTesting.environment.initialValue')" />
@@ -188,6 +194,7 @@ import { Plus, Delete } from '@element-plus/icons-vue'
 import api from '@/utils/api'
 import EnvironmentTable from './components/EnvironmentTable.vue'
 import { getPreferredProjectId, useRememberedProject } from '@/utils/projectSelection'
+import { validateBaseUrl } from '@/utils/requestDraft'
 
 const { t } = useI18n()
 const activeTab = ref('GLOBAL')
@@ -206,11 +213,12 @@ const formRef = ref()
 
 const form = reactive({
   name: '',
+  base_url: '',
   scope: 'GLOBAL',
   project: null,
   variables: [
     {
-      key: 'baseUrl',
+      key: '',
       initialValue: '',
       currentValue: ''
     }
@@ -224,6 +232,10 @@ const rules = computed(() => ({
   scope: [
     { required: true, message: t('apiTesting.common.pleaseSelect'), trigger: 'change' }
   ],
+  base_url: [{
+    validator: (rule, value, callback) => callback(validateBaseUrl(value, true) ? undefined : new Error(t('apiTesting.requestEditor.invalidBaseUrl'))),
+    trigger: 'blur'
+  }],
   project: [
     {
       validator: (rule, value, callback) => {
@@ -312,9 +324,10 @@ const openCreateDialog = () => {
   editingEnvironment.value = null
   Object.assign(form, {
     name: '',
+    base_url: '',
     scope: 'GLOBAL',
     project: null,
-    variables: [{ key: 'baseUrl', initialValue: '', currentValue: '' }]
+    variables: [{ key: '', initialValue: '', currentValue: '' }]
   })
   showCreateDialog.value = true
 }
@@ -336,8 +349,9 @@ const removeVariable = (index) => {
 const editEnvironment = (environment) => {
   editingEnvironment.value = environment
   form.name = environment.name
+  form.base_url = environment.base_url || ''
   form.scope = environment.scope
-  form.project = environment.project
+  form.project = typeof environment.project === 'object' ? environment.project?.id : environment.project
   
   // 转换变量格式
   const variables = environment.variables || {}
@@ -415,6 +429,7 @@ const duplicateEnvironment = async (environment) => {
   const newEnv = {
     name: `${environment.name} - Copy`,
     scope: environment.scope,
+    base_url: environment.base_url || '',
     project: environment.scope === 'LOCAL' ?
       (typeof environment.project === 'object' ? environment.project.id : environment.project) :
       null,
@@ -456,6 +471,7 @@ const submitForm = async () => {
     
     const data = {
       name: form.name,
+      base_url: form.base_url,
       scope: form.scope,
       project: form.scope === 'LOCAL' ? form.project : null,
       variables
@@ -484,20 +500,21 @@ const submitForm = async () => {
 }
 
 const resetForm = () => {
+  formRef.value?.resetFields()
   editingEnvironment.value = null
   Object.assign(form, {
     name: '',
+    base_url: '',
     scope: 'GLOBAL',
     project: null,
     variables: [
       {
-        key: 'baseUrl',
+        key: '',
         initialValue: '',
         currentValue: ''
       }
     ]
   })
-  formRef.value?.resetFields()
 }
 
 onMounted(async () => {

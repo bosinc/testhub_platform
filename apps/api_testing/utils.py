@@ -398,7 +398,16 @@ def execute_scenario_case(scenario_case, environment, executed_by, execution=Non
     （便于立即返回执行 ID 供轮询），此处直接复用并更新同一条记录。
     """
     from .models import TestExecution, RequestHistory
-    
+
+    # A scenario that owns a step tree is executed by the tree engine; the flat
+    # ScenarioCaseRequest path only remains for scenarios that were never
+    # migrated. Both return the same result shape.
+    if scenario_case.steps.exists():
+        from .scenario_executor import execute_scenario_tree
+
+        return execute_scenario_tree(
+            scenario_case, environment, executed_by, execution=execution)
+
     try:
         # 创建变量解析器
         resolver = VariableResolver()
@@ -670,9 +679,12 @@ def execute_test_suite(test_suite, environment, executed_by, suite_execution=Non
                 executed_by,
             )
             failed_count = result.get('failed_count', 0)
-            # 0 请求的场景不算通过（与 MCP 套件执行器保持同一判定）。
+            # A step-tree run reports an explicit verdict, so a scenario made only
+            # of wait/script steps is allowed to pass with zero HTTP requests.
+            # Legacy flat runs keep the "0 requests is not a pass" rule.
+            has_verdict = 'conclusion' in result
             succeeded = (bool(result.get('success')) and failed_count == 0
-                         and bool(result.get('total_count')))
+                         and (has_verdict or bool(result.get('total_count'))))
             if succeeded:
                 passed += 1
             else:

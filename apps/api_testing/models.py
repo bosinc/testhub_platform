@@ -2,6 +2,7 @@ from django.db import models
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 import json
+import uuid
 from apps.projects.models import Project
 from apps.projects.managers import ActiveProjectManager
 
@@ -101,8 +102,10 @@ class ApiRequest(models.Model):
                                     verbose_name='请求类型')
     method = models.CharField(max_length=10, choices=HTTP_METHODS, default='GET', verbose_name='请求方法')
     url = models.TextField(verbose_name='请求URL')
-    headers = models.JSONField(default=dict, verbose_name='请求头')
-    params = models.JSONField(default=dict, verbose_name='URL参数')
+    headers = models.JSONField(default=list, verbose_name='请求头')
+    params = models.JSONField(default=list, verbose_name='URL参数')
+    path_params = models.JSONField(default=list, verbose_name='路径参数')
+    settings = models.JSONField(default=dict, verbose_name='请求设置')
     body = models.JSONField(default=dict, verbose_name='请求体')
     auth = models.JSONField(default=dict, verbose_name='认证信息')
     pre_request_script = models.TextField(blank=True, verbose_name='请求前脚本')
@@ -135,6 +138,7 @@ class Environment(models.Model):
     name = models.CharField(max_length=200, verbose_name='环境名称')
     scope = models.CharField(max_length=10, choices=SCOPE_CHOICES, verbose_name='作用域')
     variables = models.JSONField(default=dict, verbose_name='环境变量')
+    base_url = models.TextField(blank=True, default='', verbose_name='前置URL')
     is_active = models.BooleanField(default=False, verbose_name='是否激活')
     project = models.ForeignKey(ApiProject, on_delete=models.CASCADE, null=True, blank=True,
                                 related_name='environments', verbose_name='关联项目')
@@ -207,6 +211,9 @@ class ScenarioCase(models.Model):
     folder = models.ForeignKey(ScenarioCaseFolder, null=True, blank=True, on_delete=models.SET_NULL,
                                related_name='scenario_cases', verbose_name='所属文件夹')
     requests = models.ManyToManyField(ApiRequest, through='ScenarioCaseRequest', verbose_name='包含请求')
+    # Initial variables only; extracted runtime values are never written back here.
+    variables = models.JSONField(default=dict, verbose_name='场景初始变量')
+    execution_config = models.JSONField(default=dict, verbose_name='执行配置')
     environment = models.ForeignKey(Environment, on_delete=models.SET_NULL, null=True, blank=True,
                                     verbose_name='执行环境')
     created_by = models.ForeignKey(User, on_delete=models.CASCADE, related_name='scenario_cases',
@@ -222,6 +229,43 @@ class ScenarioCase(models.Model):
 
     def __str__(self):
         return self.name
+
+
+class ScenarioStep(models.Model):
+    """Ordered step in a scenario tree.
+
+    Steps keep their own configuration snapshot. ``source_type``/``source_id``
+    only record where a step came from or which scenario it references, so the
+    same source request can appear in several steps.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, verbose_name='步骤ID')
+    scenario_case = models.ForeignKey(ScenarioCase, on_delete=models.CASCADE, related_name='steps',
+                                      verbose_name='所属场景')
+    parent = models.ForeignKey('self', null=True, blank=True, on_delete=models.CASCADE,
+                               related_name='children', verbose_name='父步骤')
+    position = models.PositiveIntegerField(default=0, verbose_name='同级顺序')
+    type = models.CharField(max_length=20, verbose_name='步骤类型')
+    name = models.CharField(max_length=255, verbose_name='步骤名称')
+    enabled = models.BooleanField(default=True, verbose_name='是否启用')
+    config = models.JSONField(default=dict, verbose_name='步骤配置')
+    source_type = models.CharField(max_length=32, null=True, blank=True, verbose_name='来源类型')
+    source_id = models.CharField(max_length=64, null=True, blank=True, verbose_name='来源ID')
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='创建时间')
+    updated_at = models.DateTimeField(auto_now=True, verbose_name='更新时间')
+
+    class Meta:
+        db_table = 'api_scenario_steps'
+        verbose_name = '场景步骤'
+        verbose_name_plural = '场景步骤'
+        ordering = ['position', 'id']
+        indexes = [
+            models.Index(fields=['scenario_case', 'parent', 'position'],
+                         name='api_step_tree_order_idx'),
+            models.Index(fields=['source_type', 'source_id'], name='api_step_source_idx'),
+        ]
+
+    def __str__(self):
+        return f'{self.scenario_case_id} - {self.name}'
 
 
 class ScenarioCaseRequest(models.Model):
@@ -300,11 +344,19 @@ class TestExecution(models.Model):
                                       verbose_name='场景用例')
     status = models.CharField(max_length=20, choices=EXECUTION_STATUS_CHOICES, default='PENDING',
                               verbose_name='执行状态')
+    # Lifecycle (status) and test verdict (conclusion) are separate: a run that
+    # finishes normally with failed assertions is COMPLETED + FAILED, while a
+    # crash or a user cancellation is never reported as a passed test.
+    conclusion = models.CharField(max_length=20, blank=True, default='', verbose_name='测试结论')
     start_time = models.DateTimeField(null=True, blank=True, verbose_name='开始时间')
     end_time = models.DateTimeField(null=True, blank=True, verbose_name='结束时间')
+    heartbeat_at = models.DateTimeField(null=True, blank=True, verbose_name='心跳时间')
+    cancel_requested = models.BooleanField(default=False, verbose_name='已请求取消')
+    environment_snapshot = models.JSONField(default=dict, blank=True, verbose_name='执行环境快照')
     total_requests = models.IntegerField(default=0, verbose_name='总请求数')
     passed_requests = models.IntegerField(default=0, verbose_name='通过请求数')
     failed_requests = models.IntegerField(default=0, verbose_name='失败请求数')
+    skipped_steps = models.IntegerField(default=0, verbose_name='跳过步骤数')
     results = models.JSONField(default=dict, verbose_name='执行结果')
     executed_by = models.ForeignKey(User, on_delete=models.CASCADE, verbose_name='执行者')
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='创建时间')
@@ -317,6 +369,55 @@ class TestExecution(models.Model):
 
     def __str__(self):
         return f"{self.scenario_case.name} - {self.created_at}"
+
+
+class StepExecution(models.Model):
+    """One step instance of one run.
+
+    Identity is snapshotted so a report stays readable after the step definition
+    is edited or deleted. ``invocation_id`` nests through scenario references and
+    ``iteration_path`` records the loop rounds, which is what keeps repeated
+    invocations of the same step distinguishable.
+    """
+    STATUS_CHOICES = [
+        ('RUNNING', '执行中'),
+        ('PASSED', '通过'),
+        ('FAILED', '失败'),
+        ('SKIPPED', '跳过'),
+        ('CANCELLED', '已取消'),
+    ]
+
+    execution = models.ForeignKey(TestExecution, on_delete=models.CASCADE,
+                                  related_name='step_executions', verbose_name='所属执行')
+    step_id_snapshot = models.UUIDField(null=True, blank=True, verbose_name='步骤ID快照')
+    name_snapshot = models.CharField(max_length=255, blank=True, default='', verbose_name='步骤名称快照')
+    type_snapshot = models.CharField(max_length=20, blank=True, default='', verbose_name='步骤类型快照')
+    invocation_id = models.CharField(max_length=255, blank=True, default='', verbose_name='调用标识')
+    parent_invocation_id = models.CharField(max_length=255, blank=True, default='', verbose_name='父调用标识')
+    iteration_path = models.CharField(max_length=255, blank=True, default='', verbose_name='循环轮次路径')
+    sequence = models.PositiveIntegerField(default=0, verbose_name='顺序游标')
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='RUNNING',
+                              verbose_name='步骤状态')
+    request_data = models.JSONField(default=dict, blank=True, verbose_name='请求数据')
+    response_data = models.JSONField(default=dict, blank=True, verbose_name='响应数据')
+    assertion_results = models.JSONField(default=list, blank=True, verbose_name='断言结果')
+    extraction_results = models.JSONField(default=list, blank=True, verbose_name='提取结果')
+    logs = models.JSONField(default=list, blank=True, verbose_name='脚本日志')
+    started_at = models.DateTimeField(null=True, blank=True, verbose_name='开始时间')
+    finished_at = models.DateTimeField(null=True, blank=True, verbose_name='结束时间')
+    error = models.TextField(blank=True, default='', verbose_name='错误信息')
+
+    class Meta:
+        db_table = 'api_step_executions'
+        verbose_name = '步骤执行记录'
+        verbose_name_plural = '步骤执行记录'
+        ordering = ['sequence']
+        indexes = [
+            models.Index(fields=['execution', 'sequence'], name='api_step_exec_seq_idx'),
+        ]
+
+    def __str__(self):
+        return f'{self.execution_id} #{self.sequence} {self.name_snapshot}'
 
 
 class ApiSuiteExecution(models.Model):

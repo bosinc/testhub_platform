@@ -103,7 +103,7 @@ export class RequestModelParser {
       const body: Body = { mode: 'none' }
       if (request.postData) {
         const postData = request.postData
-        const contentType = headers.find(h => h.key.toLowerCase() === 'content-type')?.value
+        const contentType = headers.find(h => h.key.toLowerCase() === 'content-type')?.value || postData.mimeType
         
         if (contentType?.includes('application/json')) {
           body.mode = 'json'
@@ -119,6 +119,10 @@ export class RequestModelParser {
                 type: 'text', 
                 enabled: true 
               })
+            })
+          } else if (postData.text) {
+            new URLSearchParams(postData.text).forEach((value, key) => {
+              body.urlencoded?.push({ key, value, type: 'text', enabled: true })
             })
           }
         } else if (contentType?.includes('multipart/form-data')) {
@@ -152,7 +156,6 @@ export class RequestModelParser {
       }
     } catch (error: any) {
       console.error('Failed to parse cURL command:', error)
-      console.error('cURL command:', curlCommand)
       const errorMessage = error?.message || error?.toString() || 'Unknown error'
       throw new Error(`cURL命令解析失败: ${errorMessage}，请检查命令格式`)
     }
@@ -173,7 +176,9 @@ export class RequestModelParser {
       if (value.startsWith('Basic ')) {
         try {
           const decoded = atob(value.substring(6))
-          const [username, password] = decoded.split(':')
+          const separator = decoded.indexOf(':')
+          const username = separator < 0 ? decoded : decoded.slice(0, separator)
+          const password = separator < 0 ? '' : decoded.slice(separator + 1)
           return {
             type: 'basic',
             username,
@@ -189,40 +194,35 @@ export class RequestModelParser {
   }
   
   static toCurl(model: RequestModel): string {
-    let curl = `curl -X ${model.method}`
-    
-    let url: URL
-    if (model.baseURL && model.path) {
-      url = new URL(model.baseURL + model.path)
-    } else if (model.baseURL) {
-      url = new URL(model.baseURL)
-    } else if (model.path) {
-      url = new URL(model.path)
-    } else {
-      throw new Error('Invalid URL: both baseURL and path are empty')
-    }
-    
-    model.query.forEach(param => {
-      if (param.enabled && param.key) {
-        url.searchParams.append(param.key, param.value)
+    const quote = (value: unknown) => `'${String(value).replace(/'/g, `'\\''`)}'`
+    const url = new URL(model.baseURL + model.path)
+    for (const row of model.query) if (row.enabled !== false && row.key) url.searchParams.append(row.key, String(row.value))
+    const auth = model.auth
+    if (auth?.type === 'api_key' && auth.addTo === 'query' && auth.key) url.searchParams.append(auth.key, auth.value || '')
+    let curl = `curl -X ${quote(model.method)} ${quote(url.toString())}`
+    for (const row of model.headers) if (row.enabled !== false && row.key) curl += ` -H ${quote(`${row.key}: ${row.value}`)}`
+    if (auth?.type === 'basic') curl += ` -u ${quote(`${auth.username || ''}:${auth.password || ''}`)}`
+    if (auth?.type === 'bearer') curl += ` -H ${quote(`Authorization: Bearer ${auth.token || ''}`)}`
+    if (auth?.type === 'api_key' && auth.addTo !== 'query' && auth.key) curl += ` -H ${quote(`${auth.key}: ${auth.value || ''}`)}`
+    if (model.body.mode === 'json') {
+      if (!model.headers.some(row => row.enabled !== false && row.key.toLowerCase() === 'content-type')) curl += ` -H 'Content-Type: application/json'`
+      curl += ` --data-raw ${quote(model.body.json || '')}`
+    } else if (model.body.mode === 'raw' && model.body.raw) curl += ` --data-raw ${quote(model.body.raw)}`
+    else if (model.body.mode === 'urlencoded') {
+      for (const row of model.body.urlencoded || []) if (row.enabled !== false && row.key) curl += ` --data-urlencode ${quote(`${row.key}=${row.value}`)}`
+    } else if (model.body.mode === 'formdata') {
+      for (const row of model.body.formdata || []) {
+        if (row.enabled === false || !row.key) continue
+        if (row.type === 'file') {
+          const file = row.value as unknown as { filename: string; content_type: string }
+          // Generated examples reference the selected file name; no local path is persisted.
+          curl += ` -F ${quote(`${row.key}=@${file.filename};type=${file.content_type}`)}`
+        } else curl += ` --form-string ${quote(`${row.key}=${row.value}`)}`
       }
-    })
-    curl += ` '${url.toString()}'`
-    
-    model.headers.forEach(header => {
-      if (header.enabled && header.key) {
-        curl += ` -H '${header.key}: ${header.value}'`
-      }
-    })
-    
-    if (model.body.mode !== 'none' && model.body.raw) {
-      curl += ` -d '${model.body.raw}'`
+    } else if (model.body.mode === 'binary' && model.body.binary) {
+      curl += ` --data-binary ${quote(`@${(model.body.binary as unknown as { filename: string }).filename}`)}`
     }
-    
-    if (model.timeout) {
-      curl += ` --max-time ${model.timeout / 1000}`
-    }
-    
+    if (model.timeout) curl += ` --max-time ${Number(model.timeout) / 1000}`
     return curl
   }
   

@@ -2,6 +2,7 @@
   <div class="environment-table">
     <el-table :data="data" v-loading="loading" style="width: 100%">
       <el-table-column prop="name" :label="$t('apiTesting.component.environmentTable.environmentName')" min-width="200" />
+      <el-table-column prop="base_url" :label="$t('apiTesting.requestEditor.baseUrl')" min-width="240" show-overflow-tooltip />
       <el-table-column prop="scope" :label="$t('apiTesting.component.environmentTable.scope')" width="120">
         <template #default="scope">
           <el-tag :type="scope.row.scope === 'GLOBAL' ? 'primary' : 'success'">
@@ -67,6 +68,9 @@
           <el-descriptions :column="2" border>
             <el-descriptions-item :label="$t('apiTesting.component.environmentTable.environmentName')">
               {{ viewingEnvironment.name }}
+            </el-descriptions-item>
+            <el-descriptions-item :label="$t('apiTesting.requestEditor.baseUrl')">
+              {{ viewingEnvironment.base_url }}
             </el-descriptions-item>
             <el-descriptions-item :label="$t('apiTesting.component.environmentTable.scope')">
               <el-tag :type="viewingEnvironment.scope === 'GLOBAL' ? 'primary' : 'success'">
