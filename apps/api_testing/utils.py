@@ -1,5 +1,7 @@
 import json
 import logging
+import subprocess
+import sys
 import time
 import requests
 from requests.adapters import HTTPAdapter
@@ -120,6 +122,158 @@ def extract_response_variables(response, extractors):
     return results, extracted
 
 
+# JSONPath 断言支持的操作符。断言规则里 ``operator`` 缺省时按 ``equals`` 处理，
+# 因此历史数据（只有 type + json_path + expected）行为完全不变。
+JSON_ASSERTION_OPERATORS = (
+    'equals', 'not_equals',
+    'exists', 'not_exists',
+    'is_not_empty', 'is_empty',
+    'is_string', 'is_number', 'is_boolean', 'is_array', 'is_object',
+    'includes', 'not_includes',
+    'contains', 'not_contains',
+    'at_least', 'greater_than', 'less_than', 'close_to',
+    'length', 'matches', 'one_of',
+)
+
+
+def _assertion_to_str(value):
+    """字符串化比较，语义对齐 Apifox / JS ``String(x)``。
+
+    与 Python ``str()`` 的差异会影响断言结论，必须归一：
+    ``True`` -> ``'true'``、``None`` -> ``'null'``、``2.0`` -> ``'2'``。
+    """
+    if isinstance(value, bool):
+        return 'true' if value else 'false'
+    if value is None:
+        return 'null'
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return str(value)
+
+
+def _assertion_is_empty(value):
+    """空值判定：None / '' / [] / {} 视为空；0 与 False 视为有值。"""
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return value == ''
+    if isinstance(value, (list, tuple, dict, set)):
+        return len(value) == 0
+    return False
+
+
+# 包含解释器启动、正则编译和匹配的总预算；不能由用户断言覆盖。
+REGEX_ASSERTION_TIMEOUT_SECONDS = 0.5
+_REGEX_MATCH_WORKER = """
+import json
+import re
+import sys
+
+pattern, text = json.load(sys.stdin)
+try:
+    result = {'passed': re.search(pattern, text) is not None, 'error': None}
+except re.error as error:
+    result = {'passed': False, 'error': f'正则表达式无效: {error}'}
+json.dump(result, sys.stdout, ensure_ascii=True)
+"""
+
+
+def _match_assertion_regex(expected, actual):
+    """隔离用户正则，超时后 kill 并回收子进程，不阻塞后续断言。
+
+    保留标准库 re 的匹配语义；不用线程/Future 超时，因为无法终止回溯。
+    -I 防止子进程导入项目/Django，也可在任务工作进程及非主线程中使用。
+    """
+    try:
+        completed = subprocess.run(
+            [sys.executable, '-I', '-c', _REGEX_MATCH_WORKER],
+            input=json.dumps([str(expected), _assertion_to_str(actual)]),
+            capture_output=True,
+            text=True,
+            timeout=REGEX_ASSERTION_TIMEOUT_SECONDS,
+            check=True,
+        )
+        result = json.loads(completed.stdout)
+        return result['passed'], result['error']
+    except subprocess.TimeoutExpired:
+        # subprocess.run 已在抛出异常前强制终止并等待子进程退出。
+        return False, f'正则匹配超时（上限 {REGEX_ASSERTION_TIMEOUT_SECONDS:g} 秒）'
+    except (OSError, subprocess.CalledProcessError, ValueError, KeyError) as error:
+        return False, f'正则匹配执行失败: {type(error).__name__}'
+
+
+def _apply_json_operator(operator, actual, hits, expected, assertion):
+    """按 operator 判定 JSONPath 断言是否通过；返回 (passed, error)。"""
+    operator = (operator or 'equals').strip().lower()
+
+    if operator == 'equals':
+        return _assertion_to_str(actual) == _assertion_to_str(expected), None
+    if operator == 'not_equals':
+        return _assertion_to_str(actual) != _assertion_to_str(expected), None
+    if operator == 'exists':
+        return actual is not None, None
+    if operator == 'not_exists':
+        return actual is None, None
+    if operator == 'is_not_empty':
+        return not _assertion_is_empty(actual), None
+    if operator == 'is_empty':
+        return _assertion_is_empty(actual), None
+    if operator == 'is_string':
+        return isinstance(actual, str), None
+    if operator == 'is_number':
+        return isinstance(actual, (int, float)) and not isinstance(actual, bool), None
+    if operator == 'is_boolean':
+        return isinstance(actual, bool), None
+    if operator == 'is_array':
+        return isinstance(actual, list), None
+    if operator == 'is_object':
+        return isinstance(actual, dict), None
+    if operator in ('includes', 'not_includes'):
+        # 每个命中值按同一规则匹配：数组展开一层，标量直接匹配。
+        # 不将后续数组整体字符串化，否则会遗漏元素或误匹配数组的文本表示。
+        expected_text = _assertion_to_str(expected)
+        hit = any(
+            _assertion_to_str(value) == expected_text
+            for match in hits
+            for value in (match if isinstance(match, list) else [match])
+        )
+        return (hit if operator == 'includes' else not hit), None
+    if operator in ('contains', 'not_contains'):
+        hit = _assertion_to_str(expected) in _assertion_to_str(actual)
+        return (hit if operator == 'contains' else not hit), None
+    if operator in ('at_least', 'greater_than', 'less_than', 'close_to'):
+        try:
+            left, right = float(actual), float(expected)
+        except (TypeError, ValueError):
+            return False, f'数值比较失败：实际={actual!r} 期望={expected!r} 不可比较'
+        if operator == 'at_least':
+            return left >= right, None
+        if operator == 'greater_than':
+            return left > right, None
+        if operator == 'less_than':
+            return left < right, None
+        tolerance = assertion.get('tolerance', 0.01)
+        try:
+            tolerance = float(tolerance)
+        except (TypeError, ValueError):
+            tolerance = 0.01
+        return abs(left - right) <= tolerance + 1e-9, None
+    if operator == 'length':
+        try:
+            want = int(expected)
+        except (TypeError, ValueError):
+            return False, f'长度断言期望值不是整数: {expected!r}'
+        got = len(actual) if hasattr(actual, '__len__') else -1
+        return got == want, None
+    if operator == 'matches':
+        return _match_assertion_regex(expected, actual)
+    if operator == 'one_of':
+        options = expected if isinstance(expected, (list, tuple)) else [expected]
+        return any(_assertion_to_str(actual) == _assertion_to_str(x) for x in options), None
+
+    return False, f'不支持的断言操作符: {operator}'
+
+
 def execute_assertions(response, assertions):
     """执行断言验证"""
     results = []
@@ -128,6 +282,7 @@ def execute_assertions(response, assertions):
         result = {
             'name': assertion.get('name', '未命名断言'),
             'type': assertion.get('type'),
+            'operator': assertion.get('operator') or None,
             'passed': False,
             'expected': assertion.get('expected'),
             'actual': None,
@@ -142,7 +297,18 @@ def execute_assertions(response, assertions):
             
             if assertion_type == 'status_code':
                 actual = response.status_code
-                passed = actual == expected
+                operator = str(assertion.get('operator') or 'equals').strip().lower()
+                if operator == 'one_of':
+                    options = expected if isinstance(expected, (list, tuple)) else [expected]
+                    try:
+                        options = [int(x) for x in options]
+                    except (TypeError, ValueError):
+                        passed = False
+                        result['error'] = f'状态码集合断言期望值不是整数: {expected!r}'
+                    else:
+                        passed = actual in options
+                else:
+                    passed = actual == expected
                 
             elif assertion_type == 'response_time':
                 # 响应时间断言在调用方处理
@@ -175,9 +341,14 @@ def execute_assertions(response, assertions):
                     
                     from jsonpath_ng import parse
                     matches = parse(json_path).find(response_json)
-                    actual = matches[0].value if matches else None
-                    passed = str(actual) == str(expected_value)
-                    
+                    hits = [m.value for m in matches]
+                    actual = hits[0] if hits else None
+                    passed, operator_error = _apply_json_operator(
+                        assertion.get('operator'), actual, hits, expected_value, assertion,
+                    )
+                    if operator_error:
+                        result['error'] = operator_error
+
                     # 确保actual值被正确设置到result中
                     result['actual'] = actual
                 except json.JSONDecodeError as e:
