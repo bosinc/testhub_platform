@@ -5,9 +5,11 @@ UI自动化测试执行服务
 import time
 import json
 import logging
+from asyncio import get_running_loop
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from django.utils import timezone
-from django.db import connection
+from django.db import connection, connections
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 from selenium import webdriver
 from selenium.webdriver.common.by import By
@@ -26,11 +28,30 @@ from .variable_context import UiVariableContext, as_text
 from .playwright_engine import build_playwright_locator
 
 
+def _storage_state_db_call(callback):
+    """同步 Playwright 的事件循环存活时，将登录态 ORM 操作放到独立线程。"""
+    try:
+        get_running_loop()
+    except RuntimeError:
+        # 普通同步调用沿用当前连接，保留调用方已有的事务语义。
+        return callback()
+
+    def run():
+        try:
+            return callback()
+        finally:
+            # 临时线程退出前释放其独立连接，不能把连接带回浏览器线程。
+            connections.close_all()
+
+    with ThreadPoolExecutor(max_workers=1, thread_name_prefix='ui-storage-state') as pool:
+        return pool.submit(run).result()
+
+
 class TestExecutor:
     """测试执行器基类"""
 
     def __init__(self, test_suite=None, engine='playwright', browser='chrome', headless=False, executed_by=None,
-                 storage_state_id=None, execution=None, project=None, desktop=None):
+                 storage_state_id=None, execution=None, project=None, desktop=None, scheduled_task_id=None):
         self.desktop = desktop
         self.browser_env = desktop.env if desktop else None
         self.test_suite = test_suite
@@ -42,8 +63,9 @@ class TestExecutor:
         self.executed_by = executed_by
         self.storage_state_id = storage_state_id
         # 传入 execution 表示调用方已预建执行记录（MCP 需立即返回执行 ID），
-        # 此时不再重复创建，仅复用同一条记录落结果。
         self.execution = execution
+        # 预建套件记录和自动创建记录使用同一任务来源，并传递给逐用例记录。
+        self.scheduled_task_id = scheduled_task_id or getattr(execution, 'scheduled_task_id', None)
         self.test_cases = []
         self.results = []
         # 共享字典仅存活于这次套件运行；单用例和其他执行器各自创建上下文。
@@ -76,6 +98,7 @@ class TestExecutor:
         self.execution = TestExecution.objects.create(
             project=self.test_suite.project,
             test_suite=self.test_suite,
+            scheduled_task_id=self.scheduled_task_id,
             status='RUNNING',
             engine=self.engine,
             browser=self.browser,
@@ -300,7 +323,8 @@ class TestExecutor:
                 project_id=case_data['project_id'],
                 test_suite=self.test_suite,
                 suite_execution=self.suite_execution_ref,
-                execution_source='suite',
+                execution_source='scheduled' if self.scheduled_task_id else 'suite',
+                scheduled_task_id=self.scheduled_task_id,
                 status='pending',  # 初始状态为 pending
                 engine=self.engine,
                 browser=self.browser,
@@ -340,9 +364,9 @@ class TestExecutor:
                     initial_state = None
                     if self.storage_state_id:
                         from .models import StorageState
-                        initial_state = StorageState.objects.filter(
+                        initial_state = _storage_state_db_call(lambda: StorageState.objects.filter(
                             pk=self.storage_state_id, project_id=case_data['project_id']
-                        ).first()
+                        ).first())
                         if not initial_state:
                             raise ValueError('选择的登录态不存在或不属于当前项目')
                     self.context = browser.new_context(
@@ -627,6 +651,10 @@ class TestExecutor:
         case_execution = TestCaseExecution.objects.create(
             test_case_id=case_data['id'],
             project_id=case_data['project_id'],
+            test_suite=self.test_suite,
+            suite_execution=self.suite_execution_ref,
+            scheduled_task_id=self.scheduled_task_id,
+            execution_source='scheduled' if self.scheduled_task_id else ('suite' if self.test_suite else 'manual'),
             status='running',
             browser=self.browser,
             created_by=self.executed_by,
@@ -1474,19 +1502,31 @@ class TestExecutor:
             with tempfile.NamedTemporaryFile(suffix='.json') as state_file:
                 self.context.storage_state(path=state_file.name)
                 raw = Path(state_file.name).read_bytes()
-            if mode == 'overwrite':
-                target = StorageState.objects.filter(pk=params.get('storage_state_id'), project_id=project_id).first()
-                if not target:
-                    raise ValueError('要覆盖的登录态不存在或不属于当前项目')
-            else:
-                target = StorageState(project_id=project_id, name=name, source_url=self.current_page.url, browser='chromium', created_by=self.executed_by)
             if not name and mode != 'overwrite':
                 raise ValueError('保存登录态需要填写名称')
-            if name:
-                target.name = name
-            target.source_url = self.current_page.url
-            target.write_content(raw)
-            return target
+            # 浏览器对象只能在原线程访问，数据库线程仅接收导出内容和普通字段。
+            source_url = self.current_page.url
+            created_by_id = self.executed_by.pk if self.executed_by else None
+
+            def save_state():
+                if mode == 'overwrite':
+                    target = StorageState.objects.filter(
+                        pk=params.get('storage_state_id'), project_id=project_id
+                    ).first()
+                    if not target:
+                        raise ValueError('要覆盖的登录态不存在或不属于当前项目')
+                else:
+                    target = StorageState(
+                        project_id=project_id, name=name, browser='chromium',
+                        created_by_id=created_by_id,
+                    )
+                if name:
+                    target.name = name
+                target.source_url = source_url
+                target.write_content(raw)
+                return target
+
+            return _storage_state_db_call(save_state)
         # 切换和清除都重建上下文，保证认证数据按步骤隔离。
         if operation in {'switch', 'clear'}:
             url = self.current_page.url
@@ -1495,7 +1535,9 @@ class TestExecutor:
             state_path = None
             if operation == 'switch':
                 target_id = params.get('storage_state_id')
-                target = StorageState.objects.filter(pk=target_id, project_id=project_id).first()
+                target = _storage_state_db_call(lambda: StorageState.objects.filter(
+                    pk=target_id, project_id=project_id
+                ).first())
                 if not target:
                     raise ValueError('目标登录态不存在或不属于当前项目')
                 state_path = target.file.path
@@ -1533,7 +1575,8 @@ class TestExecutor:
                 project_id=case_data['project_id'],
                 test_suite=self.test_suite,
                 suite_execution=self.suite_execution_ref,
-                execution_source='suite',
+                execution_source='scheduled' if self.scheduled_task_id else 'suite',
+                scheduled_task_id=self.scheduled_task_id,
                 status='pending',  # 初始状态为 pending
                 engine=self.engine,
                 browser=self.browser,
@@ -2047,6 +2090,10 @@ class TestExecutor:
         case_execution = TestCaseExecution.objects.create(
             test_case_id=case_data['id'],
             project_id=case_data['project_id'],
+            test_suite=self.test_suite,
+            suite_execution=self.suite_execution_ref,
+            scheduled_task_id=self.scheduled_task_id,
+            execution_source='scheduled' if self.scheduled_task_id else ('suite' if self.test_suite else 'manual'),
             status='running',
             browser=self.browser,
             created_by=self.executed_by,
@@ -2800,10 +2847,10 @@ def _run_case_playwright(executor, case_data):
             executor._active_project_id = case_data['project_id']
             initial_state = None
             if executor.storage_state_id:
-                initial_state = StorageState.objects.filter(
+                initial_state = _storage_state_db_call(lambda: StorageState.objects.filter(
                     pk=executor.storage_state_id,
                     project_id=case_data['project_id'],
-                ).first()
+                ).first())
                 if not initial_state:
                     raise ValueError('选择的登录态不存在或不属于当前项目')
             executor.context = browser.new_context(

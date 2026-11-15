@@ -497,6 +497,7 @@ class TestSuiteWithScriptsSerializer(serializers.ModelSerializer):
 
 
 class TestExecutionSerializer(serializers.ModelSerializer):
+    scheduled_task_name = serializers.CharField(source='scheduled_task.name', default=None, read_only=True)
     project = UiProjectSerializer(read_only=True)
     test_suite = TestSuiteSerializer(read_only=True)
     test_script = TestScriptSerializer(read_only=True)
@@ -516,7 +517,7 @@ class TestExecutionSerializer(serializers.ModelSerializer):
         fields = '__all__'
         read_only_fields = (
             'created_at', 'started_at', 'finished_at', 'duration',
-            'total_cases', 'passed_cases', 'failed_cases', 'skipped_cases'
+            'total_cases', 'passed_cases', 'failed_cases', 'skipped_cases', 'scheduled_task'
         )
 
     def get_test_suite_name(self, obj):
@@ -534,6 +535,7 @@ class TestExecutionSerializer(serializers.ModelSerializer):
 
 class TestExecutionListSerializer(serializers.ModelSerializer):
     """执行列表仅返回状态、统计和关联名称，大字段由详情与日志接口按需读取。"""
+    scheduled_task_name = serializers.CharField(source='scheduled_task.name', default=None, read_only=True)
     project_name = serializers.CharField(source='project.name', read_only=True)
     test_suite_name = serializers.CharField(source='test_suite.name', default='-', read_only=True)
     test_script_name = serializers.CharField(source='test_script.name', default='-', read_only=True)
@@ -545,6 +547,7 @@ class TestExecutionListSerializer(serializers.ModelSerializer):
         fields = (
             'id', 'project', 'project_name', 'test_suite', 'test_suite_name',
             'test_script', 'test_script_name', 'executed_by', 'executed_by_name',
+            'scheduled_task', 'scheduled_task_name',
             'environment', 'status', 'engine', 'browser', 'headless', 'execution_type',
             'total_cases', 'passed_cases', 'failed_cases', 'skipped_cases', 'pass_rate',
             'started_at', 'finished_at', 'duration', 'report_url', 'created_at',
@@ -742,14 +745,19 @@ class ElementListSerializer(serializers.ModelSerializer):
 class ElementTreeSerializer(ElementListSerializer):
     """树节点只保留展示和定位所需字段，引用次数由详情接口提供。"""
     type = serializers.ReadOnlyField(default='element')
+    key = serializers.SerializerMethodField()
     children = serializers.ListField(read_only=True, default=list)
 
     class Meta(ElementListSerializer.Meta):
         fields = (
             'id', 'name', 'element_type', 'locator_strategy', 'locator_value',
             'locator_options', 'page', 'group_id', 'validation_status', 'order',
-            'type', 'children',
+            'key', 'type', 'children',
         )
+
+    def get_key(self, obj):
+        # 分组和元素的业务主键可能相同，树节点使用独立的唯一 key。
+        return f'element:{obj.pk}'
 
 
 class PageObjectSerializer(serializers.ModelSerializer):
@@ -1029,6 +1037,7 @@ class TestCaseFolderSerializer(serializers.ModelSerializer):
 
 class TestCaseExecutionSerializer(serializers.ModelSerializer):
     """测试用例执行记录序列化器"""
+    scheduled_task_name = serializers.CharField(source='scheduled_task.name', default=None, read_only=True)
     test_case_name = serializers.CharField(source='test_case.name', read_only=True)
     project_name = serializers.CharField(source='project.name', read_only=True)
     test_suite_name = serializers.SerializerMethodField()
@@ -1039,11 +1048,12 @@ class TestCaseExecutionSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'test_case', 'test_case_name', 'project', 'project_name',
             'test_suite', 'test_suite_name', 'execution_source', 'status',
+            'scheduled_task', 'scheduled_task_name',
             'engine', 'browser', 'headless', 'execution_logs', 'error_message',
             'screenshots', 'execution_time', 'started_at', 'finished_at',
             'created_by', 'created_by_name', 'created_at'
         ]
-        read_only_fields = ['created_by']
+        read_only_fields = ['created_by', 'scheduled_task']
     
     def get_test_suite_name(self, obj):
         """获取测试套件名称"""

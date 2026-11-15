@@ -122,6 +122,7 @@ export default {
     yes: 'Yes',
     no: 'No',
     all: 'All',
+    back: 'Back',
     batchDelete: 'Batch Delete',
     run: 'Run',
     stop: 'Stop',
@@ -405,7 +406,7 @@ export default {
 
   // Execution Records
   execution: {
-    title: 'Test Execution Records',
+    title: 'Execution Records',
     searchPlaceholder: 'Search case name',
     statusFilter: 'Execution Status',
     browserFilter: 'Browser',
@@ -470,6 +471,7 @@ export default {
     executor: 'Executor',
     executionTime: 'Execution Time',
     reportDetail: 'Report Details',
+    basicInfo: 'Basic Info',
     reportId: 'Report ID',
     executionStatus: 'Execution Status',
     executionMode: 'Execution Mode',
@@ -505,6 +507,7 @@ export default {
     messages: {
       loadFailed: 'Failed to load test reports',
       loadDetailFailed: 'Failed to load report details. Please try again.',
+      notFound: 'Report not found or has been deleted',
       loadProjectsFailed: 'Failed to load projects',
       refreshed: 'Reports refreshed',
       deleteConfirm: 'Are you sure to delete report "{name}"? This action cannot be undone.',
@@ -703,6 +706,8 @@ export default {
 
   // Scheduled Tasks
   scheduledTask: {
+    executionHistory: 'History',
+    relatedTask: 'Scheduled Task',
     title: 'UI Automation Scheduled Tasks',
     newTask: 'New Scheduled Task',
     searchPlaceholder: 'Search task name',
@@ -807,6 +812,7 @@ export default {
     rules: {
       nameRequired: 'Please enter task name',
       suiteRequired: 'Please select test suite',
+      executeTimeFuture: 'Please select an execution time later than the current time',
       cronRequired: 'Please enter cron expression'
     },
     messages: {
@@ -1168,9 +1174,8 @@ export default {
   // Script Management
   script: {
     title: 'Script List',
+    searchPlaceholder: 'Search script name or description',
     uploadScript: 'Upload Script',
-    index: 'No.',
-    projectColumn: 'Project',
     unknownProject: 'Unknown Project',
     nameColumn: 'Name',
     languageColumn: 'Language',
@@ -1181,6 +1186,34 @@ export default {
     edit: 'Edit',
     delete: 'Delete',
     convertToTestCase: 'Convert to Test Case',
+    // Convert dialog: create keeps the original form, overwrite picks an existing case.
+    convert: {
+      mode: 'Import Mode',
+      modeCreate: 'Create',
+      modeOverwrite: 'Overwrite',
+      caseName: 'Case Name',
+      startUrl: 'Start URL',
+      caseDescription: 'Case Description',
+      targetCase: 'Target Case',
+      caseSelectPlaceholder: 'Select the test case to overwrite',
+      actionType: 'Action',
+      element: 'Element / Locator',
+      stepDescription: 'Step Description',
+      inputValue: 'Input Value',
+      assertValue: 'Assertion',
+      confirm: 'Confirm',
+      openStartUrl: 'Open start URL',
+      messages: {
+        syncStepsFirst: 'Please sync and save steps in the editor first',
+        loadStepsFailed: 'Failed to load synced steps',
+        enterName: 'Please enter the case name',
+        selectCase: 'Please select the test case to overwrite',
+        overwriteConfirm: 'Overwrite test case "{name}" with the {count} steps of this script? Existing steps will be replaced and cannot be restored.',
+        createSuccess: 'Test case created successfully',
+        overwriteSuccess: 'Test case overwritten successfully',
+        convertFailed: 'Failed to convert to test case'
+      }
+    },
     scriptDetail: 'Script Details',
     scriptName: 'Script Name',
     project: 'Project',
@@ -1352,8 +1385,8 @@ export default {
     stepDescription: 'Step Description:',
     stepDescPlaceholder: 'Describe the purpose of this step',
     executionResult: 'Execution Result',
-    executionSuccess: 'Execution Successful',
-    executionFailed: 'Execution Failed',
+    executionSuccess: 'Success',
+    executionFailed: 'Failed',
     executionLogs: 'Execution Logs',
     failedScreenshots: 'Failed Screenshots',
     errorInfo: 'Error Info',
@@ -1395,7 +1428,6 @@ export default {
       moveFailed: 'Failed to move test case'
     },
     screenshotPreview: 'Failed Screenshot Preview',
-    failedStep: 'Failed Step',
     screenshotTime: 'Screenshot Time',
     variableHelper: 'Variable Helper (Click to Insert)',
     functionName: 'Function',

@@ -7,7 +7,7 @@
           <img :src="logoImage" alt="TestHub" class="logo-img" />
         </div>
         <el-menu
-          :default-active="$route.path"
+          :default-active="activeMenuPath"
           router
           background-color="#001529"
           text-color="#fff"
@@ -442,7 +442,7 @@
         <!-- 页面内容 -->
         <el-main>
           <router-view v-slot="{ Component }">
-            <keep-alive include="TestCaseList">
+            <keep-alive :include="keepAliveViews">
               <component :is="Component" />
             </keep-alive>
           </router-view>
@@ -475,6 +475,12 @@ const { t } = useI18n()
 
 // 侧边栏统一使用横版 logo（原先 /home 会切到方形图标 logo.svg，导致顶栏标识不一致）
 const logoImage = logoHomePng
+
+// 自动化测试页保留场景树及选中状态，动态数据由页面激活时自行刷新。
+const keepAliveViews = [
+  'TestCaseList',
+  'ApiAutomationTesting'
+]
 	
 
 // 当前语言显示
@@ -503,6 +509,9 @@ const currentModule = computed(() => {
   if (route.path.startsWith('/docs-center')) return 'docs'
   return ''
 })
+
+// 详情页等不在菜单中的路由，通过 meta.activeMenu 指定要高亮的菜单项
+const activeMenuPath = computed(() => route.meta.activeMenu || route.path)
 
 const moduleName = computed(() => {
   const map = {
@@ -611,7 +620,8 @@ const breadcrumbTitle = computed(() => {
 
 // 无法从路由表推断的页面（详情页等）：固定文案
 const detailBreadcrumbs = {
-  ExecutionDetail: { parent: 'menu.testPlan', parentPath: '/ai-generation/executions', leaf: 'execution.planDetail' }
+  ExecutionDetail: { parent: 'menu.testPlan', parentPath: '/ai-generation/executions', leaf: 'execution.planDetail' },
+  UiReportDetail: { parent: 'menu.testReport', parentPath: '/ui-automation/reports', leaf: 'uiAutomation.report.reportDetail' }
 }
 
 const breadcrumbItems = computed(() => {
@@ -654,6 +664,7 @@ const handleCommand = (command) => {
 .logo {
   /* 高度跟随顶部栏（各断点由 --app-header-height 统一控制） */
   height: var(--app-header-height);
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -664,18 +675,21 @@ const handleCommand = (command) => {
   /* 与顶部白色导航栏的边框连成一条，视觉上不分层 */
   border-bottom: 1px solid #e8e8e8;
   flex-shrink: 0;
-  /* 显式 border-box：加内边距时总高仍是 60px，不会把顶部栏顶下去 */
+  /* 显式 border-box：height 含 1px 下边框，总高与顶部栏严格相等 */
   box-sizing: border-box;
-  padding: 6px 10px;
+  overflow: hidden;
 
-		.logo-img {
-			width: 100%;
-			height: 100%;
-			/* 保持比例，不拉伸：多出来的空间由同色背景吸收 */
-			object-fit: contain;
-			object-position: center;
-		}
-	}
+  .logo-img {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    width: calc(100% - 20px);
+    height: calc(100% - 20px);
+    /* 保持比例，不拉伸：多出来的空间由同色背景吸收 */
+    object-fit: contain;
+    object-position: center;
+  }
+}
 
 .el-aside {
   background-color: #001529;
@@ -690,7 +704,7 @@ const handleCommand = (command) => {
      min-width  —— 兜底下限，避免中文等短文案时侧边栏过窄
      max-width  —— 上限，防止超长文案把主体区域挤没（超出部分省略号截断） */
   width: max-content;
-  min-width: 180px;
+  min-width: 120px;
   max-width: 300px;
   flex: 0 0 auto;
 
@@ -706,20 +720,19 @@ const handleCommand = (command) => {
   }
 }
 
-/* 文案超出 max-width 时以省略号收尾，而不是硬截断 */
+/* 菜单字号全断点统一 14px：不再随视口缩放，避免字号变化连带影响
+   .el-aside 的 max-content 宽度；文案超出 max-width 时以省略号收尾，而不是硬截断 */
 .el-menu {
+  :deep(.el-sub-menu__title),
+  :deep(.el-menu-item) {
+    font-size: 14px;
+  }
+
   :deep(.el-menu-item > span),
   :deep(.el-sub-menu__title > span) {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-  }
-}
-
-.el-menu {
-  :deep(.el-sub-menu__title),
-  :deep(.el-menu-item) {
-    font-size: 14px;
   }
 }
 
@@ -862,25 +875,11 @@ const handleCommand = (command) => {
   .el-main {
     padding: 16px;
   }
-
-  .el-menu {
-    :deep(.el-sub-menu__title),
-    :deep(.el-menu-item) {
-      font-size: 13px;
-    }
-  }
 }
 
 @media screen and (max-width: 1440px) {
   .el-main {
     padding: 14px;
-  }
-
-  .el-menu {
-    :deep(.el-sub-menu__title),
-    :deep(.el-menu-item) {
-      font-size: 13px;
-    }
   }
 }
 
@@ -891,13 +890,6 @@ const handleCommand = (command) => {
 
   .layout {
     --app-header-height: 56px;
-  }
-  
-  .el-menu {
-    :deep(.el-sub-menu__title),
-    :deep(.el-menu-item) {
-      font-size: 12px;
-    }
   }
 }
 
@@ -915,14 +907,10 @@ const handleCommand = (command) => {
       padding: 0 15px;
     }
   }
-  
+
+  /* 小屏只收紧菜单左内边距，字号仍由基础规则统一为 14px */
   .el-menu {
     --el-menu-base-level-padding: 15px;
-
-    :deep(.el-sub-menu__title),
-    :deep(.el-menu-item) {
-      font-size: 12px;
-    }
   }
 }
 
@@ -940,16 +928,11 @@ const handleCommand = (command) => {
       padding: 0 12px;
     }
   }
-  
+
   .el-menu {
     --el-menu-base-level-padding: 12px;
-
-    :deep(.el-sub-menu__title),
-    :deep(.el-menu-item) {
-      font-size: 12px;
-    }
   }
-  
+
   .user-info .username {
     display: none;
   }

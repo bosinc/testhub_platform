@@ -73,7 +73,7 @@
             :data="testCaseTree"
             :props="{ label: 'name', children: 'children' }"
             :default-expand-all="false"
-            node-key="id"
+            node-key="key"
             @node-expand="onFolderNodeExpand"
             @node-collapse="onFolderNodeCollapse"
             @node-contextmenu="onFolderNodeContextMenu"
@@ -111,8 +111,8 @@
         >
           <template v-if="contextTreeNode?.type === 'folder'">
             <li @click="createFolder(contextTreeNode)">{{ t('uiAutomation.testCase.folder.createSubfolder') }}</li>
-            <li v-if="contextTreeNode.folderId" @click="renameFolder(contextTreeNode)">{{ t('uiAutomation.testCase.folder.rename') }}</li>
-            <li v-if="contextTreeNode.folderId" class="danger" @click="deleteFolder(contextTreeNode)">{{ t('uiAutomation.common.delete') }}</li>
+            <li v-if="contextTreeNode.id" @click="renameFolder(contextTreeNode)">{{ t('uiAutomation.testCase.folder.rename') }}</li>
+            <li v-if="contextTreeNode.id" class="danger" @click="deleteFolder(contextTreeNode)">{{ t('uiAutomation.common.delete') }}</li>
           </template>
           <li v-else-if="contextTreeNode?.type === 'testCase'" @click="openMoveTestCaseDialog(contextTreeNode)">{{ t('uiAutomation.testCase.folder.move') }}</li>
         </ul>
@@ -251,20 +251,24 @@
                   <div class="logs-container">
                     <div v-if="parsedExecutionLogs.length > 0">
                       <div v-for="(step, index) in parsedExecutionLogs" :key="index" class="log-item">
-                        <div class="log-header">
-                          <el-tag :type="step.success ? 'success' : 'danger'" size="small">
-                            {{ t('uiAutomation.testCase.step') }} {{ step.step_number }}
-                          </el-tag>
-                          <span class="log-action">{{ getActionText(step.action_type) }}</span>
-                          <span class="log-desc">{{ step.description }}</span>
-                        </div>
-                        <div v-if="step.error" class="log-error">
-                          <el-icon><WarningFilled /></el-icon>
-                          <pre class="error-message">{{ step.error }}</pre>
-                        </div>
+                        <!-- 非结构化纯文本日志（环境检查失败、执行异常等）按原文展示 -->
+                        <pre v-if="step.raw_text" class="log-text">{{ step.description }}</pre>
+                        <template v-else>
+                          <div class="log-header">
+                            <el-tag :type="step.success ? 'success' : 'danger'" size="small">
+                              {{ t('uiAutomation.testCase.step') }} {{ step.step_number }}
+                            </el-tag>
+                            <span class="log-action">{{ getActionText(step.action_type) }}</span>
+                            <span class="log-desc">{{ step.description }}</span>
+                          </div>
+                          <div v-if="step.error" class="log-error">
+                            <el-icon><WarningFilled /></el-icon>
+                            <pre class="error-message">{{ step.error }}</pre>
+                          </div>
+                        </template>
                       </div>
                     </div>
-                    <el-empty :description="t('uiAutomation.testCase.noLogs')" />
+                    <el-empty v-else :description="t('uiAutomation.testCase.noLogs')" />
                   </div>
                 </el-tab-pane>
                 <el-tab-pane :label="t('uiAutomation.testCase.failedScreenshots')" name="screenshots" v-if="executionResult.screenshots && executionResult.screenshots.length > 0">
@@ -311,9 +315,11 @@
                       class="error-item"
                     >
                       <div class="error-header">
-                        <el-tag type="danger" size="large">
-                          <el-icon><WarningFilled /></el-icon>
-                          {{ error.message || error }}
+                        <el-tag type="danger" class="error-message-tag">
+                          <span class="error-message-content">
+                            <el-icon class="error-message-icon"><WarningFilled /></el-icon>
+                            <span class="error-message-text">{{ error.message || error }}</span>
+                          </span>
                         </el-tag>
                         <span v-if="error.step_number" class="error-step">
                           {{ t('uiAutomation.testCase.step') }} {{ error.step_number }}
@@ -476,26 +482,11 @@
     </el-dialog>
 
     <!-- 截图预览对话框 -->
-    <el-dialog
+    <ScreenshotPreviewDialog
       v-model="showScreenshotPreview"
-      :title="t('uiAutomation.testCase.screenshotPreview')"
-      width="80%"
-      :close-on-click-modal="false"
-      :close-on-press-escape="false"
-      :modal="true"
-      :destroy-on-close="false"
-    >
-      <div v-if="currentScreenshot" class="screenshot-preview">
-        <div class="preview-info">
-          <h4>{{ currentScreenshot.description }}</h4>
-          <p v-if="currentScreenshot.step_number">{{ t('uiAutomation.testCase.failedStep') }}: {{ t('uiAutomation.testCase.step') }} {{ currentScreenshot.step_number }}</p>
-          <p v-if="currentScreenshot.timestamp">{{ t('uiAutomation.testCase.screenshotTime') }}: {{ formatTime(currentScreenshot.timestamp) }}</p>
-        </div>
-        <div class="preview-image">
-          <img :src="currentScreenshot.url" :alt="currentScreenshot.description" />
-        </div>
-      </div>
-    </el-dialog>
+      :screenshot="currentScreenshot"
+      :fallback-title="t('uiAutomation.testCase.screenshot')"
+    />
 
     <!-- 变量助手对话框 -->
     <el-dialog
@@ -576,7 +567,8 @@ import ResizableSplitPane from '@/components/ResizableSplitPane.vue'
 import TestCaseDetailPanel from '@/components/testcases/TestCaseDetailPanel.vue'
 import StructuredStepEditor from '@/components/ui-automation/StructuredStepEditor.vue'
 import VariableEditor from '@/components/ui-automation/VariableEditor.vue'
-import { loadUiVariables, formatUiVariables } from '@/utils/uiVariables'
+import ScreenshotPreviewDialog from '@/components/ui-automation/ScreenshotPreviewDialog.vue'
+import { loadUiVariables, formatUiVariables, getUiActionLabel, closeReservedUiRemoteWindow, loadUiRemoteCapabilities, openUiRemoteSession, reserveUiRemoteWindow, getElementLibraryNodes, filterTestCaseTree, getTestCaseTreeNodes } from '@/utils/ui-automation'
 import { ref, reactive, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
@@ -587,7 +579,6 @@ import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import api from '@/utils/api'
 import { createTestCaseAutomationLink } from '@/api/testcases'
-import { closeReservedUiRemoteWindow, loadUiRemoteCapabilities, openUiRemoteSession, reserveUiRemoteWindow } from '@/utils/uiRemoteNavigation'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -602,8 +593,7 @@ import {
   createTestCase,
   updateTestCase,
   deleteTestCase as deleteTestCaseApi,
-  getTestCases,
-  getTestCaseFolders,
+  getTestCaseTree,
   createTestCaseFolder,
   updateTestCaseFolder,
   deleteTestCaseFolder,
@@ -611,10 +601,11 @@ import {
   runTestCase as runTestCaseApi,
   copyTestCase as copyTestCaseApi,
   getLocatorStrategies,
-  getElementGroupTree,
+  getElementTree,
   getStorageStates, createStorageState, createStorageStateFromContent, updateStorageState, deleteStorageState, downloadStorageState, updateStorageStateContent
 } from '@/api/ui_automation'
 import { getVariableFunctions } from '@/api/data-factory'
+
 import { getPreferredProjectId, useRememberedProject } from '@/utils/projectSelection'
 
 // 响应式数据
@@ -622,10 +613,10 @@ const projects = ref([])
 const projectId = ref('')
 useRememberedProject(projectId, projects)
 let projectVariablesRequestId = 0
-const testCases = ref([])
-const testCaseFolders = ref([])
-let testCasesRequestId = 0
-let testCaseFoldersRequestId = 0
+// 以服务端树为唯一列表数据源，平铺视图仅用于目录选项和按 id 查找。
+const testCaseTreeData = ref([])
+const testCases = computed(() => getTestCaseTreeNodes(testCaseTreeData.value, 'testCase'))
+const testCaseFolders = computed(() => getTestCaseTreeNodes(testCaseTreeData.value, 'folder'))
 const testCaseTreeLoading = ref(true)
 let testCaseTreeRequestId = 0
 const testCaseTreeRef = ref(null)
@@ -684,6 +675,7 @@ const savingVariables = ref(false)
 const availableElements = ref([])
 const elementsLoading = ref(false)
 const elementLibraryLoaded = ref(false)
+let elementLibraryRequestId = 0
 const elementSearchCache = new Set()
 const elementSearchInFlight = new Set()
 const elementSearchTimers = new Map()
@@ -723,7 +715,6 @@ const variableCategories = ref([])
 const loading = ref(false)
 
 
-
 // 表单数据
 const testCaseForm = reactive({
   name: '',
@@ -733,14 +724,6 @@ const testCaseForm = reactive({
 })
 
 // 计算属性
-const filteredTestCases = computed(() => {
-  if (!searchKeyword.value) return testCases.value
-  return testCases.value.filter(tc =>
-    tc.name.includes(searchKeyword.value) ||
-    tc.description?.includes(searchKeyword.value)
-  )
-})
-
 const folderOptions = computed(() => {
   const byId = new Map(testCaseFolders.value.map(folder => [String(folder.id), folder]))
   const getLabel = (folder, seen = new Set()) => {
@@ -758,37 +741,11 @@ const moveFolderOptions = computed(() => folderOptions.value.filter(
   folder => String(folder.id) !== String(contextTreeNode.value?.folder)
 ))
 
-// 使用文件夹的父子关系构建树，目录名称变化时不需要同步修改用例数据。
-const testCaseTree = computed(() => {
-  const root = []
-  const map = new Map()
-  testCaseFolders.value.forEach(folder => {
-    map.set(String(folder.id), { id: `f-${folder.id}`, folderId: folder.id, name: folder.name, type: 'folder', children: [] })
-  })
-  testCaseFolders.value.forEach(folder => {
-    const node = map.get(String(folder.id))
-    const parent = map.get(String(folder.parent))
-    ;(parent ? parent.children : root).push(node)
-  })
-
-  filteredTestCases.value.forEach(testCase => {
-    const parent = map.get(String(testCase.folder))
-    ;(parent ? parent.children : root).push({ ...testCase, type: 'testCase' })
-  })
-
-  const sortTree = nodes => {
-    nodes.sort((a, b) => {
-      if (a.type !== b.type) return a.type === 'folder' ? -1 : 1
-      return a.name.localeCompare(b.name, 'zh', { numeric: true })
-    })
-    nodes.forEach(node => node.children && sortTree(node.children))
-  }
-  sortTree(root)
-  return root
-})
+// 目录层级由接口直接提供；本地检索仅匹配用例名称，保留空目录及祖先节点。
+const testCaseTree = computed(() => filterTestCaseTree(testCaseTreeData.value, searchKeyword.value))
 
 // 目录树的展开状态统一由 expandedFolderKeys 维护，默认全部折叠。
-const folderNodeKeys = computed(() => testCaseFolders.value.map(folder => `f-${folder.id}`))
+const folderNodeKeys = computed(() => testCaseFolders.value.map(folder => `folder:${folder.id}`))
 
 // 同步过程中树组件回抛的 expand/collapse 事件不再反向更新状态，避免相互覆盖。
 let isSyncingFolderExpansion = false
@@ -814,7 +771,7 @@ watch(testCaseTree, () => {
 })
 
 watch(testCaseFolders, folders => {
-  const folderKeys = new Set(folders.map(folder => `f-${folder.id}`))
+  const folderKeys = new Set(folders.map(folder => `folder:${folder.id}`))
   // 只清理已被删除目录的残留 key，不做任何自动展开：默认状态始终是全部折叠。
   const nextExpandedKeys = new Set([...expandedFolderKeys.value].filter(key => folderKeys.has(key)))
   if (nextExpandedKeys.size !== expandedFolderKeys.value.size) {
@@ -825,15 +782,15 @@ watch(testCaseFolders, folders => {
 // 新建目录后只展开它的父目录，让新目录直接可见（不影响其他目录的折叠状态）。
 const revealFolderParent = folder => {
   if (!folder?.parent) return
-  const parentKey = `f-${folder.parent}`
-  if (!testCaseFolders.value.some(item => `f-${item.id}` === parentKey)) return
+  const parentKey = `folder:${folder.parent}`
+  if (!testCaseFolders.value.some(item => `folder:${item.id}` === parentKey)) return
   expandedFolderKeys.value = new Set([...expandedFolderKeys.value, parentKey])
   nextTick(syncFolderExpansion)
 }
 
 const allFoldersExpanded = computed(() => (
   testCaseFolders.value.length > 0 &&
-  testCaseFolders.value.every(folder => expandedFolderKeys.value.has(`f-${folder.id}`))
+  testCaseFolders.value.every(folder => expandedFolderKeys.value.has(`folder:${folder.id}`))
 ))
 
 const expandAllFolders = () => {
@@ -848,13 +805,13 @@ const collapseAllFolders = () => {
 
 const onFolderNodeExpand = data => {
   if (isSyncingFolderExpansion || data.type !== 'folder') return
-  expandedFolderKeys.value = new Set([...expandedFolderKeys.value, data.id])
+  expandedFolderKeys.value = new Set([...expandedFolderKeys.value, data.key])
 }
 
 const onFolderNodeCollapse = data => {
   if (isSyncingFolderExpansion || data.type !== 'folder') return
   const keys = new Set(expandedFolderKeys.value)
-  keys.delete(data.id)
+  keys.delete(data.key)
   expandedFolderKeys.value = keys
 }
 
@@ -863,17 +820,24 @@ const toggleAllFolders = () => {
   else expandAllFolders()
 }
 
-// 解析执行日志
+// 解析执行日志：后端正常返回步骤数组 JSON 字符串；环境检查失败、执行异常等场景
+// 会写入纯文本日志，此时按单条原文日志展示，避免“有日志却显示暂无执行日志”。
 const parsedExecutionLogs = computed(() => {
-  if (!executionResult.value || !executionResult.value.logs) return []
+  const logs = executionResult.value?.logs
+  if (!logs) return []
+  if (Array.isArray(logs)) return logs
+  if (typeof logs === 'object') return [logs]
+  const text = String(logs).trim()
+  if (!text) return []
+  let parsed = null
   try {
-    return typeof executionResult.value.logs === 'string'
-      ? JSON.parse(executionResult.value.logs)
-      : executionResult.value.logs
+    parsed = JSON.parse(text)
   } catch (e) {
-    console.error('解析执行日志失败:', e)
-    return []
+    parsed = null // 非 JSON 文本，走下面的纯文本分支
   }
+  if (Array.isArray(parsed)) return parsed
+  if (parsed && typeof parsed === 'object') return [parsed]
+  return [{ raw_text: true, success: executionResult.value?.success !== false, description: text }]
 })
 
 // 方法定义
@@ -887,53 +851,24 @@ const loadProjects = async () => {
   }
 }
 
-const loadTestCases = async (project = projectId.value) => {
-  const requestId = ++testCasesRequestId
+// 一个请求读取完整目录及用例树，项目切换或后续刷新会淘汰较早的响应。
+const loadTestCaseTree = async (project = projectId.value) => {
+  const requestId = ++testCaseTreeRequestId
+  testCaseTreeLoading.value = Boolean(project)
   if (!project) {
-    testCases.value = []
-    return
-  }
-
-  try {
-    // 列表接口按页返回，逐页读取避免项目用例超过单页数量时被截断。
-    const cases = []
-    let page = 1
-    let hasNext = true
-    while (hasNext) {
-      const response = await getTestCases({ project, page, page_size: 1000 })
-      if (requestId !== testCasesRequestId) return
-      const pageCases = response.data.results || response.data
-      cases.push(...pageCases)
-      hasNext = Boolean(response.data.next)
-      page += 1
-    }
-    if (String(projectId.value) === String(project)) testCases.value = cases
-  } catch (error) {
-    console.error('获取测试用例失败:', error)
-  }
-}
-
-const loadTestCaseFolders = async (project = projectId.value) => {
-  const requestId = ++testCaseFoldersRequestId
-  if (!project) {
-    testCaseFolders.value = []
+    testCaseTreeData.value = []
     return
   }
   try {
-    const folders = []
-    let page = 1
-    let hasNext = true
-    while (hasNext) {
-      const response = await getTestCaseFolders({ project, page, page_size: 1000 })
-      if (requestId !== testCaseFoldersRequestId) return
-      folders.push(...(response.data.results || response.data))
-      hasNext = Boolean(response.data.next)
-      page += 1
-    }
-    if (String(projectId.value) === String(project)) testCaseFolders.value = folders
+    const { data } = await getTestCaseTree({ project })
+    if (requestId !== testCaseTreeRequestId || String(projectId.value) !== String(project)) return
+    testCaseTreeData.value = data
   } catch (error) {
-    console.error('获取测试用例文件夹失败:', error)
-    if (requestId === testCaseFoldersRequestId && String(projectId.value) === String(project)) testCaseFolders.value = []
+    if (requestId !== testCaseTreeRequestId || String(projectId.value) !== String(project)) return
+    console.error('获取测试用例树失败:', error)
+    ElMessage.error(t('uiAutomation.suite.messages.loadCasesFailed'))
+  } finally {
+    if (requestId === testCaseTreeRequestId) testCaseTreeLoading.value = false
   }
 }
 
@@ -966,8 +901,8 @@ const createFolder = async (parentFolder = null) => {
         cancelButtonText: t('uiAutomation.common.cancel')
       }
     )
-    const response = await createTestCaseFolder({ project: projectId.value, name: name.trim(), parent: parentFolder?.folderId || null })
-    testCaseFolders.value = [...testCaseFolders.value, response.data]
+    const response = await createTestCaseFolder({ project: projectId.value, name: name.trim(), parent: parentFolder?.id || null })
+    await loadTestCaseTree()
     revealFolderParent(response.data)
     ElMessage.success(t('uiAutomation.testCase.folder.created'))
   } catch (error) {
@@ -976,7 +911,7 @@ const createFolder = async (parentFolder = null) => {
 }
 
 const renameFolder = async folder => {
-  if (!folder?.folderId) return
+  if (!folder?.id) return
   showFolderContextMenu.value = false
   try {
     const { value: name } = await ElMessageBox.prompt(
@@ -990,11 +925,8 @@ const renameFolder = async folder => {
         cancelButtonText: t('uiAutomation.common.cancel')
       }
     )
-    const response = await updateTestCaseFolder(folder.folderId, { name: name.trim() })
-    const updatedFolder = response.data
-    testCaseFolders.value = testCaseFolders.value.map(item => (
-      String(item.id) === String(updatedFolder.id) ? updatedFolder : item
-    ))
+    await updateTestCaseFolder(folder.id, { name: name.trim() })
+    await loadTestCaseTree()
     ElMessage.success(t('uiAutomation.testCase.folder.renamed'))
   } catch (error) {
     if (error !== 'cancel') ElMessage.error(error.response?.data?.name?.[0] || t('uiAutomation.testCase.folder.renameFailed'))
@@ -1002,7 +934,7 @@ const renameFolder = async folder => {
 }
 
 const deleteFolder = async folder => {
-  if (!folder?.folderId) return
+  if (!folder?.id) return
   showFolderContextMenu.value = false
   try {
     await ElMessageBox.confirm(
@@ -1014,22 +946,12 @@ const deleteFolder = async folder => {
         type: 'warning'
       }
     )
-    await deleteTestCaseFolder(folder.folderId)
-    const folderIds = new Set([String(folder.folderId)])
-    let foundDescendant = true
-    while (foundDescendant) {
-      foundDescendant = false
-      testCaseFolders.value.forEach(item => {
-        if (folderIds.has(String(item.parent)) && !folderIds.has(String(item.id))) {
-          folderIds.add(String(item.id))
-          foundDescendant = true
-        }
-      })
-    }
-    testCaseFolders.value = testCaseFolders.value.filter(item => !folderIds.has(String(item.id)))
-    testCases.value = testCases.value.map(item => (
-      folderIds.has(String(item.folder)) ? { ...item, folder: null } : item
-    ))
+    await deleteTestCaseFolder(folder.id)
+    const folderIds = new Set([
+      String(folder.id),
+      ...getTestCaseTreeNodes(folder.children || [], 'folder').map(node => String(node.id))
+    ])
+    await loadTestCaseTree()
     if (selectedTestCase.value && folderIds.has(String(selectedTestCase.value.folder))) {
       selectedTestCase.value = { ...selectedTestCase.value, folder: null }
     }
@@ -1046,12 +968,6 @@ const openMoveTestCaseDialog = testCase => {
   showMoveTestCaseDialog.value = true
 }
 
-// 写入接口返回完整步骤，本地列表只保存摘要，步骤计数以保存结果为准。
-const toTestCaseSummary = ({ steps, ...testCase }) => {
-  delete testCase.linked_test_cases
-  return { ...testCase, steps_count: steps.length }
-}
-
 const moveTestCaseToFolder = async () => {
   const testCase = contextTreeNode.value
   if (!testCase) return
@@ -1059,9 +975,7 @@ const moveTestCaseToFolder = async () => {
   try {
     const response = await updateTestCase(testCase.id, { folder: moveTargetFolder.value || null, project: projectId.value })
     const updatedTestCase = response.data
-    testCases.value = testCases.value.map(item => (
-      String(item.id) === String(updatedTestCase.id) ? toTestCaseSummary(updatedTestCase) : item
-    ))
+    await loadTestCaseTree()
     ElMessage.success(t('uiAutomation.testCase.folder.moved'))
     showMoveTestCaseDialog.value = false
     if (selectedTestCase.value?.id === testCase.id) {
@@ -1076,8 +990,10 @@ const moveTestCaseToFolder = async () => {
 }
 
 const loadElements = async () => {
-  // 项目切换时后台预加载一次全量元素；步骤编排复用此缓存，避免重复请求。
+  // 一个轻量树请求同时提供全部元素与页面选项，避免单页列表被误认为完整数据。
+  const requestId = ++elementLibraryRequestId
   availableElements.value = []
+  pages.value = []
   elementsLoading.value = true
   elementLibraryLoaded.value = false
   elementSearchCache.clear()
@@ -1091,17 +1007,19 @@ const loadElements = async () => {
   }
 
   const project = projectId.value
-  const request = getElements({ project, page_size: 1000 })
-    .then(response => {
-      if (String(projectId.value) !== String(project)) return
-      mergeAvailableElements(response.data.results || response.data)
+  const request = getElementTree({ project })
+    .then(({ data }) => {
+      if (requestId !== elementLibraryRequestId || String(projectId.value) !== String(project)) return
+      mergeAvailableElements(getElementLibraryNodes(data, 'element'))
+      pages.value = getElementLibraryNodes(data, 'page').map(({ id, name }) => ({ id, name }))
       elementLibraryLoaded.value = true
     })
     .catch(error => {
+      if (requestId !== elementLibraryRequestId) return
       console.error('获取元素列表失败:', error)
     })
     .finally(() => {
-      if (String(projectId.value) === String(project)) elementsLoading.value = false
+      if (requestId === elementLibraryRequestId) elementsLoading.value = false
     })
   return request
 }
@@ -1118,6 +1036,8 @@ const fetchElementsForStep = async (step, keyword = '') => {
   if (!projectId.value) return
   // 全量缓存完成后由 Element Plus 在本地过滤，避免打开选择器再次请求后端。
   if (elementLibraryLoaded.value) return
+  const project = projectId.value
+  const requestId = elementLibraryRequestId
   const normalizedKeyword = String(keyword || '').trim()
   const cacheKey = elementSearchKey(step, normalizedKeyword)
   if (elementSearchCache.has(cacheKey) || elementSearchInFlight.has(cacheKey)) return
@@ -1126,18 +1046,23 @@ const fetchElementsForStep = async (step, keyword = '') => {
   elementsLoading.value = true
   try {
     const response = await getElements({
-      project: projectId.value,
+      project,
       page_name: step.element_page || undefined,
       search: normalizedKeyword || undefined,
       page_size: 50
     })
+    // 完整树加载完成或项目变化后，旧的兜底搜索不能覆盖当前元素库。
+    if (requestId !== elementLibraryRequestId || project !== projectId.value || elementLibraryLoaded.value) return
     mergeAvailableElements(response.data.results || response.data)
     elementSearchCache.add(cacheKey)
   } catch (error) {
+    if (requestId !== elementLibraryRequestId) return
     console.error('按需获取元素失败:', error)
   } finally {
-    elementSearchInFlight.delete(cacheKey)
-    elementsLoading.value = false
+    if (requestId === elementLibraryRequestId) {
+      elementSearchInFlight.delete(cacheKey)
+      elementsLoading.value = false
+    }
   }
 }
 
@@ -1159,52 +1084,22 @@ const searchElementsForStep = ({ step, keyword }) => {
   elementSearchTimers.set(timerKey, timer)
 }
 
-const loadPages = async () => {
-  if (!projectId.value) {
-    pages.value = []
-    return
-  }
-
-  try {
-    const response = await getElementGroupTree({ project: projectId.value })
-    const flattenedPages = []
-    const flatten = (groups) => {
-      groups.forEach(group => {
-        flattenedPages.push({ id: group.id, name: group.name })
-        if (group.children) flatten(group.children)
-      })
-    }
-    flatten(response.data || [])
-    pages.value = flattenedPages
-  } catch (error) {
-    pages.value = []
-    console.error('获取页面列表失败:', error)
-  }
-}
-
 const onProjectChange = async () => {
   testCaseDetailRequestId += 1
   testCaseDetailLoading.value = false
   selectedTestCase.value = null
   currentSteps.value = []
   const requestedProjectId = String(projectId.value || '')
-  const treeRequestId = ++testCaseTreeRequestId
   const variablesRequestId = ++projectVariablesRequestId
   projectVariablesLoading.value = Boolean(requestedProjectId)
-  testCases.value = []
-  testCaseFolders.value = []
+  testCaseTreeData.value = []
   testCaseTreeLoading.value = Boolean(requestedProjectId)
   currentVariables.value = []
   executionResult.value = null
 
   // 元素库在后台加载；用例列表和页面树无需等待全量元素响应。
   loadElements()
-  const treeRequest = Promise.all([
-    loadTestCases(requestedProjectId),
-    loadTestCaseFolders(requestedProjectId)
-  ]).finally(() => {
-    if (treeRequestId === testCaseTreeRequestId) testCaseTreeLoading.value = false
-  })
+  const treeRequest = loadTestCaseTree(requestedProjectId)
 
   if (requestedProjectId) {
     getUiProjectDetail(requestedProjectId)
@@ -1218,7 +1113,6 @@ const onProjectChange = async () => {
         if (variablesRequestId === projectVariablesRequestId) projectVariablesLoading.value = false
       })
   }
-  void loadPages()
   void loadStorageStates()
   await treeRequest
 }
@@ -1450,12 +1344,9 @@ const saveTestCase = async () => {
     currentSteps.value = hydrateTestCaseSteps(savedTestCase.steps || [])
     ElMessage.success(t('uiAutomation.testCase.save.success'))
 
-    // 更新本地数据
-    const index = testCases.value.findIndex(tc => tc.id === selectedTestCase.value.id)
-    if (index !== -1) {
-      testCases.value[index] = toTestCaseSummary(savedTestCase)
-    }
     selectedTestCase.value = savedTestCase
+    // 树摘要及步骤数由服务端重新生成，详情继续独立保留供编辑使用。
+    await loadTestCaseTree()
   } catch (error) {
       console.error('保存测试用例失败:', error)
       ElMessage.error(error.response?.data?.variables?.join?.(' / ') || error.message || t('uiAutomation.testCase.save.failed'))
@@ -1552,13 +1443,21 @@ const toggleView = () => {
   showSteps.value = !showSteps.value
 }
 
-const editTestCase = (testCase) => {
-  editingTestCase.value = testCase
-  testCaseForm.name = testCase.name
-  testCaseForm.description = testCase.description || ''
-  testCaseForm.priority = testCase.priority || 'medium'
-  testCaseForm.folder = testCase.folder || null
-  showCreateDialog.value = true
+const editTestCase = async (testCase) => {
+  const project = projectId.value
+  try {
+    // 树节点不含描述，编辑前加载详情，避免将未加载的描述覆盖为空。
+    const { data } = await getTestCaseDetail(testCase.id)
+    if (project !== projectId.value) return
+    editingTestCase.value = data
+    testCaseForm.name = data.name
+    testCaseForm.description = data.description || ''
+    testCaseForm.priority = data.priority || 'medium'
+    testCaseForm.folder = data.folder || null
+    showCreateDialog.value = true
+  } catch (error) {
+    ElMessage.error(t('uiAutomation.testCase.messages.loadDetailFailed'))
+  }
 }
 
 const deleteTestCase = async (testCase) => {
@@ -1576,11 +1475,7 @@ const deleteTestCase = async (testCase) => {
     await deleteTestCaseApi(testCase.id)
     ElMessage.success(t('uiAutomation.testCase.delete.success'))
 
-    // 从列表中移除
-    const index = testCases.value.findIndex(tc => tc.id === testCase.id)
-    if (index !== -1) {
-      testCases.value.splice(index, 1)
-    }
+    await loadTestCaseTree()
 
     // 如果删除的是当前选中的用例，清空选择
     if (selectedTestCase.value?.id === testCase.id) {
@@ -1608,18 +1503,9 @@ const copyTestCase = async (testCase) => {
       }
     )
 
-    const response = await copyTestCaseApi(testCase.id)
+    await copyTestCaseApi(testCase.id)
     ElMessage.success(t('uiAutomation.testCase.copy.success'))
-
-    // 找到原用例的位置
-    const index = testCases.value.findIndex(tc => tc.id === testCase.id)
-    if (index !== -1) {
-      // 在原用例下方插入新用例
-      testCases.value.splice(index + 1, 0, toTestCaseSummary(response.data))
-    } else {
-      // 如果找不到，就添加到末尾
-      testCases.value.push(toTestCaseSummary(response.data))
-    }
+    await loadTestCaseTree()
   } catch (error) {
     if (error !== 'cancel') {
       console.error('复制测试用例失败:', error)
@@ -1828,11 +1714,6 @@ const saveTestCaseForm = async () => {
       await updateTestCase(editingTestCase.value.id, data)
       ElMessage.success(t('uiAutomation.testCase.update.success'))
 
-      // 更新本地数据
-      const index = testCases.value.findIndex(tc => tc.id === editingTestCase.value.id)
-      if (index !== -1) {
-        testCases.value[index] = { ...testCases.value[index], ...data }
-      }
       if (selectedTestCase.value?.id === editingTestCase.value.id) {
         selectedTestCase.value = { ...selectedTestCase.value, ...data }
       }
@@ -1841,9 +1722,9 @@ const saveTestCaseForm = async () => {
       const response = await createTestCase(data)
       savedAutomationCaseId = response.data.id
       ElMessage.success(t('uiAutomation.testCase.create.success'))
-      testCases.value.push(toTestCaseSummary(response.data))
     }
 
+    await loadTestCaseTree()
     const formalCaseId = route.query.automation_for_test_case_id
     if (formalCaseId && savedAutomationCaseId) {
       try {
@@ -1903,44 +1784,14 @@ const getStatusText = (status) => {
   return textMap[status] || t('uiAutomation.testCase.status.unknown')
 }
 
-const getActionTypeText = (actionType) => {
-  const textMap = {
-    'click': t('uiAutomation.testCase.actionType.click'),
-    'fill': t('uiAutomation.testCase.actionType.fill'),
-    'getText': t('uiAutomation.testCase.actionType.getText'),
-    'waitFor': t('uiAutomation.testCase.actionType.waitFor'),
-    'hover': t('uiAutomation.testCase.actionType.hover'),
-    'scroll': t('uiAutomation.testCase.actionType.scroll'),
-    'screenshot': t('uiAutomation.testCase.actionType.screenshot'),
-    'assert': t('uiAutomation.testCase.actionType.assert'),
-    'wait': t('uiAutomation.testCase.actionType.wait'),
-    'navigate': t('uiAutomation.testCase.actionType.navigate')
-  }
-  return textMap[actionType] || actionType
-}
-
 const formatTime = (timestamp) => {
   if (!timestamp) return ''
   const date = new Date(timestamp)
   return date.toLocaleString()
 }
 
-// 获取操作类型文本
-const getActionText = (actionType) => {
-  const actionMap = {
-    'click': t('uiAutomation.testCase.actionText.click'),
-    'fill': t('uiAutomation.testCase.actionText.fill'),
-    'getText': t('uiAutomation.testCase.actionText.getText'),
-    'waitFor': t('uiAutomation.testCase.actionText.waitFor'),
-    'hover': t('uiAutomation.testCase.actionText.hover'),
-    'scroll': t('uiAutomation.testCase.actionText.scroll'),
-    'screenshot': t('uiAutomation.testCase.actionText.screenshot'),
-    'assert': t('uiAutomation.testCase.actionText.assert'),
-    'wait': t('uiAutomation.testCase.actionText.wait'),
-    'navigate': t('uiAutomation.testCase.actionText.navigate')
-  }
-  return actionMap[actionType] || actionType
-}
+// 获取操作类型文本（执行日志用），与步骤编辑器共用同一套文案键
+const getActionText = (actionType) => getUiActionLabel(t, actionType)
 
 // 图片处理方法
 const handleImageError = (event) => {
@@ -2038,11 +1889,11 @@ onMounted(async () => {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 20px;
+  padding: 10px 20px;
   border-bottom: 1px solid #e6e6e6;
   background: white;
   gap: 16px;
-  flex-wrap: wrap;
+  flex-wrap: wrap;  
 }
 
 .page-title {
@@ -2083,7 +1934,7 @@ onMounted(async () => {
 }
 
 .panel-header {
-  padding: 15px;
+  padding: 10px;
   border-bottom: 1px solid #e6e6e6;
   display: flex;
   justify-content: space-between;
@@ -2361,7 +2212,6 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   min-height: 0;
-  margin-bottom: 20px;
   border: 1px solid #e6e6e6;
   border-radius: 6px;
   background: #fafafa;
@@ -2501,6 +2351,9 @@ onMounted(async () => {
   border-bottom: 1px solid #e6e6e6;
   background: #fafafa;
   border-radius: 6px 6px 0 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 
 .execution-result .result-content {
@@ -2575,6 +2428,17 @@ onMounted(async () => {
 .log-desc {
   color: #909399;
   font-size: 14px;
+}
+
+/* 非结构化纯文本日志：保留后端原始换行 */
+.log-text {
+  margin: 0;
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1.6;
+  color: #606266;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .log-error {
@@ -2717,49 +2581,6 @@ onMounted(async () => {
   text-align: left;
 }
 
-/* 截图预览对话框样式 */
-.screenshot-preview {
-  display: flex;
-  flex-direction: column;
-}
-
-.preview-info {
-  margin-bottom: 20px;
-  padding: 15px;
-  background: #f5f7fa;
-  border-radius: 6px;
-}
-
-.preview-info h4 {
-  margin: 0 0 10px 0;
-  font-size: 16px;
-  color: #333;
-}
-
-.preview-info p {
-  margin: 5px 0;
-  font-size: 14px;
-  color: #666;
-}
-
-.preview-image {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  background: #f5f5f5;
-  border-radius: 8px;
-  padding: 20px;
-  max-height: 70vh;
-  overflow: auto;
-}
-
-.preview-image img {
-  max-width: 100%;
-  height: auto;
-  border-radius: 4px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-}
-
 .errors-container {
   padding: 10px;
   height: 100%;
@@ -2788,13 +2609,52 @@ onMounted(async () => {
 }
 
 .error-header .el-tag {
-  font-size: 16px;
-  padding: 10px 15px;
+  font-size: 14px;
+  padding: 4px 11px;
   font-weight: 600;
+  height: auto;
+  line-height: normal;
+  white-space: normal;
+  border-radius: 4px;
+  max-width: 100%;
 }
 
-.error-header .el-icon {
-  margin-right: 5px;
+.error-header .el-tag :deep(.el-tag__content) {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 4px;
+  max-width: 100%;
+}
+
+.error-header .el-tag .error-message-content {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 4px;
+  max-width: 100%;
+  line-height: normal;
+  vertical-align: middle;
+}
+
+.error-header .el-tag .el-icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+  margin: 0;
+  align-self: center;
+  vertical-align: middle;
+  font-size: 14px;
+  line-height: 1;
+  cursor: default;
+}
+
+.error-header .el-tag .error-message-text {
+  display: inline-block;
+  flex: 0 1 auto;
+  min-width: 0;
+  line-height: normal;
+  vertical-align: middle;
+  overflow-wrap: anywhere;
 }
 
 .error-step {

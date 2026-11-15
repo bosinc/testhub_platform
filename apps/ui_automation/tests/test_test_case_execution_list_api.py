@@ -61,6 +61,7 @@ class TestCaseExecutionListApiTests(TestCase):
             'test_suite', 'test_suite_name', 'execution_source', 'status', 'engine',
             'browser', 'headless', 'execution_time', 'started_at', 'finished_at',
             'created_by', 'created_by_name', 'created_at',
+            'scheduled_task', 'scheduled_task_name',
         })
         self.assertEqual(row['test_case'], self.case.pk)
         self.assertEqual(row['test_case_name'], self.case.name)

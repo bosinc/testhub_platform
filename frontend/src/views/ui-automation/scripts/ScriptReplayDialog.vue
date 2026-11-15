@@ -35,7 +35,7 @@ import { VideoPlay } from '@element-plus/icons-vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { abortTestScriptExecution, getStorageStates, getTestExecutionLogs, runRecordedScript, runUnsavedRecordedScript } from '@/api/ui_automation'
-import { closeReservedUiRemoteWindow, loadUiRemoteCapabilities, openUiRemoteSession, reserveUiRemoteWindow } from '@/utils/uiRemoteNavigation'
+import { closeReservedUiRemoteWindow, loadUiRemoteCapabilities, openUiRemoteSession, reserveUiRemoteWindow } from '@/utils/ui-automation'
 
 const props = defineProps({ visible: Boolean, script: { type: Object, default: null } })
 const emit = defineEmits(['update:visible', 'started'])

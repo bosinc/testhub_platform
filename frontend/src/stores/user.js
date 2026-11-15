@@ -3,7 +3,7 @@ import { ref, computed } from 'vue'
 import api from '@/utils/api'
 import { track } from '@/utils/tracker'
 import { redirectToLogin } from '@/utils/authNavigation'
-import { resetUiRemoteCapabilities } from '@/utils/uiRemoteNavigation'
+import { resetUiRemoteCapabilities } from '@/utils/ui-automation'
 
 export const useUserStore = defineStore('user', () => {
   const user = ref(null)

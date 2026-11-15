@@ -32,7 +32,7 @@
       </div>
 
       <el-table :data="suites" v-loading="loading" style="width: 100%">
-        <el-table-column type="selection" width="55" />
+        <el-table-column prop="id" label="ID" width="60" align="center" />
         <el-table-column prop="name" :label="$t('uiAutomation.suite.suiteName')" min-width="400">
           <template #default="{ row }">
             <el-link @click="editSuite(row.id)" type="primary">
@@ -64,7 +64,7 @@
         </el-table-column>
         <el-table-column prop="created_at" :label="$t('uiAutomation.common.createTime')" width="180" :formatter="formatDate" />
         <el-table-column prop="updated_at" :label="$t('uiAutomation.common.updateTime')" width="180" :formatter="formatDate" />
-        <el-table-column :label="$t('uiAutomation.common.operation')" width="140" fixed="right">
+        <el-table-column :label="$t('uiAutomation.common.operation')" width="130" fixed="right">
           <template #default="{ row }">
             <div class="row-actions">
               <el-button size="small" text type="primary" @click="editSuite(row.id)">
@@ -147,7 +147,7 @@
                     :data="testCaseTree"
                     :props="{ label: 'name', children: 'children' }"
                     :filter-node-method="filterTestCaseNode"
-                    node-key="id"
+                    node-key="key"
                     show-checkbox
                     default-expand-all
                     check-on-click-node
@@ -161,11 +161,11 @@
                           <span class="tree-node-name">{{ data.name }}</span>
                         </el-tooltip>
                         <template v-if="data.type === 'testCase'">
-                          <el-tag size="small" :type="getPriorityTag(data.testCase.priority)">
-                            {{ getPriorityText(data.testCase.priority) }}
+                          <el-tag size="small" :type="getPriorityTag(data.priority)">
+                            {{ getPriorityText(data.priority) }}
                           </el-tag>
-                          <el-tag size="small" :type="getCaseStatusTag(data.testCase.status)">
-                            {{ getCaseStatusText(data.testCase.status) }}
+                          <el-tag size="small" :type="getCaseStatusTag(data.status)">
+                            {{ getCaseStatusText(data.status) }}
                           </el-tag>
                         </template>
                       </span>
@@ -198,7 +198,7 @@
                   @selection-change="checkedSelectedTestCases = $event"
                   @row-click="handleSelectedTestCaseRowClick"
                 >
-                  <el-table-column type="selection" width="44" />
+                  <el-table-column type="selection" width="30" />
                   <el-table-column prop="name" :label="$t('uiAutomation.suite.caseName')" min-width="150" show-overflow-tooltip />
                   <el-table-column prop="priority" :label="$t('uiAutomation.suite.priority')" width="80">
                     <template #default="{ row }">
@@ -207,11 +207,10 @@
                       </el-tag>
                     </template>
                   </el-table-column>
-                  <el-table-column :label="$t('uiAutomation.common.operation')" width="120">
+                  <el-table-column :label="$t('uiAutomation.common.operation')" width="80">
                     <template #default="{ row, $index }">
                       <div class="selected-case-actions">
                         <el-button
-                          size="small"
                           text
                           @click.stop="moveUp($index)"
                           :disabled="$index === 0"
@@ -219,20 +218,11 @@
                           <el-icon><Top /></el-icon>
                         </el-button>
                         <el-button
-                          size="small"
                           text
                           @click.stop="moveDown($index)"
                           :disabled="$index === selectedTestCases.length - 1"
                         >
                           <el-icon><Bottom /></el-icon>
-                        </el-button>
-                        <el-button
-                          size="small"
-                          text
-                          type="danger"
-                          @click.stop="removeTestCase($index)"
-                        >
-                          <el-icon><Delete /></el-icon>
                         </el-button>
                       </div>
                     </template>
@@ -311,8 +301,7 @@ import {
   createTestSuite,
   updateTestSuite,
   deleteTestSuite,
-  getTestCases,
-  getTestCaseFolders,
+  getTestCaseTree,
   getTestSuiteTestCases,
   addTestCaseToTestSuite,
   removeTestCaseFromTestSuite,
@@ -322,7 +311,7 @@ import {
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { getPreferredProjectId, useRememberedProject } from '@/utils/projectSelection'
-import { closeReservedUiRemoteWindow, loadUiRemoteCapabilities, openUiRemoteSession, reserveUiRemoteWindow } from '@/utils/uiRemoteNavigation'
+import { closeReservedUiRemoteWindow, loadUiRemoteCapabilities, openUiRemoteSession, reserveUiRemoteWindow } from '@/utils/ui-automation'
 
 const { t } = useI18n()
 const router = useRouter()
@@ -372,8 +361,9 @@ const formRules = computed(() => ({
 }))
 
 // 测试用例相关
-const availableTestCases = ref([])
-const testCaseFolders = ref([])
+// 服务端已返回目录和用例混合树，节点 key 与业务 id 分开使用。
+const testCaseTree = ref([])
+let testCaseTreeRequestId = 0
 const testCasesLoading = ref(false)
 const suiteCasesLoading = ref(false)
 let suiteEditorRequestId = 0
@@ -382,36 +372,6 @@ const testCaseSearchText = ref('')
 const testCaseTreeRef = ref(null)
 const selectedTableRef = ref(null)
 const checkedSelectedTestCases = ref([])
-
-const testCaseTree = computed(() => {
-  const root = []
-  const folders = new Map(testCaseFolders.value.map(folder => [
-    String(folder.id), {
-      id: `folder:${folder.id}`,
-      name: folder.name,
-      type: 'folder',
-      children: []
-    }
-  ]))
-
-  testCaseFolders.value.forEach(folder => {
-    const node = folders.get(String(folder.id))
-    const parent = folders.get(String(folder.parent))
-    ;(parent ? parent.children : root).push(node)
-  })
-
-  availableTestCases.value.forEach(testCase => {
-    const parent = folders.get(String(testCase.folder))
-    ;(parent ? parent.children : root).push({
-      id: `case:${testCase.id}`,
-      name: testCase.name,
-      type: 'testCase',
-      testCase
-    })
-  })
-
-  return root
-})
 
 // 运行配置
 const runConfig = reactive({
@@ -476,35 +436,24 @@ const loadSuites = async () => {
 
 // 加载可用测试用例
 const loadAvailableTestCases = async () => {
-  availableTestCases.value = []
-  testCaseFolders.value = []
-  if (!projectId.value) return
+  const requestId = ++testCaseTreeRequestId
+  const project = projectId.value
+  testCaseTree.value = []
+  if (!project) return
 
   testCasesLoading.value = true
   try {
-    const loadAllPages = async request => {
-      const results = []
-      let page = 1
-      let hasNext = true
-      while (hasNext) {
-        const response = await request({ project: projectId.value, page, page_size: 1000 })
-        const data = response.data
-        results.push(...(data.results || data))
-        hasNext = Boolean(data.next)
-        page += 1
-      }
-      return results
-    }
-
-    ;[availableTestCases.value, testCaseFolders.value] = await Promise.all([
-      loadAllPages(getTestCases),
-      loadAllPages(getTestCaseFolders)
-    ])
+    const { data } = await getTestCaseTree({ project })
+    if (requestId !== testCaseTreeRequestId || project !== projectId.value) return
+    testCaseTree.value = data
+    await nextTick()
+    testCaseTreeRef.value?.filter(testCaseSearchText.value)
   } catch (error) {
+    if (requestId !== testCaseTreeRequestId || project !== projectId.value) return
     console.error('获取测试用例列表失败:', error)
     ElMessage.error(t('uiAutomation.suite.messages.loadCasesFailed'))
   } finally {
-    testCasesLoading.value = false
+    if (requestId === testCaseTreeRequestId) testCasesLoading.value = false
   }
 }
 
@@ -753,7 +702,6 @@ const pollSuiteStatus = (suiteId) => {
 const syncSelectedTestCases = () => {
   const checkedCases = (testCaseTreeRef.value?.getCheckedNodes(true, false) || [])
     .filter(node => node.type === 'testCase')
-    .map(node => node.testCase)
   const checkedIds = new Set(checkedCases.map(testCase => String(testCase.id)))
   const updatedCases = selectedTestCases.value.filter(testCase => checkedIds.has(String(testCase.id)))
   const updatedIds = new Set(updatedCases.map(testCase => String(testCase.id)))
@@ -765,14 +713,6 @@ const syncSelectedTestCases = () => {
     }
   })
   selectedTestCases.value = updatedCases
-}
-
-const removeTestCase = (index) => {
-  const testCase = selectedTestCases.value[index]
-  selectedTableRef.value?.toggleRowSelection(testCase, false)
-  checkedSelectedTestCases.value = checkedSelectedTestCases.value.filter(tc => tc.id !== testCase.id)
-  selectedTestCases.value.splice(index, 1)
-  testCaseTreeRef.value?.setChecked(`case:${testCase.id}`, false, false)
 }
 
 const clearSelectedChecks = () => {
@@ -940,7 +880,6 @@ const handleNewSuite = async () => {
 
 <style scoped lang="scss">
 .page-container {
-  padding: 20px;
   background: #f5f5f5;
   min-height: 100vh;
 }
@@ -949,15 +888,33 @@ const handleNewSuite = async () => {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 20px;
+  margin-bottom: 10px;
   background: white;
-  padding: 20px;
+  padding: 10px 20px;
   border-radius: 4px;
 }
 
-.page-title {
+/* 与脚本列表 / 用例管理保持一致：同样跟随全局响应式断点 */
+.page-container .page-header .page-title {
   margin: 0;
   font-size: 24px;
+  font-weight: 700;
+
+  @media screen and (max-width: 1920px) {
+    font-size: 22px;
+  }
+  @media screen and (max-width: 1600px) {
+    font-size: 20px;
+  }
+  @media screen and (max-width: 1440px) {
+    font-size: 18px;
+  }
+  @media screen and (max-width: 1280px) {
+    font-size: 16px;
+  }
+  @media screen and (max-width: 480px) {
+    font-size: 14px;
+  }
 }
 
 .suite-header-actions {
@@ -978,7 +935,7 @@ const handleNewSuite = async () => {
 }
 
 .filter-bar {
-  margin-bottom: 20px;
+  margin-bottom: 10px;
 }
 
 // 与脚本列表一致：文字按钮 + 紧凑间距，避免每行三个实心按钮挤占宽度。
@@ -996,7 +953,7 @@ const handleNewSuite = async () => {
 }
 
 .pagination-container {
-  margin-top: 20px;
+  margin-top: 10px;
   display: flex;
   justify-content: flex-end;
 }
@@ -1166,7 +1123,6 @@ const handleNewSuite = async () => {
     padding: 0;
   }
 }
-
 
 :deep(.el-table__row) {
   cursor: pointer;

@@ -30,7 +30,7 @@
             :key="treeKey"
             :data="treeData"
             :props="treeProps"
-            node-key="id"
+            node-key="key"
             :expand-on-click-node="false"
             :default-expanded-keys="expandedKeys"
             draggable
@@ -300,6 +300,7 @@ import ResizableSplitPane from '@/components/ResizableSplitPane.vue'
 import { ref, reactive, computed, onMounted, watch, nextTick } from 'vue'
 import { getPreferredProjectId, useRememberedProject } from '@/utils/projectSelection'
 import { useI18n } from 'vue-i18n'
+import { getElementLibraryNodes } from '@/utils/ui-automation'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Plus, FolderAdd, Document, Search, Edit, Delete,
@@ -313,7 +314,7 @@ import {
   updateElement,
   deleteElement,
   getElementTree,
-  getElementGroupTree,
+  getElementGroupDetail,
   createElementGroup,
   updateElementGroup,
   deleteElementGroup,
@@ -428,7 +429,7 @@ const getAllPages = () => {
 
   const traverse = (nodes) => {
     nodes.forEach(node => {
-      if (node.type === 'page') {
+      if (node.type === 'page' && !node.synthetic) {
         allPages.push({
           id: node.id,
           name: node.name
@@ -450,7 +451,7 @@ const getAllPagesExceptCurrent = (currentId) => {
 
   const traverse = (nodes) => {
     nodes.forEach(node => {
-      if (node.type === 'page' && node.id !== currentId) {
+      if (node.type === 'page' && !node.synthetic && node.id !== currentId) {
         allPages.push({
           id: node.id,
           name: node.name
@@ -476,7 +477,6 @@ const saving = ref(false)
 const validating = ref(false)
 const generating = ref(false)
 const suggestions = ref([])
-
 
 // 将关键变量暴露到window对象，方便在控制台调试
 const exposeToWindow = () => {
@@ -590,139 +590,31 @@ const loadLocatorStrategies = async () => {
   }
 }
 
-// 加载元素树
 const loadElementTree = async () => {
   const requestId = ++elementTreeRequestId
-  if (!selectedProject.value) {
+  const requestedProject = selectedProject.value
+  if (!requestedProject) {
     treeData.value = []
     pages.value = []
     treeLoading.value = false
     return
   }
 
-  const requestedProject = selectedProject.value
   treeLoading.value = true
   try {
-    // 并行加载页面树和元素
-    const [pageTreeResponse, elementsResponse] = await Promise.all([
-      getElementGroupTree({ project: requestedProject }),
-      getElementTree({ project: requestedProject })
-    ])
+    const { data } = await getElementTree({ project: requestedProject })
     if (requestId !== elementTreeRequestId || String(selectedProject.value) !== String(requestedProject)) return
-
-    // 构建完整的树形结构
-    const buildTree = (groups) => {
-      return groups.map(group => ({
-        ...group,
-        type: 'page',
-        children: group.children ? buildTree(group.children) : []
-      }))
-    }
-
-    const pageNodes = buildTree(pageTreeResponse.data || [])
-    // 复用树接口的全部层级生成分组下拉选项，避免重复请求分页列表。
-    const collectPages = (groups, result = []) => {
-      groups.forEach(group => {
-        const { children = [], ...page } = group
-        result.push(page)
-        collectPages(children, result)
-      })
-      return result
-    }
-    pages.value = collectPages(pageTreeResponse.data || [])
-
-    // 调试信息 - 检查API返回的完整响应结构
-    console.log('=== 加载元素树调试 ===')
-    console.log('页面树响应:', pageTreeResponse)
-    console.log('元素响应:', elementsResponse)
-
-    // 打印原始数据进行分析
-    console.log('页面树原始数据:', JSON.parse(JSON.stringify(pageTreeResponse.data || []), null, 2))
-
-    const elements = elementsResponse.data?.results || elementsResponse.data || []
-    console.log('提取的元素列表:', elements)
-
-    // 获取所有页面的ID，用于调试
-    const pageIds = pageNodes.map(page => page.id)
-    console.log('页面ID列表:', pageIds)
-
-    // 将元素添加到对应页面下
-    const attachedElementIds = new Set()
-
-    const attachElementsToPages = (pages) => {
-      pages.forEach(page => {
-        // 找到属于当前页面的元素
-        const pageElements = elements.filter(element => element.group_id === page.id)
-        console.log(`页面 ${page.name} (ID: ${page.id}) 找到 ${pageElements.length} 个关联元素`, pageElements)
-
-        const elementNodes = pageElements.map(element => {
-          attachedElementIds.add(element.id)
-          return {
-            ...element,
-            type: 'element'
-          }
-        })
-
-        // 将元素添加到页面的子节点中
-        page.children = page.children ? [...page.children, ...elementNodes] : [...elementNodes]
-        console.log(`页面 ${page.name} 现在有 ${page.children.filter(c => c.type === 'element').length} 个子元素`)
-
-        // 递归处理子页面
-        if (page.children) {
-          attachElementsToPages(page.children.filter(child => child.type === 'page'))
-        }
-      })
-    }
-
-    attachElementsToPages(pageNodes)
-
-    // 添加未关联页面的元素到"未关联页面"节点
-    // 包括：1. group_id 为 null/undefined 的元素
-    //       2. group_id 指向的页面不存在的元素
-    const unassignedElements = elements.filter(element => {
-      // 如果没有group_id，肯定是未关联的
-      if (!element.group_id) {
-        return true
-      }
-      // 如果有group_id但没有被添加到任何页面（页面不存在），也算未关联
-      return !attachedElementIds.has(element.id)
-    })
-
-    console.log('未关联页面的元素:', unassignedElements)
-
-    if (unassignedElements.length > 0) {
-      const unassignedPage = {
-        id: 'unassigned',
-        name: '未关联页面',
-        type: 'page',
-        children: unassignedElements.map(element => ({
-          ...element,
-          type: 'element'
-        }))
-      }
-      pageNodes.unshift(unassignedPage) // 添加到列表最前面
-      console.log(`已添加 ${unassignedElements.length} 个未关联元素到"未关联页面"节点`)
-      // 默认展开未关联页面节点
-      expandedKeys.value.push('unassigned')
-    }
-
-    console.log('最终treeData:', pageNodes)
-    treeData.value = pageNodes
-
-    // 将treeData暴露到window，方便在控制台调试
-    if (typeof window !== 'undefined') {
-      window.vue_treeData = treeData.value
-      console.log('treeData已挂载到window.vue_treeData，可在控制台查看')
-      console.log('当前treeData结构:', JSON.parse(JSON.stringify(treeData.value)).map(p => ({
-        name: p.name,
-        id: p.id,
-        children: p.children?.filter(c => c.type === 'element').length || 0
-      })))
-    }
+    treeData.value = data
+    pages.value = getElementLibraryNodes(data, 'page')
+    const pageKeys = new Set(getElementLibraryNodes(data, 'page').map(page => page.key))
+    expandedKeys.value = expandedKeys.value.filter(key => pageKeys.has(key))
+    // 未关联分组由服务端提供，默认展开，且不会进入可编辑分组下拉选项。
+    if (data.some(node => node.synthetic)) expandedKeys.value.push('group:unassigned')
   } catch (error) {
     if (requestId !== elementTreeRequestId) return
     console.error('获取元素树失败:', error)
     treeData.value = []
+    pages.value = []
   } finally {
     if (requestId === elementTreeRequestId) treeLoading.value = false
   }
@@ -1024,14 +916,14 @@ const onNodeRightClick = (event, data) => {
 
 // 节点展开
 const onNodeExpand = (data) => {
-  if (!expandedKeys.value.includes(data.id)) {
-    expandedKeys.value.push(data.id)
+  if (!expandedKeys.value.includes(data.key)) {
+    expandedKeys.value.push(data.key)
   }
 }
 
 // 节点收起
 const onNodeCollapse = (data) => {
-  const index = expandedKeys.value.indexOf(data.id)
+  const index = expandedKeys.value.indexOf(data.key)
   if (index > -1) {
     expandedKeys.value.splice(index, 1)
   }
@@ -1077,7 +969,7 @@ const saveElement = async () => {
         // 通过遍历树形结构查找对应的页面ID
         const findPageIdByName = (nodes, pageName) => {
           for (const node of nodes) {
-            if (node.type === 'page' && node.name === pageName) {
+            if (node.type === 'page' && !node.synthetic && node.name === pageName) {
               return node.id
             }
             if (node.children) {
@@ -1135,7 +1027,7 @@ const saveElement = async () => {
           console.log(`在 ${nodes.length} 个节点中查找页面名称: ${pageName}`)
           for (const node of nodes) {
             console.log(`检查节点: ${node.name} (ID: ${node.id}, type: ${node.type})`)
-            if (node.type === 'page' && node.name === pageName) {
+            if (node.type === 'page' && !node.synthetic && node.name === pageName) {
               console.log(`找到页面! ID: ${node.id}`)
               return node.id
             }
@@ -1201,8 +1093,8 @@ const saveElement = async () => {
       // 展开新创建元素所在的页面节点
       if (selectedElement.value && selectedElement.value.group_id) {
         console.log('展开元素所在页面:', selectedElement.value.group_id)
-        if (!expandedKeys.value.includes(selectedElement.value.group_id)) {
-          expandedKeys.value.push(selectedElement.value.group_id)
+        if (!expandedKeys.value.includes(`group:${selectedElement.value.group_id}`)) {
+          expandedKeys.value.push(`group:${selectedElement.value.group_id}`)
         }
       }
 
@@ -1326,16 +1218,20 @@ const editNode = async () => {
   }
 
   if (rightClickedNode.value.type === 'page') {
-    // 编辑页面
-    console.log('Editing page node')
-    editPageForm.id = rightClickedNode.value.id
-    editPageForm.name = rightClickedNode.value.name
-    editPageForm.description = rightClickedNode.value.description || ''
-    editPageForm.parent_page = rightClickedNode.value.parent_group || null
-    console.log('Set edit page form data:', editPageForm)
-    console.log('Setting showEditPageDialog to true')
-    showEditPageDialog.value = true
-    console.log('showEditPageDialog value:', showEditPageDialog.value)
+    // 树不携带描述正文，编辑分组前读取详情，防止将未加载的描述清空。
+    const project = selectedProject.value
+    const groupId = rightClickedNode.value.id
+    try {
+      const { data } = await getElementGroupDetail(groupId)
+      if (project !== selectedProject.value || groupId !== rightClickedNode.value?.id) return
+      editPageForm.id = data.id
+      editPageForm.name = data.name
+      editPageForm.description = data.description || ''
+      editPageForm.parent_page = data.parent_group || null
+      showEditPageDialog.value = true
+    } catch (error) {
+      ElMessage.error(t('uiAutomation.element.messages.getDetailFailed'))
+    }
   } else if (rightClickedNode.value.type === 'element') {
     console.log('Editing element node')
     // 编辑元素 - 通过API获取完整的元素详情，避免使用树节点的复杂数据
@@ -1487,7 +1383,7 @@ const updatePage = async () => {
 }
 
 .sidebar-header {
-  padding: 15px;
+  padding: 10px;
   border-bottom: 1px solid #e4e7ed;
   display: flex;
   align-items: center;
@@ -1567,7 +1463,6 @@ const updatePage = async () => {
 
 .element-header {
   margin-bottom: 20px;
-  padding-bottom: 20px;
   border-bottom: 1px solid #e4e7ed;
 }
 

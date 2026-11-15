@@ -293,9 +293,10 @@ class StandardPagination(PageNumberPagination):
 
 def _execution_list_queryset(queryset):
     """报告列表和脚本执行历史共用轻量查询，避免读取日志、结果 JSON 及脚本正文。"""
-    return queryset.select_related('project', 'test_suite', 'test_script', 'executed_by').only(
+    return queryset.select_related('project', 'test_suite', 'test_script', 'executed_by', 'scheduled_task').only(
         'id', 'project_id', 'project__name', 'test_suite_id', 'test_suite__name',
         'test_script_id', 'test_script__name', 'executed_by_id', 'executed_by__username',
+        'scheduled_task_id', 'scheduled_task__name',
         'environment', 'status', 'engine', 'browser', 'headless', 'execution_type',
         'total_cases', 'passed_cases', 'failed_cases', 'skipped_cases',
         'started_at', 'finished_at', 'duration', 'report_url', 'created_at',
@@ -455,7 +456,13 @@ class ElementViewSet(viewsets.ModelViewSet):
             models.Q(owner=user) | models.Q(members=user)
         ).distinct()
         queryset = Element.objects.filter(project__in=accessible_projects).order_by('page', 'order', 'name', 'id')
-        if self.action in ['list', 'tree']:
+        if self.action == 'tree':
+            # 树只读取展示、排序和步骤选取所需字段，不加载描述、引用统计或详情关联。
+            return queryset.select_related('locator_strategy').only(
+                'id', 'name', 'element_type', 'locator_strategy_id', 'locator_strategy__name',
+                'locator_value', 'locator_options', 'page', 'group_id', 'validation_status', 'order',
+            )
+        if self.action == 'list':
             # 轻量响应只读取标量字段及定位策略，分页计数也无需关联步骤表聚合。
             return queryset.select_related('locator_strategy').only(
                 'id', 'name', 'element_type', 'locator_strategy_id', 'locator_strategy__name',
@@ -523,12 +530,61 @@ class ElementViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'])
     def tree(self, request):
         """获取元素树形结构"""
-        project_id = request.query_params.get('project')
-        if not project_id:
-            return Response({'error': '需要指定项目ID'}, status=status.HTTP_400_BAD_REQUEST)
+        project_id = request.query_params.get('project', '')
+        if not re.fullmatch(r'[0-9]{1,19}', project_id) or not 0 < int(project_id) <= 9223372036854775807:
+            raise ValidationError({'project': '需要指定有效的项目ID'})
 
+        accessible_projects = UiProject.objects.filter(
+            models.Q(owner=request.user) | models.Q(members=request.user)
+        )
+        groups = ElementGroup.objects.filter(
+            project_id=project_id, project__in=accessible_projects,
+        ).order_by('order', 'name', 'id').values('id', 'name', 'parent_group_id', 'order')
+        group_nodes = {
+            group['id']: {
+                'key': f"group:{group['id']}", 'id': group['id'], 'type': 'page',
+                'name': group['name'], 'parent_group': group['parent_group_id'],
+                'order': group['order'], 'children': [],
+            }
+            for group in groups
+        }
+
+        # 修复历史脏数据的父级环和跨项目父级，避免节点消失或产生无限嵌套。
+        resolved = set()
+        for group_id in group_nodes:
+            path = set()
+            current_id = group_id
+            while current_id in group_nodes and current_id not in resolved:
+                node = group_nodes[current_id]
+                if current_id in path or node['parent_group'] not in group_nodes:
+                    node['parent_group'] = None
+                    break
+                path.add(current_id)
+                current_id = node['parent_group']
+            resolved.update(path)
+
+        roots = []
+        for node in group_nodes.values():
+            parent = group_nodes.get(node['parent_group'])
+            (parent['children'] if parent else roots).append(node)
+
+        unassigned = []
         elements = self.get_queryset().filter(project_id=project_id).order_by('page', 'order', 'id')
-        return Response(self.get_serializer(elements, many=True).data)
+        for node in self.get_serializer(elements, many=True).data:
+            parent = group_nodes.get(node['group_id'])
+            if parent:
+                parent['children'].append(node)
+            else:
+                # 未分组或分组失效的元素统一保留，不能暴露其他项目的分组主键。
+                node['group_id'] = None
+                unassigned.append(node)
+        if unassigned:
+            roots.insert(0, {
+                'key': 'group:unassigned', 'id': 'unassigned', 'type': 'page',
+                'name': '未关联页面', 'parent_group': None, 'order': 0,
+                'synthetic': True, 'children': unassigned,
+            })
+        return Response(roots)
 
     @action(detail=True, methods=['post'])
     def add_backup_locator(self, request, pk=None):
@@ -1328,6 +1384,8 @@ class TestSuiteViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter]
     filterset_fields = ['project']
+    # 下拉选项需要一次拉取全部套件，支持通过 page_size 放大页容量。
+    pagination_class = StandardPagination
     search_fields = ['name', 'description']
     ordering = ['-created_at']
 
@@ -1598,7 +1656,7 @@ class TestExecutionViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
 
     filter_backends = [DjangoFilterBackend, filters.SearchFilter]
-    filterset_fields = ['project', 'test_suite', 'test_script', 'status', 'environment', 'executed_by']
+    filterset_fields = ['project', 'test_suite', 'test_script', 'status', 'environment', 'executed_by', 'scheduled_task']
     search_fields = ['error_message']
     ordering = ['-created_at']
     pagination_class = StandardPagination
@@ -1612,7 +1670,7 @@ class TestExecutionViewSet(viewsets.ModelViewSet):
         queryset = TestExecution.objects.filter(project__in=accessible_projects)
         if self.action == 'list':
             return _execution_list_queryset(queryset)
-        return queryset.select_related('project', 'test_suite', 'test_script', 'executed_by')
+        return queryset.select_related('project', 'test_suite', 'test_script', 'executed_by', 'scheduled_task')
 
     def get_serializer_class(self):
         if self.action == 'create':
@@ -1743,7 +1801,7 @@ class TestCaseViewSet(viewsets.ModelViewSet):
     # 测试用例列表需要支持前端按项目一次加载较大批量数据，同时保留分页上限保护。
     pagination_class = StandardPagination
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
-    search_fields = ['name', 'description']
+    search_fields = ['name']
     ordering_fields = ['created_at', 'updated_at', 'name', 'priority', 'status']
     ordering = ['-created_at', '-id']
     filterset_fields = ['project', 'status', 'priority', 'created_by']
@@ -1762,23 +1820,80 @@ class TestCaseViewSet(viewsets.ModelViewSet):
             models.Q(owner=user) | models.Q(members=user)
         ).distinct()
         queryset = TestCase.objects.filter(project__in=accessible_projects)
-        if self.action == 'list':
+        if self.action in ['list', 'tree']:
             # 使用步骤表现有的用例索引计数，不实例化步骤或联查元素，也不增加逐用例查询。
             step_counts = TestCaseStep.objects.filter(
                 test_case_id=models.OuterRef('pk')
             ).order_by().values('test_case_id').annotate(total=models.Count('pk')).values('total')
-            return queryset.select_related('project', 'created_by').only(
-                'id', 'name', 'description', 'folder_id', 'project_id', 'project__name',
-                'status', 'priority', 'created_by_id', 'created_by__username', 'created_at', 'updated_at',
-            ).annotate(
+            queryset = queryset.annotate(
                 steps_count=models.functions.Coalesce(
                     models.Subquery(step_counts, output_field=models.IntegerField()), models.Value(0)
                 )
+            )
+            if self.action == 'tree':
+                return queryset.only('id', 'name', 'folder_id', 'priority', 'status')
+            return queryset.select_related('project', 'created_by').only(
+                'id', 'name', 'description', 'folder_id', 'project_id', 'project__name',
+                'status', 'priority', 'created_by_id', 'created_by__username', 'created_at', 'updated_at',
             )
         # 详情及写入响应继续加载完整步骤，保证步骤回显与现有编辑流程一致。
         return queryset.select_related(
             'project', 'created_by', 'folder'
         ).prefetch_related('steps__element__locator_strategy')
+
+    @action(detail=False, methods=['get'])
+    def tree(self, request):
+        """获取用例树形结构，按项目分组，支持分组嵌套"""
+        project_id = request.query_params.get('project', '')
+        if not re.fullmatch(r'[0-9]{1,19}', project_id) or not 0 < int(project_id) <= 9223372036854775807:
+            raise ValidationError({'project': '需要指定有效的项目ID'})
+
+        accessible_projects = UiProject.objects.filter(
+            models.Q(owner=request.user) | models.Q(members=request.user)
+        )
+        folders = TestCaseFolder.objects.filter(
+            project_id=project_id, project__in=accessible_projects,
+        ).order_by('name', 'id').values('id', 'name', 'parent_id')
+        folder_nodes = {
+            folder['id']: {
+                'key': f"folder:{folder['id']}", 'id': folder['id'], 'type': 'folder',
+                'name': folder['name'], 'parent': folder['parent_id'], 'children': [],
+            }
+            for folder in folders
+        }
+
+        # 历史脏数据中的跨项目父目录或环形关系不能造成漏节点或无限嵌套。
+        resolved = set()
+        for folder_id in folder_nodes:
+            path = set()
+            current_id = folder_id
+            while current_id in folder_nodes and current_id not in resolved:
+                node = folder_nodes[current_id]
+                if current_id in path or node['parent'] not in folder_nodes:
+                    node['parent'] = None
+                    break
+                path.add(current_id)
+                current_id = node['parent']
+            resolved.update(path)
+
+        roots = []
+        for node in folder_nodes.values():
+            parent = folder_nodes.get(node['parent'])
+            (parent['children'] if parent else roots).append(node)
+
+        # 不复用详情序列化器，严格限制树字段，步骤表仅用于计数，不读取正文。
+        cases = self.get_queryset().filter(project_id=project_id).order_by('name', 'id').values(
+            'id', 'name', 'folder_id', 'priority', 'status', 'steps_count',
+        )
+        for case in cases:
+            parent = folder_nodes.get(case['folder_id'])
+            node = {
+                'key': f"case:{case['id']}", 'id': case['id'], 'type': 'testCase',
+                'name': case['name'], 'folder': parent['id'] if parent else None,
+                'priority': case['priority'], 'status': case['status'], 'steps_count': case['steps_count'],
+            }
+            (parent['children'] if parent else roots).append(node)
+        return Response(roots)
 
     def _validate_steps(self, steps_data, project_id):
         """校验测试用例提交的步骤，并复用步骤序列化器的业务规则。"""
@@ -2398,7 +2513,7 @@ class TestCaseExecutionViewSet(viewsets.ModelViewSet):
     search_fields = ['test_case__name', 'error_message']
     ordering_fields = ['created_at', 'started_at', 'finished_at', 'status']
     ordering = ['-created_at', '-id']
-    filterset_fields = ['project', 'test_suite', 'test_case', 'status', 'execution_source']
+    filterset_fields = ['project', 'test_suite', 'test_case', 'status', 'execution_source', 'scheduled_task']
     pagination_class = StandardPagination
 
     def get_serializer_class(self):
@@ -2415,12 +2530,13 @@ class TestCaseExecutionViewSet(viewsets.ModelViewSet):
         queryset = TestCaseExecution.objects.filter(
             project__in=accessible_projects
         ).select_related(
-            'test_case', 'project', 'test_suite', 'created_by'
+            'test_case', 'project', 'test_suite', 'created_by', 'scheduled_task'
         )
         if self.action == 'list':
             return queryset.only(
                 'id', 'test_case_id', 'test_case__name', 'project_id', 'project__name',
                 'test_suite_id', 'test_suite__name', 'created_by_id', 'created_by__username',
+                'scheduled_task_id', 'scheduled_task__name',
                 'execution_source', 'status', 'engine', 'browser', 'headless',
                 'execution_time', 'started_at', 'finished_at', 'created_at',
             )
@@ -2548,256 +2664,19 @@ class UiScheduledTaskViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'])
     def run_now(self, request, pk=None):
-        """立即运行任务"""
+        """立即运行与自动调度共用记录创建和执行逻辑。"""
+        from .scheduled_tasks import start_scheduled_task
+
         task = self.get_object()
-
         try:
-            # 更新任务执行时间和次数
-            task.last_run_time = timezone.now()
-            task.total_runs += 1
-            # 重新计算下次运行时间
-            task.next_run_time = task.calculate_next_run()
-            task.save()
-
-            # 根据任务类型执行不同的逻辑
-            if task.task_type == 'TEST_SUITE':
-                # 执行测试套件
-                if not task.test_suite:
-                    return Response({
-                        'error': '该任务未配置测试套件'
-                    }, status=status.HTTP_400_BAD_REQUEST)
-
-                test_suite = task.test_suite
-                test_case_count = test_suite.suite_test_cases.count()
-
-                if test_case_count == 0:
-                    return Response({
-                        'error': '该测试套件未包含任何测试用例，无法执行'
-                    }, status=status.HTTP_400_BAD_REQUEST)
-
-                if task.engine == 'playwright':
-                    from .playwright_engine import PlaywrightTestEngine
-                    is_ready, error_msg = PlaywrightTestEngine.check_execution_environment_sync(task.browser)
-                    if not is_ready:
-                        return Response({
-                            'error': error_msg,
-                            'message': 'Playwright 浏览器未就绪，请先安装后再执行测试套件任务'
-                        }, status=status.HTTP_400_BAD_REQUEST)
-                elif task.storage_state_id:
-                    return Response({'error': '只有 Playwright 任务支持登录态'}, status=status.HTTP_400_BAD_REQUEST)
-
-                # 更新套件执行状态
-                test_suite.execution_status = 'running'
-                test_suite.save()
-
-                # 在后台线程中执行测试
-                import threading
-                from .test_executor import TestExecutor
-
-                def run_test():
-                    try:
-                        executor = TestExecutor(
-                            test_suite=test_suite,
-                            engine=task.engine,
-                            browser=task.browser,
-                            headless=task.headless,
-                            executed_by=task.created_by,
-                            storage_state_id=task.storage_state_id
-                        )
-                        executor.run()
-
-                        # 更新任务执行结果
-                        task.successful_runs += 1
-                        task.last_result = {'status': 'success', 'message': '测试套件执行成功'}
-                        task.error_message = ''
-                        task.save()
-
-                        # 发送成功通知
-                        self._send_task_notification(task, success=True)
-
-                    except Exception as e:
-                        task.failed_runs += 1
-                        task.last_result = {'status': 'failed', 'message': str(e)}
-                        task.error_message = str(e)
-                        test_suite.execution_status = 'failed'
-                        test_suite.save()
-                        task.save()
-
-                        # 发送失败通知
-                        self._send_task_notification(task, success=False)
-
-                # 启动后台线程执行测试
-                thread = threading.Thread(target=run_test)
-                thread.daemon = True
-                thread.start()
-
-                log_operation('run', 'scheduled_task', task.id, task.name, request.user)
-
-                return Response({
-                    'message': '测试套件开始执行',
-                    'task_id': task.id,
-                    'task_name': task.name,
-                    'test_suite': test_suite.name,
-                    'test_case_count': test_case_count,
-                    'engine': task.engine,
-                    'browser': task.browser,
-                    'headless': task.headless
-                }, status=status.HTTP_200_OK)
-
-            elif task.task_type == 'TEST_CASE':
-                # 执行测试用例
-                if not task.test_cases or len(task.test_cases) == 0:
-                    return Response({
-                        'error': '该任务未配置测试用例'
-                    }, status=status.HTTP_400_BAD_REQUEST)
-
-                test_case_ids = task.test_cases
-                test_cases = TestCase.objects.filter(id__in=test_case_ids).select_related('project')
-                test_case_count = test_cases.count()
-
-                if test_case_count == 0:
-                    return Response({
-                        'error': '找不到配置的测试用例'
-                    }, status=status.HTTP_400_BAD_REQUEST)
-
-                if task.engine == 'selenium' and TestCaseStep.objects.filter(
-                    test_case_id__in=test_case_ids, action_type='storageState'
-                ).exists():
-                    return Response({'error': '包含登录态步骤的任务必须使用 Playwright 执行'}, status=status.HTTP_400_BAD_REQUEST)
-
-                if task.engine == 'playwright':
-                    from .playwright_engine import PlaywrightTestEngine
-                    is_ready, error_msg = PlaywrightTestEngine.check_execution_environment_sync(task.browser)
-                    if not is_ready:
-                        return Response({
-                            'error': error_msg,
-                            'message': 'Playwright 浏览器未就绪，请先安装后再执行测试用例任务'
-                        }, status=status.HTTP_400_BAD_REQUEST)
-                elif task.storage_state_id:
-                    return Response({'error': '只有 Playwright 任务支持登录态'}, status=status.HTTP_400_BAD_REQUEST)
-
-                if task.storage_state_id and not StorageState.objects.filter(
-                        pk=task.storage_state_id, project=task.project).exists():
-                    return Response({'error': '登录态不存在或不属于任务关联项目'},
-                                    status=status.HTTP_400_BAD_REQUEST)
-
-                # 在后台线程中执行测试用例
-                import threading
-                from .test_executor import run_single_case
-
-                def run_test_cases():
-                    """在后台线程中执行测试用例"""
-                    success_count = 0
-                    failed_count = 0
-
-                    try:
-                        for test_case in test_cases:
-                            # 执行记录由本视图预建，执行体统一复用 run_single_case。
-                            execution = TestCaseExecution.objects.create(
-                                test_case=test_case,
-                                project=task.project,
-                                execution_source='scheduled',
-                                status='running',
-                                engine=task.engine,
-                                browser=task.browser,
-                                headless=task.headless,
-                                created_by=task.created_by,
-                                started_at=timezone.now(),
-                            )
-                            try:
-                                case_result = run_single_case(
-                                    test_case,
-                                    engine=task.engine,
-                                    browser=task.browser,
-                                    headless=task.headless,
-                                    executed_by=task.created_by,
-                                    execution=execution,
-                                    storage_state_id=task.storage_state_id,
-                                )
-                            except Exception as exc:  # noqa: BLE001 - 单用例失败不影响同批其他用例
-                                logger.error(
-                                    f"执行测试用例 {test_case.name} 时发生异常: {exc}")
-                                execution.status = 'failed'
-                                execution.error_message = str(exc)
-                                execution.finished_at = timezone.now()
-                                execution.save()
-                                failed_count += 1
-                                continue
-
-                            if case_result.get('status') == 'passed':
-                                success_count += 1
-                                logger.info(f"测试用例 {test_case.name} 执行成功")
-                            else:
-                                failed_count += 1
-                                logger.warning(
-                                    f"测试用例 {test_case.name} 执行失败: "
-                                    f"{case_result.get('error')}")
-
-                        # 更新任务执行结果
-                        if failed_count == 0:
-                            task.successful_runs += 1
-                            task.last_result = {
-                                'status': 'success',
-                                'message': f'执行完成: {success_count}个成功',
-                                'success_count': success_count,
-                                'failed_count': failed_count
-                            }
-                            task.error_message = ''
-                            task.save()
-
-                            # 发送成功通知
-                            self._send_task_notification(task, success=True)
-                        else:
-                            task.failed_runs += 1
-                            task.last_result = {
-                                'status': 'partial',
-                                'message': f'执行完成: {success_count}个成功, {failed_count}个失败',
-                                'success_count': success_count,
-                                'failed_count': failed_count
-                            }
-                            task.error_message = f'{failed_count}个测试用例执行失败'
-                            task.save()
-
-                            # 发送失败通知
-                            self._send_task_notification(task, success=False)
-
-                    except Exception as e:
-                        logger.error(f"执行定时任务测试用例时发生异常: {str(e)}")
-                        task.failed_runs += 1
-                        task.last_result = {'status': 'failed', 'message': str(e)}
-                        task.error_message = str(e)
-                        task.save()
-
-                        # 发送失败通知
-                        self._send_task_notification(task, success=False)
-
-                # 启动后台线程执行测试
-                thread = threading.Thread(target=run_test_cases)
-                thread.daemon = True
-                thread.start()
-
-                log_operation('run', 'scheduled_task', task.id, task.name, request.user)
-
-                return Response({
-                    'message': '测试用例开始执行',
-                    'task_id': task.id,
-                    'task_name': task.name,
-                    'test_case_count': test_case_count,
-                    'engine': task.engine,
-                    'browser': task.browser,
-                    'headless': task.headless
-                }, status=status.HTTP_200_OK)
-
-            else:
-                return Response({
-                    'error': '不支持的任务类型'
-                }, status=status.HTTP_400_BAD_REQUEST)
-
-        except Exception as e:
-            logger.error(f'执行定时任务失败: {str(e)}')
-            return Response({
-                'error': f'执行失败: {str(e)}'
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            result = start_scheduled_task(task.id)
+        except ValueError as exc:
+            return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as exc:
+            logger.exception('执行 UI 定时任务失败 task_id=%s', task.id)
+            return Response({'error': f'执行失败: {exc}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        log_operation('run', 'scheduled_task', task.id, task.name, request.user)
+        return Response(result)
 
     def _send_task_notification(self, task, success):
         """发送任务执行通知"""

@@ -24,14 +24,26 @@
       </div>
     </div>
 
-    <div class="main-content">
+    <div class="card-container">
+      <div class="filter-bar">
+        <el-row :gutter="20">
+          <el-col :span="6">
+            <el-input
+              v-model="searchText"
+              :placeholder="$t('uiAutomation.script.searchPlaceholder')"
+              clearable
+              @input="handleSearch"
+            >
+              <template #prefix>
+                <el-icon><Search /></el-icon>
+              </template>
+            </el-input>
+          </el-col>
+        </el-row>
+      </div>
+
       <el-table :data="scripts" v-loading="scriptsLoading" stripe style="width: 100%">
-        <el-table-column type="index" :label="$t('uiAutomation.script.index')" width="60" />
-        <el-table-column :label="$t('uiAutomation.script.projectColumn')" min-width="180">
-          <template #default="{ row }">
-            {{ row.project?.name || $t('uiAutomation.script.unknownProject') }}
-          </template>
-        </el-table-column>
+        <el-table-column prop="id" label="ID" width="60" align="center" />
         <el-table-column prop="name" :label="$t('uiAutomation.script.nameColumn')" min-width="340" show-overflow-tooltip />
         <el-table-column :label="$t('uiAutomation.script.languageColumn')" min-width="110">
           <template #default="{ row }">
@@ -151,23 +163,46 @@
 
     <el-dialog v-model="showConvertDialog" :title="$t('uiAutomation.script.convertToTestCase')" width="78%" :close-on-click-modal="false">
       <el-form label-width="90px" class="convert-form">
-        <el-row :gutter="16">
-          <el-col :span="12"><el-form-item label="用例名称" required><el-input v-model="convertForm.name" maxlength="200" /></el-form-item></el-col>
-          <el-col :span="12"><el-form-item label="起始 URL"><el-input v-model="convertForm.startUrl" /></el-form-item></el-col>
-        </el-row>
-        <el-form-item label="用例描述"><el-input v-model="convertForm.description" type="textarea" :rows="2" /></el-form-item>
+        <el-form-item :label="$t('uiAutomation.script.convert.mode')">
+          <el-radio-group v-model="convertMode">
+            <el-radio-button value="create">{{ $t('uiAutomation.script.convert.modeCreate') }}</el-radio-button>
+            <el-radio-button value="overwrite">{{ $t('uiAutomation.script.convert.modeOverwrite') }}</el-radio-button>
+          </el-radio-group>
+        </el-form-item>
+        <template v-if="convertMode === 'create'">
+          <el-row :gutter="16">
+            <el-col :span="12"><el-form-item :label="$t('uiAutomation.script.convert.caseName')" required><el-input v-model="convertForm.name" maxlength="200" /></el-form-item></el-col>
+            <el-col :span="12"><el-form-item :label="$t('uiAutomation.script.convert.startUrl')"><el-input v-model="convertForm.startUrl" /></el-form-item></el-col>
+          </el-row>
+          <el-form-item :label="$t('uiAutomation.script.convert.caseDescription')"><el-input v-model="convertForm.description" type="textarea" :rows="2" /></el-form-item>
+        </template>
+        <el-form-item v-else :label="$t('uiAutomation.script.convert.targetCase')" required>
+          <el-tree-select
+            v-model="convertTargetCaseId"
+            :loading="convertCasesLoading"
+            :data="convertCaseTree"
+            :props="{ label: 'name', children: 'children', disabled: isFolderNode }"
+            node-key="key"
+            :render-after-expand="false"
+            default-expand-all
+            filterable
+            clearable
+            :placeholder="$t('uiAutomation.script.convert.caseSelectPlaceholder')"
+            style="width: 100%"
+          />
+        </el-form-item>
       </el-form>
       <el-table :data="convertSteps" stripe max-height="280" size="small">
         <el-table-column type="index" label="#" width="55" />
-        <el-table-column label="动作类型" width="120"><template #default="{ row }">{{ actionLabel(row.action_type) }}</template></el-table-column>
-        <el-table-column label="元素 / 定位器" min-width="260"><template #default="{ row }">{{ getStepElementText(row) }}</template></el-table-column>
-        <el-table-column prop="description" label="步骤描述" min-width="220" show-overflow-tooltip />
-        <el-table-column prop="input_value" label="输入值" min-width="150" show-overflow-tooltip />
-        <el-table-column prop="assert_value" label="断言" min-width="130" show-overflow-tooltip />
+        <el-table-column :label="$t('uiAutomation.script.convert.actionType')" width="120"><template #default="{ row }">{{ actionLabel(row.action_type) }}</template></el-table-column>
+        <el-table-column :label="$t('uiAutomation.script.convert.element')" min-width="260"><template #default="{ row }">{{ getStepElementText(row) }}</template></el-table-column>
+        <el-table-column prop="description" :label="$t('uiAutomation.script.convert.stepDescription')" min-width="220" show-overflow-tooltip />
+        <el-table-column prop="input_value" :label="$t('uiAutomation.script.convert.inputValue')" min-width="150" show-overflow-tooltip />
+        <el-table-column prop="assert_value" :label="$t('uiAutomation.script.convert.assertValue')" min-width="130" show-overflow-tooltip />
       </el-table>
       <template #footer>
-        <el-button @click="showConvertDialog = false">取消</el-button>
-        <el-button type="primary" @click="convertToTestCase" :loading="converting">确认入库</el-button>
+        <el-button @click="showConvertDialog = false">{{ $t('uiAutomation.common.cancel') }}</el-button>
+        <el-button type="primary" @click="convertToTestCase" :loading="converting">{{ $t('uiAutomation.script.convert.confirm') }}</el-button>
       </template>
     </el-dialog>
 
@@ -178,11 +213,12 @@
 </template>
 
 <script setup>
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, computed, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, View, Edit, Delete, VideoPlay, Clock, Upload } from '@element-plus/icons-vue'
+import { Plus, View, Edit, Delete, VideoPlay, Clock, Upload, Search } from '@element-plus/icons-vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
+import { getTestCaseTreeNodes, getElementLibraryNodes, mergeStepElementOptions } from '@/utils/ui-automation'
 import { getPreferredProjectId, useRememberedProject } from '@/utils/projectSelection'
 
 import {
@@ -190,14 +226,15 @@ import {
   getTestScripts,
   deleteTestScript,
   importRecordedScript,
-  getElements,
-  getElementGroupTree,
+  getElementTree,
   getStorageStates,
   getScriptSteps,
   parseScriptSteps,
   saveScriptEditor,
   generateScriptCode,
-  convertScriptToTestCase
+  convertScriptToTestCase,
+  updateTestCase,
+  getTestCaseTree
 } from '@/api/ui_automation'
 import StructuredStepEditor from '@/components/ui-automation/StructuredStepEditor.vue'
 import * as monaco from 'monaco-editor/esm/vs/editor/editor.api'
@@ -206,14 +243,14 @@ import 'monaco-editor/esm/vs/editor/browser/widget/codeEditor/editor.css'
 import RecordingWizard from './RecordingWizard.vue'
 import ScriptReplayDialog from './ScriptReplayDialog.vue'
 import ScriptHistoryDialog from './ScriptHistoryDialog.vue'
-import { mergeStepElementOptions } from './elementLibrary.mjs'
+
 import { localizeGeneratedStepDescription } from './stepDescription.mjs'
 
 const router = useRouter()
 const { t, locale } = useI18n()
 
-// 操作列宽度按语言取：中文文案更短，用 340px 更紧凑；英文最长，取上限 420px。
-const operationColumnWidth = computed(() => (String(locale.value).startsWith('zh') ? 340 : 380))
+// 操作列宽度按语言取：中文文案更短，用 310px 更紧凑；英文最长，取上限 380px。
+const operationColumnWidth = computed(() => (String(locale.value).startsWith('zh') ? 310 : 380))
 
 // 响应式数据
 const projects = ref([])
@@ -225,6 +262,7 @@ let scriptsRequestId = 0
 const currentPage = ref(1)
 const pageSize = ref(20)
 const total = ref(0)
+const searchText = ref('')
 
 // 对话框控制
 const showDetailDialog = ref(false)
@@ -254,6 +292,13 @@ const showConvertDialog = ref(false)
 const convertScript = ref(null)
 const convertSteps = ref([])
 const convertForm = ref({ name: '', startUrl: '', description: '' })
+// 转换模式：create 新建用例，overwrite 覆盖已有用例的步骤。
+const convertMode = ref('create')
+const convertCasesLoading = ref(false)
+const convertCaseTree = ref([])
+let convertCasesRequestId = 0
+// 树选择器绑定用例节点 key（case:<id>），提交时再换回用例对象。
+const convertTargetCaseId = ref('')
 let codeEditor = null
 let suppressCodeChange = false
 let generateTimer = null
@@ -310,7 +355,8 @@ const loadScripts = async () => {
     const response = await getTestScripts({
       project: requestedProject,
       page: currentPage.value,
-      page_size: pageSize.value
+      page_size: pageSize.value,
+      search: searchText.value
     })
     if (requestId !== scriptsRequestId || String(selectedProject.value) !== String(requestedProject)) return
 
@@ -347,6 +393,12 @@ const handleSizeChange = async () => {
 
 // 当前页改变
 const handleCurrentChange = async () => {
+  await loadScripts()
+}
+
+// 名称搜索：输入即查询并回到第一页
+const handleSearch = async () => {
+  currentPage.value = 1
   await loadScripts()
 }
 
@@ -443,20 +495,15 @@ const editScript = async (script) => {
         if (requestId === editorRequestId) storageStates.value = response.data.results || response.data
       })
       .catch(error => console.error('获取登录态失败:', error))
-    const [stepResponse, elementResponse, pageResponse] = await Promise.all([
+    const [stepResponse, treeResponse] = await Promise.all([
       getScriptSteps({ script: script.id, page_size: 1000 }),
-      getElements({ project: projectId, page_size: 1000 }),
-      getElementGroupTree({ project: projectId })
+      getElementTree({ project: projectId })
     ])
     if (requestId !== editorRequestId) return
     let rawSteps = stepResponse.data.results || stepResponse.data
-    editorElements.value = elementResponse.data.results || elementResponse.data
-    // 与用例编辑页一致，展开项目页面树，包含尚未绑定元素的页面及嵌套页面。
-    const flattenPages = groups => groups.flatMap(group => [
-      { id: group.id, name: group.name },
-      ...flattenPages(group.children || [])
-    ])
-    editorPages.value = flattenPages(pageResponse.data || [])
+    // 元素和页面选项来自同一份完整树，空页面保留，虚拟未关联分组不参与写入。
+    editorElements.value = getElementLibraryNodes(treeResponse.data, 'element')
+    editorPages.value = getElementLibraryNodes(treeResponse.data, 'page').map(({ id, name }) => ({ id, name }))
     if (!rawSteps.length) {
       await parseCode()
       return
@@ -642,37 +689,143 @@ const parseCode = async () => {
   }
 }
 
+// 文件夹只作为分组，不能作为覆盖目标。
+const isFolderNode = data => data.type === 'folder'
+
+const convertTargetCase = computed(() => (
+  getTestCaseTreeNodes(convertCaseTree.value, 'testCase')
+    .find(testCase => testCase.key === convertTargetCaseId.value) || null
+))
+
+// 覆盖模式才请求轻量用例树，避免分开读取目录和分页列表。
+const loadConvertCases = async () => {
+  const requestId = ++convertCasesRequestId
+  const projectId = convertScript.value?.project?.id || convertScript.value?.project
+  if (!projectId) return
+  convertCasesLoading.value = true
+  try {
+    const { data } = await getTestCaseTree({ project: projectId })
+    if (requestId === convertCasesRequestId) convertCaseTree.value = data
+  } catch (error) {
+    if (requestId !== convertCasesRequestId) return
+    console.error('获取测试用例列表失败:', error)
+    ElMessage.error(t('uiAutomation.suite.messages.loadCasesFailed'))
+  } finally {
+    if (requestId === convertCasesRequestId) convertCasesLoading.value = false
+  }
+}
+
+watch(convertMode, value => {
+  if (value === 'overwrite' && !convertCaseTree.value.length && !convertCasesLoading.value) loadConvertCases()
+})
+
 // 转换前读取已保存步骤，预览内容与最终入库数据保持一致。
 const openConvertDialog = async script => {
   convertScript.value = script
   convertForm.value = { name: (script.name || '').replace(/\.py$/i, ''), startUrl: script.start_url || '', description: script.description || '' }
+  convertMode.value = 'create'
+  convertTargetCaseId.value = ''
+  // 用例树按脚本所属项目加载，切换脚本时先清空，避免残留上一个项目的用例。
+  convertCasesRequestId += 1
+  convertCasesLoading.value = false
+  convertCaseTree.value = []
   try {
     const response = await getScriptSteps({ script: script.id, page_size: 1000 })
     convertSteps.value = response.data.results || response.data
     if (!convertSteps.value.length) {
-      ElMessage.warning('请先在编辑器中完成步骤同步并保存')
+      ElMessage.warning(t('uiAutomation.script.convert.messages.syncStepsFirst'))
       return
     }
     showConvertDialog.value = true
   } catch (error) {
-    ElMessage.error(error.response?.data?.detail || '加载已同步步骤失败')
+    ElMessage.error(error.response?.data?.detail || t('uiAutomation.script.convert.messages.loadStepsFailed'))
   }
 }
 
-// 调用后端事务接口，把同步步骤复制为 UI 测试用例。
+// 覆盖模式复用更新用例接口：先按转换规则把脚本步骤映射成用例步骤，再整体提交。
+const canonicalStorageStateParams = value => {
+  const params = { ...(value || {}) }
+  const operation = String(params.operation || 'save').trim()
+  if (operation === 'save') {
+    return {
+      operation: 'save',
+      mode: params.mode || 'save_as',
+      name: String(params.name || '').trim(),
+      storage_state_id: params.storage_state_id || null
+    }
+  }
+  if (operation === 'switch') return { operation: 'switch', storage_state_id: params.storage_state_id || null }
+  if (operation === 'clear') return { operation: 'clear' }
+  return params
+}
+
+const buildCaseStepsFromScript = () => {
+  const steps = []
+  const startUrl = String(convertScript.value?.start_url || '').trim()
+  const hasNavigate = convertSteps.value.some(step => normalizeAction(step.action_type) === 'navigate')
+  // 与新增模式保持一致：脚本本身没有跳转步骤时，用起始 URL 补一步打开页面。
+  if (startUrl && !hasNavigate) {
+    steps.push({ action_type: 'navigate', input_value: startUrl, description: t('uiAutomation.script.convert.openStartUrl') })
+  }
+  convertSteps.value.forEach(step => {
+    const actionType = normalizeAction(step.action_type)
+    const actionParams = step.action_params || {}
+    steps.push({
+      action_type: actionType,
+      element_id: step.target_element?.id || step.element || null,
+      action_params: actionType === 'storageState' ? canonicalStorageStateParams(actionParams) : actionParams,
+      input_value: step.input_value || actionParams.select_value || '',
+      wait_time: step.wait_time ?? 1000,
+      assert_type: step.assert_type || '',
+      assert_value: step.assert_value || '',
+      description: step.description || ''
+    })
+  })
+  return steps
+}
+
+// 调用后端事务接口：新增模式创建用例，覆盖模式替换目标用例的全部步骤。
 const convertToTestCase = async () => {
-  if (!convertForm.value.name.trim()) return ElMessage.warning('请输入用例名称')
+  const overwrite = convertMode.value === 'overwrite'
+  if (overwrite && !convertTargetCase.value) {
+    return ElMessage.warning(t('uiAutomation.script.convert.messages.selectCase'))
+  }
+  if (!overwrite && !convertForm.value.name.trim()) {
+    return ElMessage.warning(t('uiAutomation.script.convert.messages.enterName'))
+  }
+  if (overwrite) {
+    // 覆盖会整体替换已有步骤，先明确告知影响范围。
+    const confirmed = await ElMessageBox.confirm(
+      t('uiAutomation.script.convert.messages.overwriteConfirm', {
+        name: convertTargetCase.value.name,
+        count: convertSteps.value.length
+      }),
+      t('uiAutomation.script.convert.modeOverwrite'),
+      {
+        type: 'warning',
+        confirmButtonText: t('uiAutomation.script.convert.confirm'),
+        cancelButtonText: t('uiAutomation.common.cancel')
+      }
+    ).catch(() => false)
+    if (!confirmed) return
+  }
   converting.value = true
   try {
-    await convertScriptToTestCase(convertScript.value.id, {
-      locale: locale.value,
-      name: convertForm.value.name.trim(), description: convertForm.value.description,
-      start_url: convertForm.value.startUrl
-    })
-    ElMessage.success('测试用例创建成功')
+    if (overwrite) {
+      await updateTestCase(convertTargetCase.value.id, { steps: buildCaseStepsFromScript() })
+    } else {
+      await convertScriptToTestCase(convertScript.value.id, {
+        locale: locale.value,
+        name: convertForm.value.name.trim(),
+        description: convertForm.value.description,
+        start_url: convertForm.value.startUrl
+      })
+    }
+    ElMessage.success(t(overwrite ? 'uiAutomation.script.convert.messages.overwriteSuccess' : 'uiAutomation.script.convert.messages.createSuccess'))
     showConvertDialog.value = false
   } catch (error) {
-    ElMessage.error(error.response?.data?.error || '转换测试用例失败')
+    const detail = error.response?.data
+    ElMessage.error(detail?.error || detail?.steps?.[0] || detail?.detail || t('uiAutomation.script.convert.messages.convertFailed'))
   } finally {
     converting.value = false
   }
@@ -799,9 +952,10 @@ onMounted(async () => {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 20px;
-  border-bottom: 1px solid #e6e6e6;
+  margin-bottom: 10px;
   background: white;
+  padding: 10px 20px;
+  border-bottom: 1px solid #e6e6e6;
 }
 
 .page-title {
@@ -818,15 +972,19 @@ onMounted(async () => {
   display: none;
 }
 
-.main-content {
-  flex: 1;
+.card-container {
+  background-color: #fff;
+  border-radius: 8px;
   padding: 20px;
-  overflow: auto;
-  background: #f5f5f5;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.filter-bar {
+  margin-bottom: 10px;
 }
 
 .pagination {
-  margin-top: 20px;
+  margin-top: 10px;
   display: flex;
   justify-content: flex-end;
 }

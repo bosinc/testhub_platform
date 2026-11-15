@@ -20,8 +20,7 @@
             v-model="elementFilter"
             :placeholder="$t('uiAutomation.scriptEditor.searchElement')"
             clearable
-            size="small"
-            style="margin-top: 10px"
+            class="element-search-input"
           >
             <template #prefix>
               <el-icon><Search /></el-icon>
@@ -31,11 +30,12 @@
 
         <div class="panel-content" v-loading="elementTreeLoading">
           <el-tree
+            ref="elementTreeRef"
             class="element-library-tree"
             :data="elementTree"
             :filter-node-method="filterElementNode"
             :props="{ children: 'children', label: 'name' }"
-            node-key="treeKey"
+            node-key="key"
             default-expand-all
             @node-click="handleElementClick"
           >
@@ -194,7 +194,7 @@
 
 <script setup>
 import ResizableSplitPane from '@/components/ResizableSplitPane.vue'
-import { ref, reactive, computed, onMounted, onBeforeUnmount, watch } from 'vue'
+import { ref, reactive, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -208,8 +208,7 @@ import {
 import RecordingWizard from './RecordingWizard.vue'
 import ScriptReplayDialog from './ScriptReplayDialog.vue'
 import { getPreferredProjectId, useRememberedProject } from '@/utils/projectSelection'
-import { createElementLibraryLoader } from './elementLibrary.mjs'
-
+import { createElementLibraryLoader } from '@/utils/ui-automation'
 import {
   getUiProjects,
   createTestScript,
@@ -217,7 +216,6 @@ import {
   updateTestScript,
   getElementTree,
   getElementDetail,
-  getElementGroupTree,
   validateElementLocator
 } from '@/api/ui_automation'
 
@@ -240,8 +238,9 @@ const recordingVisible = ref(false)
 const replayVisible = ref(false)
 
 const elementTree = ref([])
+const elementTreeRef = ref(null)
 const elementTreeLoading = ref(true)
-const loadLibrary = createElementLibraryLoader(getElementGroupTree, getElementTree)
+const loadLibrary = createElementLibraryLoader(getElementTree)
 let elementTreeRequestId = 0
 const elementFilter = ref('')
 const selectedElementDetail = ref(null)
@@ -332,6 +331,8 @@ const loadElementTree = async () => {
     // 快速切换项目或离开页面时，旧请求不得覆盖当前树和日志。
     if (requestId !== elementTreeRequestId || String(projectId.value) !== String(requestedProject)) return
     elementTree.value = tree
+    await nextTick()
+    elementTreeRef.value?.filter(elementFilter.value)
 
     addLog('info', t('uiAutomation.scriptEditor.messages.elementsLoaded', { count: countElements(elementTree.value) }))
   } catch (error) {
@@ -411,7 +412,7 @@ const handleImportedScript = async script => {
 
 const filterElementNode = (value, data) => {
   if (!value) return true
-  return data.name.indexOf(value) !== -1
+  return data.name.toLocaleLowerCase().includes(value.trim().toLocaleLowerCase())
 }
 
 const handleElementClick = (data) => {
@@ -649,7 +650,8 @@ const formatTime = (timestamp) => {
 
 // 监听器
 watch(elementFilter, (val) => {
-  // 树形筛选会自动处理
+  // Element Plus 需要显式触发过滤，匹配名称时自动保留祖先分组。
+  elementTreeRef.value?.filter(val)
 })
 
 watch(scriptLanguage, (newLang) => {
@@ -698,7 +700,7 @@ onBeforeUnmount(() => {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 20px;
+  padding: 10px 20px;
   border-bottom: 1px solid #e6e6e6;
   background: white;
 }
@@ -732,10 +734,23 @@ onBeforeUnmount(() => {
 .panel-header {
   padding: 15px;
   border-bottom: 1px solid #e6e6e6;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
 }
 
 .panel-header h3 {
-  margin: 0 0 10px 0;
+  margin: 0;
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.panel-header .element-search-input {
+  flex: 0 1 auto;
+  width: 150px;
+  min-width: 0;
+  max-width: 160px;
 }
 
 .center-panel {

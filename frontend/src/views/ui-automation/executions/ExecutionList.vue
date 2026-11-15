@@ -1,7 +1,12 @@
 <template>
   <div class="page-container">
     <div class="page-header">
-      <h1 class="page-title">{{ $t('uiAutomation.execution.title') }}</h1>
+      <div class="title-group">
+        <h1 class="page-title">{{ $t('uiAutomation.execution.title') }}</h1>
+        <el-tag v-if="scheduledTaskId" closable class="task-filter-tag" @close="clearTaskFilter">
+          {{ $t('uiAutomation.scheduledTask.relatedTask') }}: {{ route.query.task_name || `#${scheduledTaskId}` }}
+        </el-tag>
+      </div>
       <el-select v-model="projectId" :placeholder="$t('uiAutomation.common.selectProject')" style="width: 200px; margin-right: 15px" @change="onProjectChange">
         <el-option v-for="project in projects" :key="project.id" :label="project.name" :value="project.id" />
       </el-select>
@@ -29,14 +34,6 @@
               <el-option :label="$t('uiAutomation.status.passed')" value="passed" />
               <el-option :label="$t('uiAutomation.status.failed')" value="failed" />
               <el-option :label="$t('uiAutomation.status.error')" value="error" />
-            </el-select>
-          </el-form-item>
-          <el-form-item :label="$t('uiAutomation.execution.browserFilter')">
-            <el-select v-model="queryParams.browser" :placeholder="$t('uiAutomation.execution.browserFilter')" clearable style="width: 150px">
-              <el-option label="Chrome" value="chrome" />
-              <el-option label="Firefox" value="firefox" />
-              <el-option label="Safari" value="safari" />
-              <el-option label="Edge" value="edge" />
             </el-select>
           </el-form-item>
           <el-form-item>
@@ -69,27 +66,20 @@
             <el-tag v-else type="warning" size="small">{{ $t('uiAutomation.execution.suiteTag') }}</el-tag>
           </template>
         </el-table-column>
+        <el-table-column :label="$t('uiAutomation.scheduledTask.relatedTask')" min-width="140" show-overflow-tooltip>
+          <template #default="{ row }">{{ row.scheduled_task_name || '-' }}</template>
+        </el-table-column>
         <el-table-column prop="status" :label="$t('uiAutomation.execution.statusFilter')" width="100" align="center">
           <template #default="{ row }">
             <el-tag :type="getStatusType(row.status)" size="small">{{ getStatusText(row.status) }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="engine" :label="$t('uiAutomation.execution.testEngine')" width="120" align="center">
-          <template #default="{ row }">
-            {{ getEngineText(row.engine) }}
-          </template>
-        </el-table-column>
-        <el-table-column prop="headless" :label="$t('uiAutomation.execution.executionMode')" width="100" align="center">
-          <template #default="{ row }">
-            {{ row.headless ? $t('uiAutomation.execution.headlessMode') : $t('uiAutomation.execution.headedMode') }}
-          </template>
-        </el-table-column>
-        <el-table-column prop="browser" :label="$t('uiAutomation.execution.browserFilter')" width="80" align="center">
-          <template #default="{ row }">
-            {{ getBrowserText(row.browser) }}
-          </template>
-        </el-table-column>
         <el-table-column prop="created_by_name" :label="$t('uiAutomation.execution.executor')" width="120" align="center" />
+        <el-table-column :label="$t('uiAutomation.execution.duration')" width="90" align="center">
+          <template #default="{ row }">
+            {{ formatDuration(row.execution_time) }}
+          </template>
+        </el-table-column>
         <el-table-column prop="started_at" :label="$t('uiAutomation.execution.startTime')" width="160" align="center">
           <template #default="{ row }">
             {{ formatDateTime(row.started_at) }}
@@ -100,12 +90,7 @@
             {{ formatDateTime(row.finished_at) }}
           </template>
         </el-table-column>
-        <el-table-column :label="$t('uiAutomation.execution.duration')" width="90" align="center">
-          <template #default="{ row }">
-            {{ formatDuration(row.execution_time) }}
-          </template>
-        </el-table-column>
-        <el-table-column :label="$t('uiAutomation.common.operation')" width="150" fixed="right" align="center" class-name="action-col">
+        <el-table-column :label="$t('uiAutomation.common.operation')" width="130" fixed="right" align="center" class-name="action-col">
           <template #default="{ row }">
             <div class="row-actions">
               <el-button size="small" text type="primary" @click="viewExecutionDetail(row)">
@@ -156,6 +141,7 @@
       <div v-if="currentExecution" class="execution-detail">
         <!-- 基本信息 -->
         <el-descriptions :column="2" border>
+          <el-descriptions-item :label="$t('uiAutomation.scheduledTask.relatedTask')">{{ currentExecution.scheduled_task_name || '-' }}</el-descriptions-item>
           <el-descriptions-item :label="$t('uiAutomation.execution.caseName')">{{ currentExecution.test_case_name }}</el-descriptions-item>
           <el-descriptions-item :label="$t('uiAutomation.execution.statusFilter')">
             <el-tag :type="getStatusType(currentExecution.status)">{{ getStatusText(currentExecution.status) }}</el-tag>
@@ -204,6 +190,7 @@
                       :alt="screenshot.description"
                       class="screenshot-img"
                       @error="handleImageError($event, screenshot)"
+                      @click="openScreenshotPreview(screenshot)"
                     />
                   </div>
                   <div v-else class="screenshot-error">
@@ -264,15 +251,25 @@
         <el-button type="primary" @click="handleRerun" :loading="rerunning">{{ $t('uiAutomation.execution.confirmRerun') }}</el-button>
       </template>
     </el-dialog>
+
+    <!-- 失败截图放大预览 -->
+    <ScreenshotPreviewDialog
+      v-model="showScreenshotPreview"
+      :screenshot="currentScreenshot"
+      :fallback-title="$t('uiAutomation.execution.screenshot')"
+    />
   </div>
 </template>
 
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, onMounted, computed, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, View, WarningFilled, Refresh, Delete } from '@element-plus/icons-vue'
 import { useI18n } from 'vue-i18n'
+import { useRoute, useRouter } from 'vue-router'
 import { getPreferredProjectId, useRememberedProject } from '@/utils/projectSelection'
+import { getUiActionLabel } from '@/utils/ui-automation'
+import ScreenshotPreviewDialog from '@/components/ui-automation/ScreenshotPreviewDialog.vue'
 import {
   getTestCaseExecutions,
   getTestCaseExecutionDetail,
@@ -283,6 +280,18 @@ import {
 } from '@/api/ui_automation'
 
 const { t } = useI18n()
+const route = useRoute()
+const router = useRouter()
+const scheduledTaskId = computed(() => route.query.scheduled_task || undefined)
+let initialized = false
+
+// 任务筛选保存在 URL 中，刷新、前进后退和同页面切换任务都能恢复。
+const clearTaskFilter = () => {
+  const query = { ...route.query }
+  delete query.scheduled_task
+  delete query.task_name
+  router.replace({ query })
+}
 
 // 项目和执行数据
 const projects = ref([])
@@ -300,8 +309,7 @@ const pagination = reactive({
 const queryParams = reactive({
   project: undefined,
   search: '',
-  status: '',
-  browser: ''
+  status: ''
 })
 const selectedIds = ref([])
 
@@ -310,6 +318,15 @@ const showDetailDialog = ref(false)
 const activeTab = ref('logs')
 const currentExecution = ref(null)
 let executionDetailRequestId = 0
+
+// 失败截图放大预览
+const showScreenshotPreview = ref(false)
+const currentScreenshot = ref(null)
+const openScreenshotPreview = (screenshot) => {
+  if (!screenshot?.url) return
+  currentScreenshot.value = screenshot
+  showScreenshotPreview.value = true
+}
 
 // 重跑对话框相关
 const showRerunDialogVisible = ref(false)
@@ -407,30 +424,8 @@ const getBrowserText = (browser) => {
   return browserMap[browser] || browser || 'Chrome'
 }
 
-// 获取测试引擎文本
-const getEngineText = (engine) => {
-  const engineMap = {
-    'playwright': 'Playwright',
-    'selenium': 'Selenium'
-  }
-  return engineMap[engine] || engine || 'Playwright'
-}
-
-// 获取操作类型文本
-const getActionText = (actionType) => {
-  const actionMap = {
-    'click': t('uiAutomation.actionTypes.click'),
-    'fill': t('uiAutomation.actionTypes.fill'),
-    'getText': t('uiAutomation.actionTypes.getText'),
-    'waitFor': t('uiAutomation.actionTypes.waitFor'),
-    'hover': t('uiAutomation.actionTypes.hover'),
-    'scroll': t('uiAutomation.actionTypes.scroll'),
-    'screenshot': t('uiAutomation.actionTypes.screenshot'),
-    'assert': t('uiAutomation.actionTypes.assert'),
-    'wait': t('uiAutomation.actionTypes.wait')
-  }
-  return actionMap[actionType] || actionType
-}
+// 获取操作类型文本（执行日志用），与步骤编辑器共用同一套文案键
+const getActionText = (actionType) => getUiActionLabel(t, actionType)
 
 // 解析执行日志
 const parseExecutionLogs = (logs) => {
@@ -455,7 +450,10 @@ const loadProjects = async () => {
 }
 
 // 加载执行列表
+let listRequestId = 0
 const loadExecutions = async () => {
+  // 切换任务或项目时，忽略上一个筛选条件的慢响应。
+  const requestId = ++listRequestId
   loading.value = true
   try {
     const params = {
@@ -471,26 +469,35 @@ const loadExecutions = async () => {
       params.project = undefined // Ensure project is undefined if not selected
     }
 
+    if (scheduledTaskId.value) params.scheduled_task = scheduledTaskId.value
     const response = await getTestCaseExecutions(params)
+    if (requestId !== listRequestId) return
     executions.value = response.data.results || response.data
     total.value = response.data.count || executions.value.length
   } catch (error) {
+    if (requestId !== listRequestId) return
     ElMessage.error(t('uiAutomation.execution.messages.loadFailed'))
     console.error('获取执行列表失败:', error)
   } finally {
-    loading.value = false
+    if (requestId === listRequestId) loading.value = false
   }
 }
 
 // 项目变更处理
 const onProjectChange = () => {
+  if (scheduledTaskId.value) {
+    const query = { ...route.query, project: projectId.value }
+    delete query.scheduled_task
+    delete query.task_name
+    router.replace({ query })
+    return
+  }
   // 项目切换使在途详情请求失效，避免回显上一个项目的执行信息。
   executionDetailRequestId++
   showDetailDialog.value = false
   currentExecution.value = null
   queryParams.search = ''
   queryParams.status = ''
-  queryParams.browser = ''
   pagination.currentPage = 1
   loadExecutions()
 }
@@ -505,7 +512,6 @@ const handleSearch = () => {
 const resetQuery = () => {
   queryParams.search = ''
   queryParams.status = ''
-  queryParams.browser = ''
   pagination.currentPage = 1
   loadExecutions()
 }
@@ -634,19 +640,33 @@ const handleRerun = async () => {
   }
 }
 
-// 组件挂载时加载数据
+// 路由参数变化时重新加载；首次加载等待项目候选项就绪。
+watch(() => [route.query.scheduled_task, route.query.project], () => {
+  if (!initialized) return
+  executionDetailRequestId++
+  if (route.query.project) {
+    projectId.value = projects.value.find(item => String(item.id) === String(route.query.project))?.id || ''
+  }
+  showDetailDialog.value = false
+  currentExecution.value = null
+  pagination.currentPage = 1
+  loadExecutions()
+})
+
 onMounted(async () => {
   await loadProjects()
-  if (projects.value.length > 0) {
+  if (route.query.project) {
+    projectId.value = projects.value.find(item => String(item.id) === String(route.query.project))?.id || ''
+  } else if (projects.value.length > 0) {
     projectId.value = getPreferredProjectId(projects.value, projects.value[0].id)
   }
+  initialized = true
   await loadExecutions()
 })
 </script>
 
 <style scoped lang="scss">
 .page-container {
-  padding: 20px;
   height: 100%;
   overflow-y: auto;
   background: #f5f5f5;
@@ -656,16 +676,45 @@ onMounted(async () => {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 20px;
+  margin-bottom: 10px;
   background: white;
-  padding: 20px;
+  padding: 10px 20px;
   border-radius: 4px;
 }
 
-.page-title {
+/* 同样跟随全局响应式断点 */
+.page-container .page-header .page-title {
   margin: 0;
   font-size: 24px;
+  font-weight: 700;
   color: #303133;
+
+  @media screen and (max-width: 1920px) {
+    font-size: 22px;
+  }
+  @media screen and (max-width: 1600px) {
+    font-size: 20px;
+  }
+  @media screen and (max-width: 1440px) {
+    font-size: 18px;
+  }
+  @media screen and (max-width: 1280px) {
+    font-size: 16px;
+  }
+  @media screen and (max-width: 480px) {
+    font-size: 14px;
+  }
+}
+
+.title-group {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.task-filter-tag {
+  flex-shrink: 0;
 }
 
 .card-container {
@@ -676,11 +725,11 @@ onMounted(async () => {
 }
 
 .filter-bar {
-  margin-bottom: 20px;
+  margin-bottom: 10px;
 }
 
 .pagination-container {
-  margin-top: 20px;
+  margin-top: 10px;
   display: flex;
   justify-content: flex-end;
 }
@@ -799,6 +848,7 @@ onMounted(async () => {
         border: 1px solid #dcdfe6;
         border-radius: 4px;
         box-shadow: 0 2px 12px rgba(0, 0, 0, 0.1);
+        cursor: zoom-in;
       }
 
       .screenshot-error {

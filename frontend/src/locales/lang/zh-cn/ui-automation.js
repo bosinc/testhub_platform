@@ -122,6 +122,7 @@ export default {
     yes: '是',
     no: '否',
     all: '全部',
+    back: '返回',
     batchDelete: '批量删除',
     run: '运行',
     stop: '停止',
@@ -405,7 +406,7 @@ export default {
 
   // 执行记录
   execution: {
-    title: '测试执行记录',
+    title: '执行记录',
     searchPlaceholder: '搜索用例名称',
     statusFilter: '执行状态',
     browserFilter: '浏览器',
@@ -470,6 +471,7 @@ export default {
     executor: '执行者',
     executionTime: '执行时间',
     reportDetail: '测试报告详情',
+    basicInfo: '基础信息',
     reportId: '报告ID',
     executionStatus: '执行状态',
     executionMode: '执行模式',
@@ -505,6 +507,7 @@ export default {
     messages: {
       loadFailed: '加载测试报告失败',
       loadDetailFailed: '加载测试报告详情失败，请重试',
+      notFound: '报告不存在或已被删除',
       loadProjectsFailed: '获取项目列表失败',
       refreshed: '报告已刷新',
       deleteConfirm: '确定要删除报告"{name}"吗？此操作不可恢复。',
@@ -703,6 +706,8 @@ export default {
 
   // 定时任务
   scheduledTask: {
+    executionHistory: '历史',
+    relatedTask: '关联定时任务',
     title: 'UI自动化定时任务',
     newTask: '新建定时任务',
     searchPlaceholder: '搜索任务名称',
@@ -769,7 +774,7 @@ export default {
     logStatus: '状态',
     logMessage: '消息',
     noLogs: '暂无执行日志',
-    runNow: '立即执行',
+    runNow: '执行',
     more: '更多',
     taskTypes: {
       testSuite: '测试套件执行',
@@ -807,6 +812,7 @@ export default {
     rules: {
       nameRequired: '请输入任务名称',
       suiteRequired: '请选择测试套件',
+      executeTimeFuture: '请选择晚于当前时间的执行时间',
       cronRequired: '请输入cron表达式'
     },
     messages: {
@@ -1169,19 +1175,46 @@ export default {
   // 脚本管理
   script: {
     title: '脚本列表',
+    searchPlaceholder: '搜索脚本名称或描述',
     uploadScript: '上传脚本',
-    index: '序号',
-    projectColumn: '项目',
     unknownProject: '未知项目',
     nameColumn: '名称',
     languageColumn: '语言',
     frameworkColumn: '框架',
     createTimeColumn: '创建时间',
     operationColumn: '操作',
-    viewDetail: '查看详情',
+    viewDetail: '查看',
     edit: '编辑',
     delete: '删除',
     convertToTestCase: '转为测试用例',
+    // 转为测试用例弹窗：新增沿用原表单，覆盖改为选择已有用例。
+    convert: {
+      mode: '入库方式',
+      modeCreate: '新增',
+      modeOverwrite: '覆盖',
+      caseName: '用例名称',
+      startUrl: '起始 URL',
+      caseDescription: '用例描述',
+      targetCase: '目标用例',
+      caseSelectPlaceholder: '请选择要覆盖的用例',
+      actionType: '动作类型',
+      element: '元素 / 定位器',
+      stepDescription: '步骤描述',
+      inputValue: '输入值',
+      assertValue: '断言',
+      confirm: '确认入库',
+      openStartUrl: '打开起始URL',
+      messages: {
+        syncStepsFirst: '请先在编辑器中完成步骤同步并保存',
+        loadStepsFailed: '加载已同步步骤失败',
+        enterName: '请输入用例名称',
+        selectCase: '请选择要覆盖的测试用例',
+        overwriteConfirm: '确定用当前脚本的 {count} 个步骤覆盖用例“{name}”吗？原有步骤会被整体替换，且无法恢复。',
+        createSuccess: '测试用例创建成功',
+        overwriteSuccess: '测试用例覆盖成功',
+        convertFailed: '转换测试用例失败'
+      }
+    },
     scriptDetail: '脚本详情',
     scriptName: '脚本名称',
     project: '项目',
@@ -1353,8 +1386,8 @@ export default {
     stepDescription: '步骤描述：',
     stepDescPlaceholder: '描述这个步骤的作用',
     executionResult: '执行结果',
-    executionSuccess: '执行成功',
-    executionFailed: '执行失败',
+    executionSuccess: '成功',
+    executionFailed: '失败',
     executionLogs: '执行日志',
     failedScreenshots: '失败截图',
     errorInfo: '错误信息',
@@ -1396,7 +1429,6 @@ export default {
       moveFailed: '测试用例移动失败'
     },
     screenshotPreview: '失败截图预览',
-    failedStep: '失败步骤',
     screenshotTime: '截图时间',
     variableHelper: '变量助手 (点击插入)',
     functionName: '函数名',

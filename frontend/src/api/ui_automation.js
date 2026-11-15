@@ -552,6 +552,7 @@ export function getElementUsages(id) {
   })
 }
 
+// 获取元素树
 export function getElementTree(params) {
   return request({
     url: '/ui-automation/elements/tree/',
@@ -755,6 +756,15 @@ export function deleteScriptElementUsage(id) {
 export function getTestCases(params) {
   return request({
     url: '/ui-automation/test-cases/',
+    method: 'get',
+    params
+  })
+}
+
+// 获取用例树
+export function getTestCaseTree(params) {
+  return request({
+    url: '/ui-automation/test-cases/tree/',
     method: 'get',
     params
   })

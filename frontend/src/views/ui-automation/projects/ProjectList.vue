@@ -548,11 +548,11 @@ onMounted(() => {
 }
 
 .filter-bar {
-  margin-bottom: 20px;
+  margin-bottom: 10px;
 }
 
 .pagination-container {
-  margin-top: 20px;
+  margin-top: 10px;
   display: flex;
   justify-content: flex-end;
 }

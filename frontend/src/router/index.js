@@ -29,6 +29,7 @@ import UiScriptList from '@/views/ui-automation/scripts/ScriptList.vue'
 import UiSuiteList from '@/views/ui-automation/suites/SuiteList.vue'
 import UiExecutionList from '@/views/ui-automation/executions/ExecutionList.vue'
 import UiReportList from '@/views/ui-automation/reports/ReportList.vue'
+import UiReportDetail from '@/views/ui-automation/reports/ReportDetail.vue'
 import UiScheduledTasks from '@/views/ui-automation/scheduled-tasks/ScheduledTasks.vue'
 import UiNotificationLogs from '@/views/ui-automation/notification/NotificationLogs.vue'
 import UiAITesting from '@/views/ui-automation/ai/AITesting.vue'
@@ -318,6 +319,13 @@ const routes = [
                 path: 'reports',
                 name: 'UiReports',
                 component: UiReportList
+            },
+            {
+                // 测试报告详情独立页面：可直接通过 URL 访问 / 刷新 / 分享
+                path: 'reports/:id',
+                name: 'UiReportDetail',
+                component: UiReportDetail,
+                meta: { activeMenu: '/ui-automation/reports' }
             },
             {
                 path: 'scheduled-tasks',

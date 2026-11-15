@@ -99,11 +99,13 @@ class TestCaseListApiTests(TestCase):
         self.assertEqual(second.data['results'][0]['id'], self.case.pk)
         self.assertIsNone(second.data['next'])
         filtered = self.client.get(self.url, {
-            **self.params, 'search': 'Order form', 'status': 'ready', 'priority': 'high',
+            **self.params, 'search': 'Submit order', 'status': 'ready', 'priority': 'high',
             'created_by': self.user.pk, 'ordering': 'name',
         })
         self.assertEqual(filtered.data['count'], 1)
         self.assertEqual(filtered.data['results'][0]['steps_count'], 3)
+        # 描述保持可编辑，但不再参与名称搜索。
+        self.assertEqual(self.client.get(self.url, {**self.params, 'search': 'Order form'}).data['count'], 0)
         self.assertEqual(self.client.get(self.url, {**self.params, 'status': 'failed'}).data['count'], 0)
 
     def test_list_preserves_owner_member_soft_delete_and_authentication(self):

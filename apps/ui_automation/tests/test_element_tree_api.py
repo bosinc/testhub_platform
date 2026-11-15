@@ -43,25 +43,42 @@ class ElementTreeApiTests(TestCase):
         self.client.force_authenticate(user=self.user)
         self.url = reverse('element-tree')
 
-    def assert_lightweight_queries(self, queries):
+    def nodes(self, tree):
+        """以带类型的树 key 索引，验证分组和元素主键相同时也不丢节点。"""
+        nodes = {}
+        pending = list(reversed(tree))
+        while pending:
+            node = pending.pop()
+            self.assertNotIn(node['key'], nodes)
+            nodes[node['key']] = node
+            pending.extend(reversed(node.get('children', [])))
+        return nodes
+
+    def assert_lightweight_queries(self, queries, *, includes_groups=False):
         """列表和树不得因为详情统计或嵌套关系增加关联查询。"""
         for query in queries:
             sql = query['sql'].lower()
             for table in ('ui_test_case_steps', 'ui_script_element_usages', 'ui_test_scripts',
-                          'ui_element_groups', 'users_user'):
+                          'users_user'):
                 self.assertNotIn(table, sql)
+            if not includes_groups:
+                self.assertNotIn('ui_element_groups', sql)
+            else:
+                self.assertNotIn('description', sql)
             self.assertNotIn('group by', sql)
 
-    def test_tree_uses_one_query_without_loading_scripts_or_project_details(self):
+    def test_tree_uses_two_queries_without_loading_scripts_or_project_details(self):
         with CaptureQueriesContext(connection) as queries:
             response = self.client.get(self.url, {'project': self.project.pk})
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(len(queries), 1)
+        self.assertEqual(len(queries), 2)
         self.assertNotIn('ui_script_element_usages', queries[0]['sql'])
         self.assertNotIn('ui_test_scripts', queries[0]['sql'])
-        self.assert_lightweight_queries(queries)
-        self.assertEqual(response.data, [{
-            'id': self.element.pk, 'name': 'Submit', 'type': 'element', 'element_type': 'BUTTON',
+        self.assert_lightweight_queries(queries, includes_groups=True)
+        self.assertEqual(response.data[0]['key'], f'group:{self.group.pk}')
+        self.assertEqual(set(response.data[0]), {'key', 'id', 'name', 'type', 'parent_group', 'order', 'children'})
+        self.assertEqual(response.data[0]['children'], [{
+            'key': f'element:{self.element.pk}', 'id': self.element.pk, 'name': 'Submit', 'type': 'element', 'element_type': 'BUTTON',
             'locator_strategy': 'role', 'locator_value': 'button',
             'locator_options': {'name': 'Submit', 'exact': True},
             'validation_status': 'UNKNOWN', 'order': 2,
@@ -72,22 +89,24 @@ class ElementTreeApiTests(TestCase):
         Element.objects.bulk_create([
             Element(project=self.project, name=f'Extra {index:03}',
                     locator_strategy=self.strategy, locator_value='button', page='Another page')
-            for index in range(100)
+            for index in range(1001)
         ])
         ordered = [
             Element.objects.create(
-                project=self.project, name=name, page='Product', order=1,
+                project=self.project, group=self.group, name=name, page='Product', order=1,
                 locator_strategy=self.strategy, locator_value='button',
             )
             for name in ('Zulu', 'Alpha')
         ]
-        with self.assertNumQueries(1):
-            response = self.client.get(self.url, {'project': self.project.pk})
+        with self.assertNumQueries(2):
+            response = self.client.get(self.url, {'project': self.project.pk, 'page_size': 1, 'page': 999})
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(len(response.data), 103)
-        self.assertEqual(response.data[0]['name'], 'Extra 000')
-        self.assertNotIn('usage_count', response.data[0])
-        self.assertEqual([item['id'] for item in response.data[-3:]], [
+        elements = [node for node in self.nodes(response.data).values() if node['type'] == 'element']
+        self.assertEqual(len(elements), 1004)
+        self.assertEqual(response.data[0]['key'], 'group:unassigned')
+        self.assertEqual(response.data[0]['children'][0]['name'], 'Extra 000')
+        self.assertNotIn('usage_count', elements[0])
+        self.assertEqual([item['id'] for item in response.data[1]['children']], [
             ordered[0].pk, ordered[1].pk, self.element.pk,
         ])
 
@@ -97,15 +116,85 @@ class ElementTreeApiTests(TestCase):
         self.project.members.add(self.other_user)
         response = self.client.get(self.url, {'project': self.project.pk})
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data[0]['id'], self.element.pk)
+        self.assertEqual(response.data[0]['children'][0]['id'], self.element.pk)
         self.project.is_deleted = True
         self.project.save(update_fields=['is_deleted'])
         self.assertEqual(self.client.get(self.url, {'project': self.project.pk}).data, [])
 
     def test_tree_requires_project_and_authentication(self):
         self.assertEqual(self.client.get(self.url).status_code, 400)
+        for project in ('invalid', '-1', '0', '1.5', '9' * 30):
+            self.assertEqual(self.client.get(self.url, {'project': project}).status_code, 400)
+        empty_project = UiProject.objects.create(name='Empty project', owner=self.user)
+        self.assertEqual(self.client.get(self.url, {'project': empty_project.pk}).data, [])
+        self.assertEqual(self.client.get(self.url, {'project': 999999}).data, [])
         self.client.force_authenticate(user=None)
         self.assertEqual(self.client.get(self.url, {'project': self.project.pk}).status_code, 401)
+
+    def test_tree_includes_nested_empty_groups_and_elements_with_stable_order(self):
+        child = ElementGroup.objects.create(project=self.project, name='Child', parent_group=self.group)
+        empty = ElementGroup.objects.create(project=self.project, name='Empty', parent_group=child)
+        first = Element.objects.create(
+            project=self.project, group=child, name='Same', page='Child',
+            locator_strategy=self.strategy, locator_value='first', order=1,
+        )
+        second = Element.objects.create(
+            project=self.project, group=child, name='Same', page='Child',
+            locator_strategy=self.strategy, locator_value='second', order=1,
+        )
+        with CaptureQueriesContext(connection) as queries:
+            response = self.client.get(self.url, {'project': self.project.pk})
+        self.assertEqual(len(queries), 2)
+        nodes = self.nodes(response.data)
+        self.assertEqual([node['key'] for node in nodes[f'group:{self.group.pk}']['children']], [
+            f'group:{child.pk}', f'element:{self.element.pk}',
+        ])
+        self.assertEqual([node['key'] for node in nodes[f'group:{child.pk}']['children']], [
+            f'group:{empty.pk}', f'element:{first.pk}', f'element:{second.pk}',
+        ])
+        self.assertEqual(nodes[f'group:{empty.pk}']['children'], [])
+
+    def test_tree_handles_cross_project_links_and_group_cycles_without_losing_nodes(self):
+        private_project = UiProject.objects.create(name='Private', owner=self.other_user)
+        private_group = ElementGroup.objects.create(project=private_project, name='Secret')
+        Element.objects.create(
+            project=private_project, group=private_group, name='Secret element',
+            locator_strategy=self.strategy, locator_value='secret',
+        )
+        ElementGroup.objects.filter(pk=self.group.pk).update(parent_group=private_group)
+        Element.objects.filter(pk=self.element.pk).update(group=private_group)
+        response = self.client.get(self.url, {'project': self.project.pk})
+        nodes = self.nodes(response.data)
+        self.assertEqual(len(nodes), 3)
+        self.assertTrue(nodes['group:unassigned']['synthetic'])
+        self.assertIsNone(nodes[f'element:{self.element.pk}']['group_id'])
+        self.assertIsNone(nodes[f'group:{self.group.pk}']['parent_group'])
+        self.assertNotIn('Secret', str(response.data))
+
+        child = ElementGroup.objects.create(project=self.project, name='Child', parent_group=self.group)
+        ElementGroup.objects.filter(pk=self.group.pk).update(parent_group=child)
+        cycle_tree = self.client.get(self.url, {'project': self.project.pk})
+        self.assertEqual(cycle_tree.status_code, 200)
+        self.assertEqual(len(self.nodes(cycle_tree.data)), 4)
+        ElementGroup.objects.filter(pk=child.pk).update(parent_group=child)
+        self.assertEqual(len(self.nodes(self.client.get(self.url, {'project': self.project.pk}).data)), 4)
+
+    def test_tree_reflects_element_moves_updates_and_group_deletion(self):
+        target = ElementGroup.objects.create(project=self.project, name='Target')
+        updated = self.client.patch(reverse('element-detail', args=[self.element.pk]), {
+            'group_id': target.pk, 'page': 'Target', 'name': 'Renamed',
+            'locator_options': {'name': 'Renamed', 'exact': True},
+        }, format='json')
+        self.assertEqual(updated.status_code, 200)
+        nodes = self.nodes(self.client.get(self.url, {'project': self.project.pk}).data)
+        element = nodes[f'element:{self.element.pk}']
+        self.assertEqual(nodes[f'group:{target.pk}']['children'], [element])
+        self.assertEqual(element['name'], 'Renamed')
+        self.assertEqual(element['locator_options'], {'name': 'Renamed', 'exact': True})
+        self.assertEqual(self.client.delete(reverse('elementgroup-detail', args=[target.pk])).status_code, 204)
+        nodes = self.nodes(self.client.get(self.url, {'project': self.project.pk}).data)
+        self.assertNotIn(f'group:{target.pk}', nodes)
+        self.assertEqual(nodes['group:unassigned']['children'][0]['id'], self.element.pk)
 
     def test_list_defaults_to_flat_fields(self):
         url = reverse('element-list')
