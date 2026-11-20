@@ -6,6 +6,7 @@ import * as ElementPlusIconsVue from '@element-plus/icons-vue'
 import axios from 'axios'
 import { useUserStore } from '@/stores/user'
 import i18n from './locales'
+import './utils/monacoEnvironment'
 
 import App from './App.vue'
 import router from './router'

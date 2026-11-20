@@ -1,7 +1,8 @@
 <template>
   <div class="environment-table">
     <el-table :data="data" v-loading="loading" style="width: 100%">
-      <el-table-column prop="name" :label="$t('apiTesting.component.environmentTable.environmentName')" min-width="200" />
+      <el-table-column prop="id" :label="$t('apiTesting.component.environmentTable.id')" width="60" />
+      <el-table-column prop="name" :label="$t('apiTesting.component.environmentTable.environmentName')" min-width="150" />
       <el-table-column prop="base_url" :label="$t('apiTesting.requestEditor.baseUrl')" min-width="240" show-overflow-tooltip />
       <el-table-column prop="scope" :label="$t('apiTesting.component.environmentTable.scope')" width="120">
         <template #default="scope">
@@ -28,7 +29,7 @@
           {{ formatDate(scope.row.created_at) }}
         </template>
       </el-table-column>
-      <el-table-column :label="$t('apiTesting.component.environmentTable.operation')" width="250" fixed="right">
+      <el-table-column :label="$t('apiTesting.component.environmentTable.operation')" width="210" fixed="right">
         <template #default="scope">
           <el-button-group>
             <el-button

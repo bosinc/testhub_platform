@@ -1,7 +1,7 @@
 <template>
-  <div class="scheduled-tasks">
-    <div class="header">
-      <h3>{{ $t('apiTesting.scheduledTask.title') }}</h3>
+  <div class="page-container">
+    <div class="page-header">
+      <h1 class="page-title">{{ $t('apiTesting.scheduledTask.title') }}</h1>
       <el-button type="primary" @click="handleCreateClick">
         <el-icon><Plus /></el-icon>
         {{ $t('apiTesting.scheduledTask.createTask') }}
@@ -9,44 +9,46 @@
     </div>
 
     <!-- 筛选条件 -->
-    <div class="filters">
-      <el-row :gutter="20">
-        <el-col :span="6">
-          <el-select v-model="filters.task_type" :placeholder="$t('apiTesting.scheduledTask.taskType')" clearable>
-            <el-option :label="$t('apiTesting.scheduledTask.taskTypes.testSuite')" value="TEST_SUITE" />
-            <el-option :label="$t('apiTesting.scheduledTask.taskTypes.apiRequest')" value="API_REQUEST" />
-          </el-select>
-        </el-col>
-        <el-col :span="6">
-          <el-select v-model="filters.trigger_type" :placeholder="$t('apiTesting.scheduledTask.triggerType')" clearable>
-            <el-option :label="$t('apiTesting.scheduledTask.triggerTypes.cron')" value="CRON" />
-            <el-option :label="$t('apiTesting.scheduledTask.triggerTypes.interval')" value="INTERVAL" />
-            <el-option :label="$t('apiTesting.scheduledTask.triggerTypes.once')" value="ONCE" />
-          </el-select>
-        </el-col>
-        <el-col :span="6">
-          <el-select v-model="filters.status" :placeholder="$t('apiTesting.scheduledTask.taskStatus')" clearable>
-            <el-option :label="$t('apiTesting.scheduledTask.status.active')" value="ACTIVE" />
-            <el-option :label="$t('apiTesting.scheduledTask.status.paused')" value="PAUSED" />
-            <el-option :label="$t('apiTesting.scheduledTask.status.completed')" value="COMPLETED" />
-            <el-option :label="$t('apiTesting.scheduledTask.status.failed')" value="FAILED" />
-          </el-select>
-        </el-col>
-        <el-col :span="6">
-          <el-button @click="resetFilters">{{ $t('apiTesting.common.reset') }}</el-button>
-          <el-button type="primary" @click="loadTasks">{{ $t('apiTesting.common.search') }}</el-button>
-        </el-col>
-      </el-row>
-    </div>
+    <div class="card-container">
+      <div class="filter-bar">
+        <el-row :gutter="20">
+          <el-col :span="6">
+            <el-select v-model="filters.task_type" :placeholder="$t('apiTesting.scheduledTask.taskType')" clearable>
+              <el-option :label="$t('apiTesting.scheduledTask.taskTypes.testSuite')" value="TEST_SUITE" />
+              <el-option :label="$t('apiTesting.scheduledTask.taskTypes.apiRequest')" value="API_REQUEST" />
+              <el-option :label="$t('apiTesting.scheduledTask.taskTypes.scenarioCase')" value="SCENARIO_CASE" />
+            </el-select>
+          </el-col>
+          <el-col :span="6">
+            <el-select v-model="filters.trigger_type" :placeholder="$t('apiTesting.scheduledTask.triggerType')" clearable>
+              <el-option :label="$t('apiTesting.scheduledTask.triggerTypes.cron')" value="CRON" />
+              <el-option :label="$t('apiTesting.scheduledTask.triggerTypes.interval')" value="INTERVAL" />
+              <el-option :label="$t('apiTesting.scheduledTask.triggerTypes.once')" value="ONCE" />
+            </el-select>
+          </el-col>
+          <el-col :span="6">
+            <el-select v-model="filters.status" :placeholder="$t('apiTesting.scheduledTask.taskStatus')" clearable>
+              <el-option :label="$t('apiTesting.scheduledTask.status.active')" value="ACTIVE" />
+              <el-option :label="$t('apiTesting.scheduledTask.status.paused')" value="PAUSED" />
+              <el-option :label="$t('apiTesting.scheduledTask.status.completed')" value="COMPLETED" />
+              <el-option :label="$t('apiTesting.scheduledTask.status.failed')" value="FAILED" />
+            </el-select>
+          </el-col>
+          <el-col :span="6">
+            <el-button @click="resetFilters">{{ $t('apiTesting.common.reset') }}</el-button>
+            <el-button type="primary" @click="loadTasks">{{ $t('apiTesting.common.search') }}</el-button>
+          </el-col>
+        </el-row>
+      </div>
 
-    <!-- 任务列表 -->
-    <div class="task-list">
-      <el-table :data="tasks" v-loading="loading">
+      <!-- 任务列表 -->
+      <div class="task-list">
+        <el-table :data="tasks" v-loading="loading">
         <el-table-column prop="name" :label="$t('apiTesting.scheduledTask.taskName')" min-width="200" />
         <el-table-column prop="task_type" :label="$t('apiTesting.scheduledTask.taskType')" width="120">
           <template #default="scope">
-            <el-tag :type="scope.row.task_type === 'TEST_SUITE' ? 'success' : 'primary'">
-              {{ scope.row.task_type === 'TEST_SUITE' ? $t('apiTesting.scheduledTask.taskTypes.testSuiteShort') : $t('apiTesting.scheduledTask.taskTypes.apiRequestShort') }}
+            <el-tag :type="scope.row.task_type === 'TEST_SUITE' ? 'success' : scope.row.task_type === 'SCENARIO_CASE' ? 'warning' : 'primary'">
+              {{ getTaskTypeText(scope.row.task_type) }}
             </el-tag>
           </template>
         </el-table-column>
@@ -84,41 +86,50 @@
             {{ formatDateTime(scope.row.last_run_time) }}
           </template>
         </el-table-column>
-        <el-table-column :label="$t('apiTesting.common.operation')" width="200" fixed="right">
+        <el-table-column :label="$t('apiTesting.common.operation')" width="320" fixed="right" align="center" class-name="action-col">
           <template #default="scope">
-            <el-button size="small" @click="runTaskNow(scope.row)" :loading="scope.row.running">
-              {{ $t('apiTesting.scheduledTask.runNow') }}
-            </el-button>
-            <el-dropdown @command="(command) => handleTaskAction(command, scope.row)">
-              <el-button size="small">
-                {{ $t('apiTesting.common.more') }}<el-icon><arrow-down /></el-icon>
+            <div class="row-actions">
+              <el-button size="small" text @click="editTask(scope.row)">
+                <el-icon><Edit /></el-icon>
+                {{ $t('apiTesting.scheduledTask.actions.edit') }}
               </el-button>
-              <template #dropdown>
-                <el-dropdown-menu>
-                  <el-dropdown-item command="edit">{{ $t('apiTesting.common.edit') }}</el-dropdown-item>
-                  <el-dropdown-item command="pause" v-if="scope.row.status === 'ACTIVE'">{{ $t('apiTesting.scheduledTask.pause') }}</el-dropdown-item>
-                  <el-dropdown-item command="activate" v-if="scope.row.status === 'PAUSED'">{{ $t('apiTesting.scheduledTask.activate') }}</el-dropdown-item>
-                  <el-dropdown-item command="logs">{{ $t('apiTesting.scheduledTask.executionLogs') }}</el-dropdown-item>
-                  <el-dropdown-item command="delete" divided>{{ $t('apiTesting.common.delete') }}</el-dropdown-item>
-                </el-dropdown-menu>
-              </template>
-            </el-dropdown>
+              <el-button size="small" text type="primary" @click="runTaskNow(scope.row)" :loading="scope.row.running">
+                <el-icon><VideoPlay /></el-icon>
+                {{ $t('apiTesting.scheduledTask.runNow') }}
+              </el-button>
+              <el-button size="small" text type="primary" @click="viewTaskLogs(scope.row)">
+                <el-icon><Clock /></el-icon>
+                {{ $t('apiTesting.scheduledTask.executionHistory') }}
+              </el-button>
+              <el-button v-if="scope.row.status === 'ACTIVE'" size="small" text @click="pauseTask(scope.row)">
+                <el-icon><VideoPause /></el-icon>
+                {{ $t('apiTesting.scheduledTask.actions.pause') }}
+              </el-button>
+              <el-button v-if="scope.row.status === 'PAUSED'" size="small" text type="success" @click="activateTask(scope.row)">
+                <el-icon><CaretRight /></el-icon>
+                {{ $t('apiTesting.scheduledTask.actions.resume') }}
+              </el-button>
+              <el-button size="small" text type="danger" :aria-label="$t('apiTesting.scheduledTask.actions.delete')" @click="deleteTask(scope.row)">
+                <el-icon><Delete /></el-icon>
+              </el-button>
+            </div>
           </template>
         </el-table-column>
-      </el-table>
-    </div>
+        </el-table>
+      </div>
 
-    <!-- 分页 -->
-    <div class="pagination">
-      <el-pagination
-        v-model:current-page="pagination.current"
-        v-model:page-size="pagination.size"
-        :total="pagination.total"
-        :page-sizes="[10, 20, 50, 100]"
-        layout="total, sizes, prev, pager, next, jumper"
-        @size-change="loadTasks"
-        @current-change="loadTasks"
-      />
+      <!-- 分页 -->
+      <div class="pagination-container">
+        <el-pagination
+          v-model:current-page="pagination.current"
+          v-model:page-size="pagination.size"
+          :total="pagination.total"
+          :page-sizes="[10, 20, 50, 100]"
+          layout="total, sizes, prev, pager, next, jumper"
+          @size-change="loadTasks"
+          @current-change="loadTasks"
+        />
+      </div>
     </div>
 
     <!-- 创建/编辑对话框 -->
@@ -142,6 +153,7 @@
           <el-radio-group v-model="taskForm.task_type">
             <el-radio label="TEST_SUITE">{{ $t('apiTesting.scheduledTask.taskTypes.testSuite') }}</el-radio>
             <el-radio label="API_REQUEST">{{ $t('apiTesting.scheduledTask.taskTypes.apiRequest') }}</el-radio>
+            <el-radio label="SCENARIO_CASE">{{ $t('apiTesting.scheduledTask.taskTypes.scenarioCase') }}</el-radio>
           </el-radio-group>
         </el-form-item>
 
@@ -217,7 +229,18 @@
           </el-select>
         </el-form-item>
 
-        <el-form-item :label="$t('apiTesting.scheduledTask.executeEnvironment')">
+        <el-form-item v-if="taskForm.task_type === 'SCENARIO_CASE'" :label="$t('apiTesting.scheduledTask.scenarioCase')" required>
+          <el-select v-model="taskForm.scenario_case" filterable :placeholder="$t('apiTesting.scheduledTask.selectScenarioCase')">
+            <el-option
+              v-for="scenario in scenarioCases"
+              :key="scenario.id"
+              :label="scenario.name"
+              :value="scenario.id"
+            />
+          </el-select>
+        </el-form-item>
+
+        <el-form-item :label="$t('apiTesting.scheduledTask.executeEnvironment')" required>
           <el-select v-model="taskForm.environment" :placeholder="$t('apiTesting.scheduledTask.selectEnvironment')">
             <el-option
               v-for="env in environments"
@@ -293,21 +316,23 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted, computed } from 'vue'
+import { ref, reactive, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useI18n } from 'vue-i18n'
-import { Plus, ArrowDown } from '@element-plus/icons-vue'
-import api from '@/utils/api'
+import { Plus, Edit, VideoPlay, Clock, VideoPause, CaretRight, Delete } from '@element-plus/icons-vue'
 import {
   getScheduledTasks,
   createScheduledTask,
   updateScheduledTask,
   deleteScheduledTask,
   runScheduledTask,
+  pauseScheduledTask,
+  activateScheduledTask,
   getExecutionLogs,
   getTestSuites,
   getApiRequests,
   getEnvironments,
+  getAllScenarioCases,
   getUsers
 } from '@/api/api-testing.js'
 
@@ -334,11 +359,21 @@ const getTriggerTypeText = (type) => {
   return typeKey ? t(`apiTesting.scheduledTask.triggerTypes.${typeKey}`) : type
 }
 
+const getTaskTypeText = (type) => {
+  const typeKey = {
+    TEST_SUITE: 'testSuiteShort',
+    API_REQUEST: 'apiRequestShort',
+    SCENARIO_CASE: 'scenarioCaseShort'
+  }[type]
+  return typeKey ? t(`apiTesting.scheduledTask.taskTypes.${typeKey}`) : type
+}
+
 // 数据状态
 const tasks = ref([])
 const executionLogs = ref([])
 const testSuites = ref([])
 const apiRequests = ref([])
+const scenarioCases = ref([])
 const environments = ref([])
 const users = ref([]) // 添加用户列表
 const loading = ref(false)
@@ -373,6 +408,7 @@ const taskForm = reactive({
   execute_at: '',
   test_suite: '',
   api_request: '',
+  scenario_case: '',
   environment: '',
   notify_on_success: false,
   notify_on_failure: false,
@@ -384,6 +420,7 @@ onMounted(() => {
   loadTasks()
   loadTestSuites()
   loadApiRequests()
+  loadScenarioCases()
   loadEnvironments()
   loadUsers() // 加载用户列表
 })
@@ -424,6 +461,15 @@ const loadApiRequests = async () => {
     apiRequests.value = response.data.results
   } catch (error) {
     console.error('加载API请求失败:', error)
+  }
+}
+
+// 加载场景用例，供场景用例类型的定时任务选择。
+const loadScenarioCases = async () => {
+  try {
+    scenarioCases.value = await getAllScenarioCases()
+  } catch (error) {
+    console.error('加载场景用例失败:', error)
   }
 }
 
@@ -472,6 +518,7 @@ const resetTaskForm = () => {
     execute_at: '',
     test_suite: '',
     api_request: '',
+    scenario_case: '',
     environment: '',
     notify_on_success: false,
     notify_on_failure: false,
@@ -492,6 +539,14 @@ const resetFilters = () => {
 
 // 提交任务表单
 const submitTaskForm = async () => {
+  if (!taskForm.name.trim()) {
+    ElMessage.warning(t('apiTesting.scheduledTask.rules.nameRequired'))
+    return
+  }
+  if (!taskForm.environment) {
+    ElMessage.warning(t('apiTesting.scheduledTask.rules.environmentRequired'))
+    return
+  }
   submitting.value = true
   try {
     // 准备提交数据，确保格式正确
@@ -521,6 +576,8 @@ const submitTaskForm = async () => {
       submitData.test_suite = taskForm.test_suite
     } else if (taskForm.task_type === 'API_REQUEST') {
       submitData.api_request = taskForm.api_request
+    } else if (taskForm.task_type === 'SCENARIO_CASE') {
+      submitData.scenario_case = taskForm.scenario_case
     }
 
     if (editingTask.value) {
@@ -607,27 +664,6 @@ const viewTaskLogs = async (task) => {
   }
 }
 
-// 处理任务操作
-const handleTaskAction = (command, task) => {
-  switch (command) {
-    case 'pause':
-      pauseTask(task)
-      break
-    case 'activate':
-      activateTask(task)
-      break
-    case 'edit':
-      editTask(task)
-      break
-    case 'logs':
-      viewTaskLogs(task)
-      break
-    case 'delete':
-      deleteTask(task)
-      break
-  }
-}
-
 // 编辑任务
 const editTask = (task) => {
   editingTask.value = task
@@ -641,6 +677,7 @@ const editTask = (task) => {
     execute_at: task.execute_at,
     test_suite: task.test_suite || null,
     api_request: task.api_request || null,
+    scenario_case: task.scenario_case || null,
     environment: task.environment || null,
     notify_on_success: task.notify_on_success,
     notify_on_failure: task.notify_on_failure,
@@ -659,7 +696,7 @@ const editTask = (task) => {
 // 暂停任务
 const pauseTask = async (task) => {
   try {
-    await api.post(`/api-testing/scheduled-tasks/${task.id}/pause/`)
+    await pauseScheduledTask(task.id)
     ElMessage.success(t('apiTesting.messages.success.taskPaused'))
     loadTasks()
   } catch (error) {
@@ -671,7 +708,7 @@ const pauseTask = async (task) => {
 // 激活任务
 const activateTask = async (task) => {
   try {
-    await api.post(`/api-testing/scheduled-tasks/${task.id}/activate/`)
+    await activateScheduledTask(task.id)
     ElMessage.success(t('apiTesting.messages.success.taskActivated'))
     loadTasks()
   } catch (error) {
@@ -703,36 +740,86 @@ const deleteTask = async (task) => {
 </script>
 
 <style scoped>
-.scheduled-tasks {
-  padding: 20px;
+.page-container {
   height: 100%;
-  display: flex;
-  flex-direction: column;
+  overflow-y: auto;
+  background: #f5f5f5;
 }
 
-.header {
+.page-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: px;
+  margin-bottom: 10px;
+  background: #fff;
+  padding: 10px 20px;
+  border-radius: 4px;
 }
 
-.filters {
-  margin-bottom: 20px;
-  background: #f8f9fa;
+.page-container .page-header .page-title {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 700;
+  color: #303133;
+}
+
+/* 与 UI 自动化对应页面保持一致的响应式标题字号。 */
+@media screen and (max-width: 1920px) {
+  .page-container .page-header .page-title { font-size: 22px; }
+}
+
+@media screen and (max-width: 1600px) {
+  .page-container .page-header .page-title { font-size: 20px; }
+}
+
+@media screen and (max-width: 1440px) {
+  .page-container .page-header .page-title { font-size: 18px; }
+}
+
+@media screen and (max-width: 1280px) {
+  .page-container .page-header .page-title { font-size: 16px; }
+}
+
+@media screen and (max-width: 480px) {
+  .page-container .page-header .page-title { font-size: 14px; }
+}
+
+.card-container {
+  background: #fff;
   padding: 20px;
-  border-radius: 8px;
+  border-radius: 4px;
+}
+
+.filter-bar {
+  margin-bottom: 10px;
 }
 
 .task-list {
-  flex: 1;
   overflow: hidden;
 }
 
-.pagination {
-  margin-top: 20px;
+.pagination-container {
+  margin-top: 10px;
   display: flex;
   justify-content: flex-end;
+}
+
+:deep(.action-col .cell) {
+  white-space: nowrap;
+}
+
+.row-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: nowrap;
+  gap: 2px;
+  white-space: nowrap;
+}
+
+.row-actions :deep(.el-button) {
+  margin: 0;
+  padding: 0 4px;
 }
 
 .cron-help {

@@ -7,7 +7,7 @@ from django.test import TestCase
 from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.test import APIClient
 
-from ..models import ApiCollection, ApiProject, ApiRequest, ScenarioCase, ScenarioStep
+from ..models import ApiCollection, ApiProject, ApiRequest, ScenarioCase
 from ..request_dto import normalize_request
 from ..scenario_service import (
     import_api_request,

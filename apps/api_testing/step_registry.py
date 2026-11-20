@@ -13,9 +13,9 @@ CONDITION_OPERATORS = frozenset({
     'exists', 'not_exists', 'is_empty', 'not_empty',
 })
 RIGHT_TYPES = frozenset({'string', 'number', 'boolean', 'null'})
-ON_ERROR_POLICIES = frozenset({'continue', 'break_loop', 'abort_scenario'})
+ON_ERROR_POLICIES = frozenset({'continue', 'next_iteration', 'break_loop', 'abort_scenario'})
 EXPRESSION_PATTERN = re.compile(
-    r'\{\{\s*(?:env|vars|steps|loop)\.[A-Za-z0-9_.\-\[\]]+\s*\}\}'
+    r'\{\{\s*(?:[A-Za-z_][A-Za-z0-9_]*|(?:env|vars|loop)\.[A-Za-z0-9_.\-\[\]]+|steps\.(?:[0-9]+|[A-Za-z0-9_-]+)\.[A-Za-z0-9_.\-\[\]]+)\s*\}\}'
 )
 
 
@@ -75,7 +75,7 @@ def _integer(value, field, maximum):
 def _expression(value, field):
     _text(value, field)
     if not EXPRESSION_PATTERN.fullmatch(value.strip()):
-        raise StepValidationError(f'{field} 必须是完整的命名空间变量表达式')
+        raise StepValidationError(f'{field} 必须是完整变量表达式')
     return value.strip()
 
 
@@ -129,10 +129,12 @@ def _else(config):
     return {'if_step_id': canonical_uuid(config['if_step_id'], 'if_step_id')}
 
 
+def _break_if(config):
+    return _condition(config)
+
+
 def _loop_options(config):
     result = deepcopy(config)
-    if 'break_if' in config and config['break_if'] is not None:
-        result['break_if'] = _condition(config['break_if'])
     policy = config.get('on_error', 'abort_scenario')
     if not isinstance(policy, str) or policy not in ON_ERROR_POLICIES:
         raise StepValidationError('未知循环 on_error 策略')
@@ -145,7 +147,7 @@ def _loop_options(config):
 
 
 def _for(config):
-    _object(config, {'count', 'break_if', 'on_error', 'max_iterations'}, {'count'})
+    _object(config, {'count', 'on_error', 'max_iterations'}, {'count'})
     result = _loop_options(config)
     count = config['count']
     if isinstance(count, str):
@@ -156,7 +158,7 @@ def _for(config):
 
 
 def _foreach(config):
-    _object(config, {'array_expression', 'break_if', 'on_error', 'max_iterations'},
+    _object(config, {'array_expression', 'on_error', 'max_iterations'},
             {'array_expression'})
     result = _loop_options(config)
     result['array_expression'] = _expression(config['array_expression'], 'array_expression')
@@ -237,8 +239,9 @@ STEP_REGISTRY = MappingProxyType({
     step.key: step for step in (
         StepType('http', 'http', False, True, frozenset({'api_request'}), False, True, _http),
         StepType('group', 'group', True, False, frozenset(), False, True, _group),
-        StepType('condition', 'condition', True, False, frozenset(), False, True, _condition),
-        StepType('else', 'else', True, False, frozenset(), False, False, _else),
+        StepType('condition', 'If', True, False, frozenset(), False, True, _condition),
+        StepType('else', 'Else', True, False, frozenset(), False, False, _else),
+        StepType('break_if', 'Break If', False, False, frozenset(), False, True, _break_if),
         StepType('for', 'for', True, False, frozenset(), False, True, _for),
         StepType('foreach', 'foreach', True, False, frozenset(), False, True, _foreach),
         StepType('wait', 'wait', False, False, frozenset(), False, True, _wait),

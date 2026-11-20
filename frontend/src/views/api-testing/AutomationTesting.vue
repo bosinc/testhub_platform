@@ -1,95 +1,136 @@
 <template>
   <div class="automation-testing" @click="showFolderContextMenu = false">
     <div class="header">
-      <h3>{{ $t('apiTesting.automation.title') }}</h3>
-      <el-button type="primary" @click="openCreateScenarioCaseDialog">
-        <el-icon><Plus /></el-icon>
-        {{ $t('apiTesting.automation.createScenarioCase') }}
-      </el-button>
+      <h3 class="page-title">{{ $t('apiTesting.automation.title') }}</h3>
+      <div class="page-header-actions">
+        <el-select
+          v-model="selectedProject"
+          class="project-selector"
+          :placeholder="$t('apiTesting.common.selectProject')"
+          @change="onProjectChange"
+        >
+          <el-option
+            v-for="project in httpProjects"
+            :key="project.id"
+            :label="project.name"
+            :value="project.id"
+          />
+        </el-select>
+        <el-select
+          v-model="pageEnvironment"
+          class="environment-selector"
+          clearable
+          :placeholder="$t('apiTesting.scenarioEditor.selectEnvironment')"
+          @change="onPageEnvironmentChange"
+        >
+          <el-option v-for="env in environments" :key="env.id" :label="env.name" :value="env.id" />
+        </el-select>
+        <el-button type="primary" @click="openCreateScenarioCaseDialog">
+          <el-icon><Plus /></el-icon>
+          {{ $t('apiTesting.automation.createScenarioCase') }}
+        </el-button>
+      </div>
     </div>
 
     <div class="content-layout">
       <ResizableSplitPane v-model="sidebarWidth" :min-size="240" :max-size="520" :second-min-size="480" storage-key="api-testing.automation.sidebar-width">
         <template #first>
-      <!-- 左侧项目选择和场景用例列表 -->
+      <!-- 左侧场景树：布局与接口管理的接口树对齐 -->
           <div class="sidebar">
-        <div class="project-selector">
-          <el-select
-            v-model="selectedProject"
-            :placeholder="$t('apiTesting.common.selectProject')"
-            @change="onProjectChange"
-            style="width: 100%;"
-          >
-            <el-option
-              v-for="project in httpProjects"
-              :key="project.id"
-              :label="project.name"
-              :value="project.id"
-            />
-          </el-select>
-        </div>
-
-        <div class="scenario-case-list">
-          <div class="list-header">
-            <span>{{ $t('apiTesting.automation.scenarioCases') }}</span>
-            <div class="list-actions">
-              <el-button class="create-folder-button" size="small" text :disabled="!selectedProject" :title="$t('apiTesting.automation.folder.create')" @click="createFolder()">
-                <el-icon><FolderAdd /></el-icon>
-              </el-button>
+        <div class="sidebar-header">
+          <div class="header-actions">
+            <el-input
+              v-model="scenarioKeyword"
+              :placeholder="$t('apiTesting.automation.searchScenario')"
+              size="small"
+              clearable
+              style="flex: 1; min-width: 0;"
+              @input="filterScenarioTree"
+              @clear="filterScenarioTree"
+            >
+              <template #prefix>
+                <el-icon><Search /></el-icon>
+              </template>
+            </el-input>
+            <div class="sidebar-actions">
+              <el-button
+                size="small"
+                type="primary"
+                :icon="FolderAdd"
+                :disabled="!selectedProject"
+                :title="$t('apiTesting.automation.folder.create')"
+                @click="createFolder()"
+              />
+              <el-button
+                size="small"
+                type="success"
+                :icon="VideoPlay"
+                :disabled="selectedScenarioCaseIds.length === 0"
+                :title="$t('apiTesting.automation.batchRun', { count: selectedScenarioCaseIds.length })"
+                @click="runSelectedScenarioCases"
+              >{{ selectedScenarioCaseIds.length }}</el-button>
             </div>
           </div>
-          <div class="batch-bar">
-            <el-button size="small" type="success" :disabled="selectedScenarioCaseIds.length === 0" @click="runSelectedScenarioCases">
-              <el-icon><VideoPlay /></el-icon> {{ $t('apiTesting.automation.batchRun', { count: selectedScenarioCaseIds.length }) }}
-            </el-button>
-          </div>
-
-          <el-scrollbar height="520px">
-            <el-tree
-              ref="scenarioCaseTreeRef"
-              :data="scenarioCaseTree"
-              :props="{ label: 'name', children: 'children' }"
-              :default-expanded-keys="treeDefaultExpandedKeys"
-              node-key="id"
-              show-checkbox
-              :check-on-click-node="false"
-              :filter-node-method="() => true"
-              @node-contextmenu="onFolderNodeContextMenu"
-              @check="onScenarioCaseCheck"
-            >
-              <template #default="{ data }">
-                <div
-                  class="scenario-case-tree-node"
-                  :class="{ active: data.type === 'scenarioCase' && selectedScenarioCase?.id === data.id }"
-                  @click="data.type === 'scenarioCase' && selectScenarioCase(data)"
-                >
-                  <el-icon v-if="data.type === 'folder'"><Folder /></el-icon>
-                  <el-icon v-else><Document /></el-icon>
-                  <span class="scenario-case-name">{{ data.name }}</span>
-                  <el-icon
-                    v-if="data.type === 'scenarioCase'"
-                    class="del-icon"
-                    @click.stop="handleScenarioCaseAction({ action: 'delete', scenarioCase: data })"
-                  ><Delete /></el-icon>
-                </div>
-              </template>
-            </el-tree>
-          </el-scrollbar>
-          <ul
-            ref="folderContextMenuRef"
-            v-show="showFolderContextMenu"
-            class="folder-context-menu"
-            :style="{ left: folderContextMenuX + 'px', top: folderContextMenuY + 'px' }"
-            @click.stop
-          >
-            <template v-if="contextTreeNode?.type === 'folder'">
-              <li @click="createFolder(contextTreeNode.folderId)">{{ $t('apiTesting.automation.folder.createSubfolder') }}</li>
-              <li @click="renameFolder(contextTreeNode)">{{ $t('apiTesting.common.rename') }}</li>
-              <li class="danger" @click="deleteFolder(contextTreeNode)">{{ $t('apiTesting.common.delete') }}</li>
-            </template>
-            <li v-else-if="contextTreeNode?.type === 'scenarioCase'" @click="openMoveScenarioCaseDialog(contextTreeNode)">{{ $t('apiTesting.automation.folder.moveToGroup') }}</li>
-          </ul>
         </div>
+
+        <div class="scenario-tree">
+          <el-tree
+            ref="scenarioCaseTreeRef"
+            :data="scenarioCaseTree"
+            :props="{ label: 'name', children: 'children' }"
+            :default-expanded-keys="treeDefaultExpandedKeys"
+            node-key="id"
+            show-checkbox
+            :check-on-click-node="false"
+            :check-on-click-leaf="false"
+            :filter-node-method="filterScenarioNode"
+            @node-contextmenu="onFolderNodeContextMenu"
+            @check="onScenarioCaseCheck"
+          >
+            <template #default="{ data }">
+              <div
+                class="scenario-case-tree-node"
+                :class="{ active: data.type === 'scenarioCase' && selectedScenarioCase?.id === data.id }"
+                @click="data.type === 'scenarioCase' && selectScenarioCase(data)"
+              >
+                <el-icon class="node-icon">
+                  <Folder v-if="data.type === 'folder'" />
+                  <Document v-else />
+                </el-icon>
+                <span class="scenario-case-name" :title="data.name">{{ data.name }}</span>
+                <span v-if="data.type === 'scenarioCase'" class="node-actions" @click.stop>
+                  <el-button
+                    link
+                    size="small"
+                    :icon="CopyDocument"
+                    @click="handleScenarioCaseAction({ action: 'duplicate', scenarioCase: data })"
+                  />
+                  <el-button
+                    link
+                    size="small"
+                    type="danger"
+                    :icon="Delete"
+                    @click="handleScenarioCaseAction({ action: 'delete', scenarioCase: data })"
+                  />
+                </span>
+              </div>
+            </template>
+          </el-tree>
+        </div>
+        <ul
+          ref="folderContextMenuRef"
+          v-show="showFolderContextMenu"
+          class="folder-context-menu"
+          :style="{ left: folderContextMenuX + 'px', top: folderContextMenuY + 'px' }"
+          @click.stop
+        >
+          <template v-if="contextTreeNode?.type === 'folder'">
+            <li @click="createFolder(contextTreeNode.folderId)">{{ $t('apiTesting.automation.folder.createSubfolder') }}</li>
+            <li @click="renameFolder(contextTreeNode)">{{ $t('apiTesting.common.rename') }}</li>
+            <li class="danger" @click="deleteFolder(contextTreeNode)">{{ $t('apiTesting.common.delete') }}</li>
+          </template>
+          <li v-else-if="contextTreeNode?.type === 'scenarioCase'" @click="openMoveScenarioCaseDialog(contextTreeNode)">{{ $t('apiTesting.automation.folder.moveToGroup') }}</li>
+        </ul>
           </div>
         </template>
 
@@ -101,148 +142,12 @@
         </div>
 
         <div v-else class="scenario-case-detail">
-          <!-- 场景用例信息 -->
-          <div class="scenario-case-header">
-            <div class="scenario-case-title">
-              <h4>{{ selectedScenarioCase.name }}</h4>
-              <div class="scenario-case-actions">
-                <el-button type="success" @click="runScenarioCase(selectedScenarioCase)" :loading="running">
-                  <el-icon><VideoPlay /></el-icon>
-                  {{ $t('apiTesting.automation.runTest') }}
-                </el-button>
-                <el-button @click="editScenarioCase(selectedScenarioCase)">
-                  <el-icon><Edit /></el-icon>
-                  {{ $t('apiTesting.common.edit') }}
-                </el-button>
-              </div>
-            </div>
-            <div class="scenario-case-description">
-              {{ selectedScenarioCase.description || $t('apiTesting.automation.noDescription') }}
-            </div>
-            <div class="scenario-case-meta">
-              <el-tag size="small">{{ getEnvironmentName(selectedScenarioCase.environment) }}</el-tag>
-              <span class="meta-text">{{ $t('apiTesting.automation.creator') }}{{ selectedScenarioCase.created_by?.username }}</span>
-              <span class="meta-text">{{ $t('apiTesting.automation.createTime') }}{{ formatDate(selectedScenarioCase.created_at) }}</span>
-            </div>
-          </div>
-
-          <!-- 请求列表 -->
-          <div class="requests-section">
-            <div class="section-header">
-              <h5>{{ $t('apiTesting.automation.testRequests') }}</h5>
-              <el-button size="small" @click="showAddRequest">
-                <el-icon><Plus /></el-icon>
-                {{ $t('apiTesting.automation.addRequest') }}
-              </el-button>
-            </div>
-
-            <el-table :data="selectedScenarioCase.scenario_case_requests" style="width: 100%">
-              <el-table-column type="index" width="50" />
-              <el-table-column prop="request.name" :label="$t('apiTesting.automation.requestName')" min-width="200" />
-              <el-table-column prop="request.method" :label="$t('apiTesting.automation.method')" width="80">
-                <template #default="scope">
-                  <el-tag :type="getMethodType(scope.row.request.method)" size="small">
-                    {{ scope.row.request.method }}
-                  </el-tag>
-                </template>
-              </el-table-column>
-              <el-table-column prop="request.url" label="URL" min-width="300" show-overflow-tooltip />
-              <el-table-column prop="enabled" :label="$t('apiTesting.automation.enabled')" width="80">
-                <template #default="scope">
-                  <el-switch
-                    v-model="scope.row.enabled"
-                    @change="updateRequestEnabled(scope.row)"
-                  />
-                </template>
-              </el-table-column>
-              <el-table-column :label="$t('apiTesting.automation.assertions')" width="100">
-                <template #default="scope">
-                  {{ $t('apiTesting.automation.assertionCount', { n: scope.row.assertions?.length || 0 }) }}
-                </template>
-              </el-table-column>
-              <el-table-column :label="$t('apiTesting.interface.variableExtraction')" width="100">
-                <template #default="scope">
-                  {{ scope.row.extractors?.length || 0 }}
-                </template>
-              </el-table-column>
-              <el-table-column :label="$t('apiTesting.common.operation')" width="170">
-                <template #default="scope">
-                  <el-button
-                    link
-                    size="small"
-                    :icon="ArrowUp"
-                    :disabled="scope.$index === 0"
-                    @click="moveRequest(scope.row, 'up')"
-                  />
-                  <el-button
-                    link
-                    size="small"
-                    :icon="ArrowDown"
-                    :disabled="scope.$index === selectedScenarioCase.scenario_case_requests.length - 1"
-                    @click="moveRequest(scope.row, 'down')"
-                  />
-                  <el-button link type="primary" size="small" :icon="Edit" @click="editRequestConfig(scope.row)" />
-                  <el-button link type="danger" size="small" :icon="Delete" @click="removeRequest(scope.row)" />
-                </template>
-              </el-table-column>
-            </el-table>
-          </div>
-
-          <!-- 执行历史 -->
-          <div class="executions-section">
-            <div class="section-header">
-              <h5>{{ $t('apiTesting.automation.executionHistory') }}</h5>
-              <el-button size="small" @click="loadExecutions">
-                <el-icon><Refresh /></el-icon>
-                {{ $t('apiTesting.automation.refresh') }}
-              </el-button>
-            </div>
-
-            <el-table
-              class="execution-history-table"
-              :data="executions"
-              fit
-              height="100%"
-              v-loading="executionsLoading"
-            >
-              <el-table-column prop="status" :label="$t('apiTesting.common.status')" min-width="120">
-                <template #default="scope">
-                  <el-tag :type="getStatusType(scope.row.status)">
-                    {{ getStatusText(scope.row.status) }}
-                  </el-tag>
-                </template>
-              </el-table-column>
-              <el-table-column prop="total_requests" :label="$t('apiTesting.automation.totalRequests')" min-width="120" />
-              <el-table-column prop="passed_requests" :label="$t('apiTesting.automation.passedCount')" min-width="120">
-                <template #default="scope">
-                  <span style="color: #67c23a">{{ scope.row.passed_requests }}</span>
-                </template>
-              </el-table-column>
-              <el-table-column prop="failed_requests" :label="$t('apiTesting.automation.failedCount')" min-width="120">
-                <template #default="scope">
-                  <span style="color: #f56c6c">{{ scope.row.failed_requests }}</span>
-                </template>
-              </el-table-column>
-              <el-table-column :label="$t('apiTesting.automation.averageTime')" min-width="140">
-                <template #default="scope">
-                  {{ getAverageExecutionTime(scope.row) }}
-                </template>
-              </el-table-column>
-              <el-table-column prop="executed_by.username" :label="$t('apiTesting.automation.executor')" min-width="140" />
-              <el-table-column prop="created_at" :label="$t('apiTesting.automation.executionTime')" min-width="180">
-                <template #default="scope">
-                  {{ formatDate(scope.row.created_at) }}
-                </template>
-              </el-table-column>
-              <el-table-column :label="$t('apiTesting.common.operation')" min-width="180">
-                <template #default="scope">
-                  <el-button link type="primary" @click="viewExecutionDetail(scope.row)" size="small">
-                    {{ $t('apiTesting.automation.viewDetails') }}
-                  </el-button>
-                </template>
-              </el-table-column>
-            </el-table>
-          </div>
+          <!-- 场景编排编辑器：步骤树 + 按类型切换的编辑器 + 执行结果 -->
+          <ScenarioEditor
+            :scenario-case="selectedScenarioCase"
+            :environment-id="pageEnvironment"
+            @updated="onScenarioEdited"
+          />
         </div>
           </div>
         </template>
@@ -316,91 +221,6 @@
       </template>
     </el-dialog>
 
-    <!-- 添加请求对话框 -->
-    <el-dialog
-      v-model="showAddRequestDialog"
-      :title="$t('apiTesting.automation.addRequestToScenarioCase')"
-      width="800px"
-      :close-on-click-modal="false"
-    >
-      <div class="add-request-content">
-        <el-input
-          v-model="requestSearchKeyword"
-          :placeholder="$t('apiTesting.interface.searchInterface')"
-          clearable
-          class="request-search"
-        >
-          <template #prefix>
-            <el-icon><Search /></el-icon>
-          </template>
-        </el-input>
-        <div class="request-selector">
-          <el-tree
-            ref="requestTreeRef"
-            :data="requestTree"
-            :props="requestTreeProps"
-            :filter-node-method="filterRequestTreeNode"
-            :empty-text="requestSearchKeyword.trim() ? '' : $t('apiTesting.common.noData')"
-            show-checkbox
-            node-key="id"
-            :check-on-click-node="false"
-            @check="onRequestCheck"
-          >
-            <template #default="{ node, data }">
-              <div class="request-tree-node">
-                <el-icon v-if="data.type === 'collection'">
-                  <Folder />
-                </el-icon>
-                <el-icon v-else>
-                  <Document />
-                </el-icon>
-                <span>{{ data.name }}</span>
-                <span v-if="data.type === 'request'" class="method-tag" :class="data.method?.toLowerCase()">
-                  {{ data.method }}
-                </span>
-              </div>
-            </template>
-          </el-tree>
-          <div
-            v-if="requestSearchKeyword.trim() && !requestSearchHasMatches"
-            class="request-search-empty"
-          >
-            {{ $t('apiTesting.interface.noSearchResults') }}
-          </div>
-        </div>
-      </div>
-
-      <template #footer>
-        <el-button @click="showAddRequestDialog = false">{{ $t('apiTesting.common.cancel') }}</el-button>
-        <el-button type="primary" @click="addSelectedRequests" :loading="addingRequests">
-          {{ $t('apiTesting.automation.addSelectedRequests') }}
-        </el-button>
-      </template>
-    </el-dialog>
-
-    <!-- 场景用例请求配置，复用接口管理中的断言和变量提取编辑器 -->
-    <el-dialog
-      v-model="showAssertionDialog"
-      :title="$t('apiTesting.automation.requestConfig')"
-      width="860px"
-      :close-on-click-modal="false"
-    >
-      <el-tabs v-model="requestConfigTab">
-        <el-tab-pane :label="$t('apiTesting.interface.assertions')" name="assertions">
-          <AssertionEditor v-model="assertionDraft" compact />
-        </el-tab-pane>
-        <el-tab-pane :label="$t('apiTesting.interface.variableExtraction')" name="extractors">
-          <VariableExtractorEditor v-model="extractorDraft" compact :show-title="false" />
-        </el-tab-pane>
-      </el-tabs>
-      <template #footer>
-        <el-button @click="showAssertionDialog = false">{{ $t('apiTesting.common.cancel') }}</el-button>
-        <el-button type="primary" :loading="savingAssertions" @click="saveScenarioCaseAssertions">
-          {{ $t('apiTesting.common.save') }}
-        </el-button>
-      </template>
-    </el-dialog>
-
     <!-- 执行结果对话框 -->
     <el-dialog
       v-model="showExecutionDialog"
@@ -428,7 +248,7 @@
 
         <div class="execution-results">
           <h4>{{ $t('apiTesting.automation.detailedResults') }}</h4>
-          <el-table :data="formatExecutionResults(currentExecution.results)">
+          <el-table :data="formatExecutionResults(currentExecutionSteps)">
             <el-table-column prop="name" :label="$t('apiTesting.automation.requestName')" min-width="200" />
             <el-table-column prop="method" :label="$t('apiTesting.automation.method')" width="80">
               <template #default="scope">
@@ -470,38 +290,31 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { useI18n } from 'vue-i18n'
 import { useRoute } from 'vue-router'
 import {
-  Plus, Refresh, MoreFilled, VideoPlay, Edit, Search,
-  Folder, FolderAdd, Document, ArrowUp, ArrowDown, Delete
+  Plus, VideoPlay, Search, Folder, FolderAdd, Document, Delete, CopyDocument
 } from '@element-plus/icons-vue'
-import AssertionEditor from '@/components/api-testing/AssertionEditor.vue'
-import VariableExtractorEditor from '@/components/api-testing/VariableExtractorEditor.vue'
+import ScenarioEditor from './components/scenario/ScenarioEditor.vue'
 import {
-  addRequestsToScenarioCase,
   createScenarioCase,
   createScenarioCaseFolder,
   deleteScenarioCase as deleteScenarioCaseApi,
   deleteScenarioCaseFolder,
-  deleteScenarioCaseRequest,
+  duplicateScenarioCase as duplicateScenarioCaseApi,
   executeScenarioCase,
-  getAllApiCollections,
-  getAllApiRequests,
+  getExecutionSteps,
   getAllScenarioCases,
   getApiProjects,
   getEnvironments,
   getScenarioCaseExecutions,
   getScenarioCaseDetail,
   getScenarioCaseFolders,
-  moveScenarioCaseRequest,
   patchScenarioCase,
-  patchScenarioCaseRequest,
   updateScenarioCase,
-  updateScenarioCaseRequest,
   updateScenarioCaseFolder
 } from '@/api/api-testing'
 import { createTestCaseAutomationLink } from '@/api/testcases'
 import dayjs from 'dayjs'
 import { getPreferredProjectId, useRememberedProject } from '@/utils/projectSelection'
-import { normalizeAssertions, stripLegacyAssertionValue } from '@/utils/assertions'
+import { findRememberedEnvironment, rememberEnvironment } from '@/utils/environmentPreference'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -523,26 +336,28 @@ const moveTargetFolder = ref(null)
 const selectedScenarioCase = ref(null)
 const executions = ref([])
 const environments = ref([])
-const requestTree = ref([])
-const requestSearchKeyword = ref('')
+const pageEnvironment = ref(null)
 const running = ref(false)
 const scenarioCaseTreeRef = ref(null)
+const scenarioKeyword = ref('')
+
+// 与接口树一致的筛选交互：输入即过滤，清空即恢复。
+const filterScenarioNode = (value, data) => {
+  if (!value) return true
+  return String(data?.name || '').toLowerCase().includes(String(value).toLowerCase())
+}
+
+const filterScenarioTree = () => {
+  scenarioCaseTreeRef.value?.filter(scenarioKeyword.value)
+}
 const executionsLoading = ref(false)
 const showCreateScenarioCaseDialog = ref(false)
-const showAddRequestDialog = ref(false)
-const showAssertionDialog = ref(false)
 const showExecutionDialog = ref(false)
 const editingScenarioCase = ref(null)
 const submittingScenarioCase = ref(false)
-const addingRequests = ref(false)
-const savingAssertions = ref(false)
 const currentExecution = ref(null)
-const editingScenarioCaseRequest = ref(null)
-const assertionDraft = ref([])
-const extractorDraft = ref([])
-const requestConfigTab = ref('assertions')
+const currentExecutionSteps = ref([])
 const scenarioCaseFormRef = ref()
-const requestTreeRef = ref()
 
 const scenarioCaseForm = reactive({
   name: '',
@@ -555,63 +370,6 @@ const scenarioCaseForm = reactive({
 const scenarioCaseRules = computed(() => ({
   name: [{ required: true, message: t('apiTesting.automation.inputScenarioCaseName'), trigger: 'blur' }]
 }))
-
-const requestTreeProps = {
-  children: 'children',
-  label: 'name'
-}
-
-// 搜索范围与接口管理页保持一致，并保留包含命中接口的父集合。
-const requestMatchesKeyword = (request, keyword) => {
-  return ['name', 'method', 'url'].some(field =>
-    String(request[field] || '').toLocaleLowerCase().includes(keyword)
-  )
-}
-
-const collectionHasMatchingRequest = (collection, keyword) => {
-  return (collection.children || []).some(child => {
-    if (child.type === 'request') return requestMatchesKeyword(child, keyword)
-    return collectionHasMatchingRequest(child, keyword)
-  })
-}
-
-const requestTreeHasMatchingRequest = (nodes, keyword) => {
-  return nodes.some(node => {
-    if (node.type === 'request') return requestMatchesKeyword(node, keyword)
-    return collectionHasMatchingRequest(node, keyword)
-  })
-}
-
-const requestSearchHasMatches = computed(() => {
-  const keyword = requestSearchKeyword.value.trim().toLocaleLowerCase()
-  return !keyword || requestTreeHasMatchingRequest(requestTree.value, keyword)
-})
-
-const filterRequestTreeNode = (keyword, data) => {
-  const normalizedKeyword = String(keyword || '').trim().toLocaleLowerCase()
-  if (!normalizedKeyword) return true
-  if (data.type === 'request') return requestMatchesKeyword(data, normalizedKeyword)
-  return collectionHasMatchingRequest(data, normalizedKeyword)
-}
-
-const expandMatchingCollections = (collections, keyword) => {
-  collections.forEach(collection => {
-    if (collection.type !== 'collection') return
-    if (collectionHasMatchingRequest(collection, keyword)) {
-      requestTreeRef.value?.getNode(collection.id)?.expand()
-    }
-    expandMatchingCollections(collection.children || [], keyword)
-  })
-}
-
-watch(requestSearchKeyword, async (keyword) => {
-  await nextTick()
-  if (!requestTreeRef.value) return
-
-  const normalizedKeyword = keyword.trim().toLocaleLowerCase()
-  requestTreeRef.value.filter(normalizedKeyword)
-  if (normalizedKeyword) expandMatchingCollections(requestTree.value, normalizedKeyword)
-})
 
 const httpProjects = computed(() => {
   return projects.value.filter(project => project.project_type !== 'WEBSOCKET')
@@ -662,19 +420,11 @@ const getExecutionTime = (execution) => {
 }
 
 const getAverageExecutionTime = (execution) => {
-  if (!execution.results || !Array.isArray(execution.results) || execution.results.length === 0) {
-    return '-'
+  if (typeof execution.results?.average_response_time === 'number') {
+    const average = execution.results.average_response_time
+    return average < 1000 ? `${Math.round(average)}ms` : `${(average / 1000).toFixed(1)}s`
   }
-
-  // 计算所有请求的平均响应时间
-  const totalResponseTime = execution.results.reduce((sum, result) => sum + (result.response_time || 0), 0)
-  const averageTime = totalResponseTime / execution.results.length
-
-  if (averageTime < 1000) {
-    return `${Math.round(averageTime)}ms`
-  } else {
-    return `${(averageTime / 1000).toFixed(1)}s`
-  }
+  return '-'
 }
 
 const getPassRate = (execution) => {
@@ -739,6 +489,11 @@ const loadProjects = async () => {
   } catch (error) {
     ElMessage.error(t('apiTesting.messages.error.loadProjects'))
   }
+}
+
+// 编辑器保存/执行后刷新左侧场景列表（名称、环境等可能变化）。
+const onScenarioEdited = () => {
+  loadScenarioCases()
 }
 
 const loadScenarioCases = async () => {
@@ -962,77 +717,16 @@ const loadEnvironments = async () => {
       env.scope === 'GLOBAL' ||
       (env.scope === 'LOCAL' && (!selectedProject.value || env.project === selectedProject.value))
     )
+    // 优先恢复记忆的环境；不在可用范围内时回退为空
+    const remembered = findRememberedEnvironment(environments.value)
+    if (remembered) {
+      pageEnvironment.value = remembered.id
+    } else if (pageEnvironment.value && !environments.value.some(env => String(env.id) === String(pageEnvironment.value))) {
+      pageEnvironment.value = null
+    }
   } catch (error) {
     ElMessage.error(t('apiTesting.messages.error.loadEnvironments'))
   }
-}
-
-const loadRequestTree = async () => {
-  const projectId = selectedProject.value
-  if (!projectId) {
-    requestTree.value = []
-    return
-  }
-
-  requestTree.value = []
-  try {
-    const [collections, requests] = await Promise.all([
-      getAllApiCollections({ project: projectId, tree: 1 }),
-      getAllApiRequests({ project: projectId, tree: 1 })
-    ])
-
-    // 构建树形结构
-    if (selectedProject.value === projectId) {
-      requestTree.value = buildRequestTree(collections, requests)
-    }
-  } catch (error) {
-    if (selectedProject.value === projectId) {
-      ElMessage.error(t('apiTesting.messages.error.loadRequestTree'))
-    }
-  }
-}
-
-const buildRequestTree = (collections, requests) => {
-  const map = {}
-  const roots = []
-
-  // 创建集合节点
-  collections.forEach(collection => {
-    map[collection.id] = {
-      ...collection,
-      type: 'collection',
-      children: []
-    }
-  })
-
-  // 构建集合层级关系
-  collections.forEach(collection => {
-    if (collection.parent && map[collection.parent]) {
-      map[collection.parent].children.push(map[collection.id])
-    } else {
-      roots.push(map[collection.id])
-    }
-  })
-
-  // 添加请求到对应集合或根节点
-  requests.forEach(request => {
-    if (map[request.collection]) {
-      map[request.collection].children.push({
-        ...request,
-        type: 'request',
-        id: `request_${request.id}`
-      })
-    } else {
-      // 没有关联集合的请求，直接添加到根节点
-      roots.push({
-        ...request,
-        type: 'request',
-        id: `request_${request.id}`
-      })
-    }
-  })
-
-  return roots
 }
 
 const loadExecutions = async () => {
@@ -1050,7 +744,6 @@ const loadExecutions = async () => {
 }
 
 const onProjectChange = async () => {
-  requestSearchKeyword.value = ''
   // 检查选中的项目是否为HTTP项目
   const selectedProjectData = projects.value.find(p => p.id === selectedProject.value)
   if (selectedProjectData && selectedProjectData.project_type === 'WEBSOCKET') {
@@ -1068,14 +761,29 @@ const onProjectChange = async () => {
   selectedScenarioCase.value = null
   await Promise.all([
     refreshScenarioCaseTree(),
-    loadEnvironments(),
-    loadRequestTree()
+    loadEnvironments()
   ])
 }
 
 const selectScenarioCase = (scenarioCase) => {
   selectedScenarioCase.value = scenarioCase
+  pageEnvironment.value = scenarioCase.environment ?? null
   loadExecutions()
+}
+
+// 顶部环境选择器统一控制当前场景的执行环境
+const onPageEnvironmentChange = async (value) => {
+  rememberEnvironment(value)
+  const target = selectedScenarioCase.value
+  if (!target) return
+  try {
+    await patchScenarioCase(target.id, { environment: value || null })
+    target.environment = value || null
+    const item = scenarioCases.value.find(sc => String(sc.id) === String(target.id))
+    if (item) item.environment = value || null
+  } catch (error) {
+    ElMessage.error(t('apiTesting.common.updateFailed'))
+  }
 }
 
 const handleScenarioCaseAction = async ({ action, scenarioCase }) => {
@@ -1100,7 +808,9 @@ const runScenarioCase = async (scenarioCase) => {
   try {
     const response = await executeScenarioCase(scenarioCase.id)
     currentExecution.value = response.data
+    currentExecutionSteps.value = []
     showExecutionDialog.value = true
+    await loadExecutionSteps(response.data)
     await loadExecutions()
     if (response.data.status === 'FAILED') {
       ElMessage.error(t('apiTesting.messages.error.scenarioCaseExecutionFailed'))
@@ -1142,7 +852,7 @@ const openCreateScenarioCaseDialog = () => {
     description: '',
     folder: null,
     project: selectedProject.value,
-    environment: null
+    environment: pageEnvironment.value || null
   })
   showCreateScenarioCaseDialog.value = true
 }
@@ -1160,14 +870,9 @@ const editScenarioCase = (scenarioCase) => {
 
 const duplicateScenarioCase = async (scenarioCase) => {
   try {
-    const newScenarioCase = {
-      name: `${scenarioCase.name} - ${t('apiTesting.common.copyText')}`,
-      description: scenarioCase.description,
-      folder: scenarioCase.folder || null,
-      project: scenarioCase.project,
-      environment: scenarioCase.environment || null  // 修复：直接使用environment ID
-    }
-    await createScenarioCase(newScenarioCase)
+    await duplicateScenarioCaseApi(scenarioCase.id, {
+      name: `${scenarioCase.name} - ${t('apiTesting.common.copyText')}`
+    })
     ElMessage.success(t('apiTesting.messages.success.copy'))
     await loadScenarioCases()
   } catch (error) {
@@ -1258,128 +963,9 @@ const resetScenarioCaseForm = () => {
     description: '',
     folder: null,
     project: selectedProject.value,
-    environment: null
+    environment: pageEnvironment.value || null
   })
   scenarioCaseFormRef.value?.resetFields()
-}
-
-const showAddRequest = async () => {
-  requestSearchKeyword.value = ''
-  await loadRequestTree()
-  showAddRequestDialog.value = true
-
-  // 等待对话框显示完成后再设置勾选状态
-  nextTick(() => {
-    setTimeout(() => {
-      if (requestTreeRef.value && selectedScenarioCase.value) {
-        // 获取当前已关联的请求ID
-        const existingRequestIds = selectedScenarioCase.value.scenario_case_requests?.map(sr =>
-          `request_${sr.request.id}`
-        ) || []
-
-        // 设置已关联接口为已勾选状态
-        requestTreeRef.value.setCheckedKeys(existingRequestIds, false)
-        console.log('设置已关联接口ID:', existingRequestIds)
-      }
-    }, 200)
-  })
-}
-
-const onRequestCheck = () => {
-  // 请求选择变化处理
-}
-
-const addSelectedRequests = async () => {
-  const checkedNodes = requestTreeRef.value.getCheckedNodes()
-  const requestIds = checkedNodes
-    .filter(node => node.type === 'request')
-    .map(node => node.id.replace('request_', ''))
-
-  if (requestIds.length === 0) {
-    ElMessage.warning(t('apiTesting.messages.warning.selectAtLeastOneRequest'))
-    return
-  }
-
-  addingRequests.value = true
-  try {
-    // 这里需要调用添加请求到场景用例的API
-    await addRequestsToScenarioCase(selectedScenarioCase.value.id, requestIds)
-
-    ElMessage.success(t('apiTesting.messages.success.addSuccess'))
-    showAddRequestDialog.value = false
-    // 重新加载当前场景用例详情
-    await reloadCurrentScenarioCase()
-  } catch (error) {
-    ElMessage.error(t('apiTesting.messages.error.addFailed'))
-  } finally {
-    addingRequests.value = false
-  }
-}
-
-const updateRequestEnabled = async (scenarioCaseRequest) => {
-  try {
-    await updateScenarioCaseRequest(scenarioCaseRequest.id, {
-      enabled: scenarioCaseRequest.enabled
-    })
-  } catch (error) {
-    ElMessage.error(t('apiTesting.messages.error.updateFailed'))
-    scenarioCaseRequest.enabled = !scenarioCaseRequest.enabled
-  }
-}
-
-const editRequestConfig = (scenarioCaseRequest) => {
-  editingScenarioCaseRequest.value = scenarioCaseRequest
-  assertionDraft.value = normalizeAssertions(scenarioCaseRequest.assertions)
-  extractorDraft.value = JSON.parse(JSON.stringify(scenarioCaseRequest.extractors || scenarioCaseRequest.request?.extractors || []))
-  requestConfigTab.value = 'assertions'
-  showAssertionDialog.value = true
-}
-
-const saveScenarioCaseAssertions = async () => {
-  if (!editingScenarioCaseRequest.value) return
-
-  savingAssertions.value = true
-  try {
-    const assertions = assertionDraft.value.map(stripLegacyAssertionValue)
-    const extractors = extractorDraft.value
-    await patchScenarioCaseRequest(editingScenarioCaseRequest.value.id, { assertions, extractors })
-    editingScenarioCaseRequest.value.assertions = assertions
-    editingScenarioCaseRequest.value.extractors = extractors
-    showAssertionDialog.value = false
-    ElMessage.success(t('apiTesting.messages.success.requestConfigSaved'))
-  } catch (error) {
-    ElMessage.error(t('apiTesting.messages.error.saveScenarioCaseRequestConfigFailed'))
-  } finally {
-    savingAssertions.value = false
-  }
-}
-
-const moveRequest = async (scenarioCaseRequest, direction) => {
-  try {
-    await moveScenarioCaseRequest(scenarioCaseRequest.id, direction)
-    await reloadCurrentScenarioCase()
-  } catch (error) {
-    ElMessage.error(t('apiTesting.messages.error.reorderFailed'))
-  }
-}
-
-const removeRequest = async (scenarioCaseRequest) => {
-  try {
-    await ElMessageBox.confirm(t('apiTesting.automation.confirmRemoveRequest'), t('apiTesting.automation.confirmRemove'), {
-      confirmButtonText: t('apiTesting.common.confirm'),
-      cancelButtonText: t('apiTesting.common.cancel'),
-      type: 'warning'
-    })
-
-    await deleteScenarioCaseRequest(scenarioCaseRequest.id)
-    ElMessage.success(t('apiTesting.messages.success.removeSuccess'))
-    // 重新加载当前场景用例详情
-    await reloadCurrentScenarioCase()
-  } catch (error) {
-    if (error !== 'cancel') {
-      ElMessage.error(t('apiTesting.messages.error.removeFailed'))
-    }
-  }
 }
 
 const reloadCurrentScenarioCase = async () => {
@@ -1403,14 +989,33 @@ const reloadCurrentScenarioCase = async () => {
   }
 }
 
-const viewExecutionDetail = (execution) => {
+const viewExecutionDetail = async (execution) => {
   currentExecution.value = execution
+  currentExecutionSteps.value = []
   showExecutionDialog.value = true
+  await loadExecutionSteps(execution)
+}
+
+const loadExecutionSteps = async (execution) => {
+  try {
+    const response = await getExecutionSteps(execution.id)
+    currentExecutionSteps.value = response.data.steps || []
+  } catch (error) {
+    ElMessage.error(t('apiTesting.messages.error.loadExecutionHistory'))
+  }
 }
 
 const formatExecutionResults = (results) => {
   if (!results || !Array.isArray(results)) return []
-  return results
+  return results.map(step => ({
+    name: step.name_snapshot,
+    method: step.request_data?.method,
+    passed: step.status === 'PASSED',
+    status: step.status,
+    status_code: step.response_data?.status_code,
+    response_time: step.response_data?.response_time,
+    error: step.error,
+  }))
 }
 
 onMounted(() => {
@@ -1420,7 +1025,6 @@ onMounted(() => {
 
 <style scoped>
 .automation-testing {
-  padding: 20px;
   height: 100%;
   display: flex;
   flex-direction: column;
@@ -1430,12 +1034,37 @@ onMounted(() => {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 20px;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 12px 20px;
+  background: #fff;
+  border-bottom: 1px solid #e4e7ed;
 }
 
-.header h3 {
+.page-title {
   margin: 0;
+  font-size: 18px;
+  font-weight: 600;
   color: #303133;
+}
+
+.page-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.project-selector {
+  width: 200px;
+}
+
+.environment-selector {
+  width: 180px;
+}
+
+.page-header-actions :deep(.el-button + .el-button) {
+  margin-left: 0;
 }
 
 .content-layout {
@@ -1447,113 +1076,139 @@ onMounted(() => {
 
 .sidebar {
   width: 100%;
+  height: 100%;
   display: flex;
   flex-direction: column;
-  gap: 15px;
-}
-
-.project-selector {
-  background: white;
-  padding: 15px;
-  border-radius: 6px;
-  border: 1px solid #e4e7ed;
-}
-
-.scenario-case-list {
-  background: white;
-  border-radius: 6px;
-  border: 1px solid #e4e7ed;
+  background: #fff;
+  border-right: 1px solid #e4e7ed;
+  box-shadow: 2px 0 6px rgba(0, 0, 0, 0.05);
   overflow: hidden;
 }
 
-.list-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 10px 15px;
-  background: #f5f7fa;
+/* 与接口管理的接口树保持一致：项目选择 + 搜索 + 操作按钮 */
+.sidebar-header {
+  padding: 10px;
   border-bottom: 1px solid #e4e7ed;
-  font-weight: 500;
-}
-.list-actions {
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  gap: 12px;
 }
 
-.create-folder-button {
-  font-size: 16px;
-}
-
-.scenario-case-item {
+.header-actions {
   display: flex;
-  justify-content: space-between;
+  gap: 8px;
   align-items: center;
-  padding: 12px 15px;
-  border-bottom: 1px solid #f5f7fa;
-  cursor: pointer;
-  transition: background-color 0.3s;
+  flex-wrap: wrap;
 }
 
-.scenario-case-item:hover {
-  background: #f5f7fa;
+.header-actions .el-input {
+  flex: 1 1 150px;
+  min-width: 120px;
 }
 
-.scenario-case-item.active {
-  background: #e1f3d8;
-  border-color: #67c23a;
-}
-
-.scenario-case-info {
-  flex: 1;
-}
-
-.scenario-case-name {
-  font-weight: 500;
-  margin-bottom: 4px;
-}
-
-.scenario-case-tree-node {
+.sidebar-actions {
   display: flex;
   align-items: center;
   gap: 6px;
-  flex: 1;
-  padding: 2px 4px;
-}
-.scenario-case-tree-node .del-icon {
+  flex: 0 0 auto;
   margin-left: auto;
-  visibility: hidden;
-  color: #f56c6c;
-  cursor: pointer;
 }
+
+.sidebar-actions :deep(.el-button + .el-button) {
+  margin-left: 0;
+}
+
+.scenario-tree {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 10px;
+}
+
+.scenario-tree :deep(.el-tree-node__content) {
+  min-width: 0;
+  overflow: hidden;
+}
+
 .folder-context-menu {
   position: fixed;
-  z-index: 1000;
+  z-index: 3000;
   min-width: 140px;
   margin: 0;
   padding: 8px 0;
   list-style: none;
-  background: #fff;
+  background: var(--el-bg-color-overlay, #fff);
   border: 1px solid #e9ecef;
-  border-radius: 6px;
+  border-radius: 8px;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
 }
+
 .folder-context-menu li {
   padding: 10px 16px;
-  color: #303133;
   font-size: 14px;
+  color: #303133;
   cursor: pointer;
+  transition: all 0.2s ease;
 }
+
 .folder-context-menu li:hover {
-  background: #f5f7fa;
+  background: var(--el-fill-color-light);
+  color: var(--el-color-primary);
+  font-weight: 500;
 }
-.folder-context-menu li.danger {
-  color: #f56c6c;
+
+.folder-context-menu li.danger { color: var(--el-color-danger); }
+.folder-context-menu li.danger:hover { background: var(--el-color-danger-light-9); color: var(--el-color-danger); }
+
+.scenario-case-tree-node {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  padding: 4px 0;
 }
-.scenario-case-tree-node:hover .del-icon {
-  visibility: visible;
+
+.scenario-case-tree-node .node-icon {
+  font-size: 16px;
+  color: #606266;
+  flex-shrink: 0;
 }
-.batch-bar {
-  padding: 6px 0;
+
+.scenario-case-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 14px;
+  color: #303133;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scenario-case-tree-node:hover .scenario-case-name {
+  color: #409eff;
+}
+
+.scenario-case-tree-node.active .scenario-case-name {
+  color: var(--el-color-primary);
+}
+
+.scenario-case-tree-node .node-actions {
+  display: none;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.scenario-case-tree-node:hover .node-actions,
+.scenario-case-tree-node.active .node-actions {
+  display: inline-flex;
+}
+
+.scenario-case-tree-node .node-actions :deep(.el-button) {
+  margin-left: 0;
+  padding: 2px;
 }
 .assertion-row {
   display: flex;
@@ -1571,8 +1226,6 @@ onMounted(() => {
   flex: 1;
   min-width: 0;
   background: white;
-  border-radius: 6px;
-  border: 1px solid #e4e7ed;
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -1588,10 +1241,17 @@ onMounted(() => {
 .scenario-case-detail {
   flex: 1;
   min-height: 0;
-  padding: 20px;
+  padding: 10px;
   overflow: hidden;
   display: flex;
   flex-direction: column;
+}
+
+/* 编排编辑器占满详情区，内部自行滚动 */
+.scenario-case-detail :deep(.scenario-editor) {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: auto;
 }
 
 .scenario-case-header {

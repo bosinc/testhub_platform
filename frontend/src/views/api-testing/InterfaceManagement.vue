@@ -33,7 +33,7 @@
               <el-button type="success" size="small" @click="createEmptyRequest" :title="$t('apiTesting.interface.addInterface')">
                 <el-icon><Plus /></el-icon>
               </el-button>
-              <el-button size="small" @click="openBatchImport" :title="$t('apiTesting.interface.importBatch.importTitle')">
+              <el-button size="small" @click="openImportDialog()" :title="$t('apiTesting.interface.importBatch.title')">
                 <el-icon><Upload /></el-icon>
                 {{ $t('apiTesting.common.import') }}
               </el-button>
@@ -113,69 +113,52 @@
         </div>
 
         <div v-else class="request-detail request-editor-card">
-          <!-- 请求基本信息 -->
-          <RequestEditor
+          <!-- 环境选择独立一行：切换接口时只更新下方请求区，环境保持不变 -->
+          <div class="environment-row">
+            <el-select v-model="selectedEnvironment" :placeholder="$t('apiTesting.scenarioEditor.selectEnvironment')" class="env-select" @change="rememberEnvironment">
+              <el-option :label="$t('apiTesting.common.noEnvironment')" value="" />
+              <el-option
+                v-for="env in environments"
+                :key="env.id"
+                :label="env.name"
+                :value="env.id"
+              />
+            </el-select>
+          </div>
+
+          <!-- 公共请求 + 响应组件 -->
+          <RequestResponsePanel
             ref="requestEditorRef"
             :key="requestEditorKey"
             v-model="requestDraft"
             :environment="currentEnvironment"
+            :response="response"
             :extraction-results="response?.extraction_results || []"
             :busy="sending || saving"
             :ws-status="websocketConnectionStatus"
             @send="sendRequest"
-            @preview="confirmUrlPreview"
             @ws-connect="toggleWebSocketConnection"
             @ws-disconnect="disconnectWebSocket"
             @ws-send="sendWebSocketMessage"
             @data-factory="openEditorDataFactory"
             @variable-helper="openEditorVariableHelper"
           >
-            <template #environment>
-              <el-select v-model="selectedEnvironment" :placeholder="$t('apiTesting.interface.environment')" class="env-select">
-                <el-option :label="$t('apiTesting.common.noEnvironment')" value="" />
-                <el-option
-                  v-for="env in environments"
-                  :key="env.id"
-                  :label="env.name"
-                  :value="env.id"
-                />
-              </el-select>
-            </template>
             <template #meta>
-            <div class="request-meta">
-              <el-input
-                v-model="selectedRequest.name"
-                :placeholder="$t('apiTesting.interface.requestName')"
-                size="small"
-                class="name-input"
-              />
-              <div class="action-buttons">
-                <el-button size="small" @click="saveRequest" :loading="saving" ref="saveButtonRef">
-                  {{ $t('apiTesting.common.save') }}
-                </el-button>
-                <el-dropdown split-button type="default" size="small" @click="importCurl">
-                  {{ $t('apiTesting.common.import') }}
-                  <template #dropdown>
-                    <el-dropdown-menu>
-                      <el-dropdown-item @click="importCurl">{{ $t('apiTesting.interface.importCurl') }}</el-dropdown-item>
-                      <el-dropdown-item @click="exportRequest">{{ $t('apiTesting.interface.exportCurl') }}</el-dropdown-item>
-                    </el-dropdown-menu>
-                  </template>
-                </el-dropdown>
-                <el-dropdown split-button type="default" size="small" @click="generateCode('javascript')">
-                  {{ $t('apiTesting.interface.generateCode') }}
-                  <template #dropdown>
-                    <el-dropdown-menu>
-                      <el-dropdown-item @click="generateCode('javascript')">JavaScript</el-dropdown-item>
-                      <el-dropdown-item @click="generateCode('python')">Python</el-dropdown-item>
-                      <el-dropdown-item @click="generateCode('java')">Java</el-dropdown-item>
-                      <el-dropdown-item @click="generateCode('curl')">cURL</el-dropdown-item>
-                    </el-dropdown-menu>
-                  </template>
-                </el-dropdown>
+              <!-- 接口描述单独占一行 -->
+              <div class="request-meta">
+                <el-input
+                  v-model="selectedRequest.name"
+                  :placeholder="$t('apiTesting.interface.requestName')"
+                  class="name-input"
+                />
               </div>
-            </div>
             </template>
+            <template #request-actions>
+              <el-button @click="saveRequest" :loading="saving" ref="saveButtonRef">
+                {{ $t('apiTesting.common.save') }}
+              </el-button>
+            </template>
+            <!-- 暂时隐藏 WebSocket 连接和消息调试入口，保留原实现便于后续恢复。
             <template #ws-message="{ send }">
                 <div class="message-container">
                   <div class="message-input-section">
@@ -227,7 +210,7 @@
                     </div>
                   </div>
 
-                  <!-- WebSocket消息历史记录 -->
+                  WebSocket消息历史记录
                   <div class="websocket-response-section" v-if="websocketMessages.length > 0">
                     <h3>{{ $t('apiTesting.interface.messageHistory') }}</h3>
                     <div class="websocket-messages">
@@ -258,10 +241,8 @@
                   </div>
                 </div>
             </template>
-          </RequestEditor>
-
-          <!-- 响应区域 -->
-          <ResponseViewer :response="response" />
+            -->
+          </RequestResponsePanel>
         </div>
           </div>
         </template>
@@ -333,12 +314,20 @@
         visibility: contextMenuReady ? 'visible' : 'hidden'
       }"
     >
-      <li @click="addRequest">{{ $t('apiTesting.interface.contextMenu.addRequest') }}</li>
-      <li @click="addCollection">{{ $t('apiTesting.interface.contextMenu.addSubCollection') }}</li>
-      <li v-if="rightClickedNode?.type === 'collection'" @click="openCollectionImport">{{ $t('apiTesting.interface.contextMenu.import') }}</li>
-      <li v-if="rightClickedNode?.type === 'collection'" @click="exportCollection">{{ $t('apiTesting.interface.contextMenu.export') }}</li>
-      <li @click="editNode">{{ $t('apiTesting.interface.contextMenu.edit') }}</li>
-      <li @click="deleteNode">{{ $t('apiTesting.interface.contextMenu.delete') }}</li>
+      <template v-if="rightClickedNode?.type === 'collection'">
+        <li @click="addRequest">{{ $t('apiTesting.interface.contextMenu.addRequest') }}</li>
+        <li @click="addCollection">{{ $t('apiTesting.interface.contextMenu.addSubCollection') }}</li>
+        <li @click="openCollectionImport">{{ $t('apiTesting.interface.contextMenu.import') }}</li>
+        <li @click="exportCollection">{{ $t('apiTesting.interface.contextMenu.export') }}</li>
+      </template>
+      <template v-else-if="rightClickedNode?.type === 'request'">
+        <li @click="exportRequest">{{ $t('apiTesting.interface.exportCurl') }}</li>
+        <li @click="generateCode('javascript')">{{ $t('apiTesting.interface.generateCode') }}</li>
+      </template>
+      <template v-if="rightClickedNode?.type === 'collection'">
+        <li @click="editNode">{{ $t('apiTesting.interface.contextMenu.edit') }}</li>
+        <li @click="deleteNode">{{ $t('apiTesting.interface.contextMenu.delete') }}</li>
+      </template>
     </ul>
 
     <!-- 数据工厂选择器 -->
@@ -388,114 +377,126 @@
       </el-tabs>
     </el-dialog>
 
-    <!-- CURL导入对话框 -->
+    <!-- 导入对话框：Swagger / Postman 与 cURL 两个 Tab -->
     <el-dialog
-      v-model="showCurlImportDialog"
-      :title="$t('apiTesting.interface.importCurlCommand')"
+      v-model="showImportDialog"
+      :title="$t('apiTesting.interface.importBatch.title')"
       width="800px"
       :close-on-click-modal="false"
-    >
-      <el-input
-        v-model="curlCommand"
-        type="textarea"
-        :rows="15"
-        :placeholder="$t('apiTesting.interface.pasteCurlCommand')"
-      />
-      <div v-if="curlPreview" class="curl-preview">
-        <p>{{ $t('apiTesting.requestEditor.hostSuggestion') }} <code>{{ curlPreview.model.baseURL }}</code></p>
-        <p>{{ $t('apiTesting.requestEditor.importPath') }} <code>{{ curlPreview.draft.url }}</code></p>
-        <p>{{ $t('apiTesting.requestEditor.curlPreviewHint') }}</p>
-        <pre>{{ JSON.stringify(curlPreview.draft, null, 2) }}</pre>
-      </div>
-      <template #footer>
-        <el-button @click="closeCurlImportDialog">{{ $t('apiTesting.common.cancel') }}</el-button>
-        <el-button @click="parseAndImportCurl">{{ $t('apiTesting.requestEditor.preview') }}</el-button>
-        <el-button v-if="curlPreview" type="primary" @click="applyCurlPreview">{{ $t('apiTesting.interface.parseAndImport') }}</el-button>
-      </template>
-    </el-dialog>
-
-    <el-dialog
-      v-model="showBatchImportDialog"
-      :title="$t('apiTesting.interface.importBatch.title')"
-      width="680px"
-      :close-on-click-modal="false"
       destroy-on-close
-      @closed="resetBatchImport"
+      @closed="resetImportDialog"
     >
-      <template v-if="!importPreview">
-        <el-form label-width="76px">
-          <el-form-item :label="$t('apiTesting.interface.importBatch.format')">
-            <el-radio-group v-model="importFormat" size="small">
-              <el-radio-button value="openapi">{{ $t('apiTesting.interface.importBatch.openapi') }}</el-radio-button>
-              <el-radio-button value="postman">{{ $t('apiTesting.interface.importBatch.postman') }}</el-radio-button>
-            </el-radio-group>
-          </el-form-item>
-          <el-form-item :label="$t('apiTesting.interface.importBatch.file')">
-            <el-upload
-              ref="batchImportUploadRef"
-              drag
-              :auto-upload="false"
-              :limit="1"
-              accept=".json,.yaml,.yml"
-              :on-change="onBatchImportFileChange"
-              :on-remove="onBatchImportFileRemove"
-            >
-              <el-icon class="el-icon--upload"><UploadFilled /></el-icon>
-              <div class="el-upload__text">{{ $t('apiTesting.interface.importBatch.dropFile') }}<em>{{ $t('apiTesting.interface.importBatch.clickUpload') }}</em></div>
-              <template #tip>
-                <div class="el-upload__tip">{{ $t('apiTesting.interface.importBatch.fileTip') }}</div>
-              </template>
-            </el-upload>
-          </el-form-item>
-          <el-form-item :label="$t('apiTesting.interface.importBatch.targetProject')">
-            <el-select v-model="importProjectId" :placeholder="$t('apiTesting.interface.importBatch.selectProject')" :disabled="Boolean(importCollectionId)" style="width: 100%">
-              <el-option v-for="project in projects" :key="project.id" :label="project.name" :value="project.id" />
-            </el-select>
-          </el-form-item>
-          <el-form-item v-if="importCollectionId" :label="$t('apiTesting.interface.importBatch.targetCollection')">
-            <el-input :model-value="importTargetCollectionName" readonly />
-          </el-form-item>
-        </el-form>
-      </template>
-      <template v-else>
-        <div class="import-preview-summary">
-          <el-icon><InfoFilled /></el-icon>
-          <span>{{ $t('apiTesting.interface.importBatch.parsed', { count: importPreview.total }) }}</span>
-          <el-button link type="primary" @click="returnToImportFile">{{ $t('apiTesting.interface.importBatch.reselect') }}</el-button>
-        </div>
-        <div class="import-preview-list">
-          <section v-for="group in importPreview.groups" :key="group.name" class="import-preview-group">
-            <header>
-              <el-checkbox
-                :model-value="isImportGroupSelected(group)"
-                :indeterminate="isImportGroupIndeterminate(group)"
-                @change="toggleImportGroup(group, $event)"
-              >
-                {{ group.name }}
-              </el-checkbox>
-              <span class="import-group-count">{{ group.items.length }}</span>
-            </header>
-            <el-checkbox-group v-model="selectedImportIds">
-              <div v-for="item in group.items" :key="item.id" class="import-preview-item">
-                <el-checkbox :value="item.id" />
-                <el-tag size="small" type="warning" effect="plain">{{ item.method }}</el-tag>
-                <span class="import-item-name" :title="importItemName(item)">{{ importItemName(item) }}</span>
-                <span class="import-item-url" :title="importItemPath(item) || $t('apiTesting.interface.importBatch.urlMissing')">
-                  {{ importItemPath(item) || $t('apiTesting.interface.importBatch.urlMissing') }}
-                </span>
-              </div>
-            </el-checkbox-group>
-          </section>
-        </div>
-        <div class="import-selection-footer">
-          <el-checkbox :model-value="allImportSelected" @change="toggleAllImportItems">{{ $t('apiTesting.interface.importBatch.selectAll') }}</el-checkbox>
-          <span>{{ $t('apiTesting.interface.importBatch.selected', { selected: selectedImportIds.length, total: importPreview.total }) }}</span>
-        </div>
-      </template>
+      <el-tabs v-model="importTab">
+        <el-tab-pane :label="$t('apiTesting.interface.importBatch.importTitle')" name="batch">
+          <template v-if="!importPreview">
+            <el-form label-width="76px">
+              <el-form-item :label="$t('apiTesting.interface.importBatch.format')">
+                <el-radio-group v-model="importFormat" size="small">
+                  <el-radio-button value="openapi">{{ $t('apiTesting.interface.importBatch.openapi') }}</el-radio-button>
+                  <el-radio-button value="postman">{{ $t('apiTesting.interface.importBatch.postman') }}</el-radio-button>
+                </el-radio-group>
+              </el-form-item>
+              <el-form-item :label="$t('apiTesting.interface.importBatch.file')">
+                <el-upload
+                  ref="batchImportUploadRef"
+                  drag
+                  :auto-upload="false"
+                  :limit="1"
+                  accept=".json,.yaml,.yml"
+                  :on-change="onBatchImportFileChange"
+                  :on-remove="onBatchImportFileRemove"
+                >
+                  <el-icon class="el-icon--upload"><UploadFilled /></el-icon>
+                  <div class="el-upload__text">{{ $t('apiTesting.interface.importBatch.dropFile') }}<em>{{ $t('apiTesting.interface.importBatch.clickUpload') }}</em></div>
+                  <template #tip>
+                    <div class="el-upload__tip">{{ $t('apiTesting.interface.importBatch.fileTip') }}</div>
+                  </template>
+                </el-upload>
+              </el-form-item>
+              <el-form-item :label="$t('apiTesting.interface.importBatch.targetProject')">
+                <el-select v-model="importProjectId" :placeholder="$t('apiTesting.interface.importBatch.selectProject')" :disabled="Boolean(importCollectionId)" style="width: 100%">
+                  <el-option v-for="project in projects" :key="project.id" :label="project.name" :value="project.id" />
+                </el-select>
+              </el-form-item>
+              <el-form-item v-if="importCollectionId" :label="$t('apiTesting.interface.importBatch.targetCollection')">
+                <el-input :model-value="importTargetCollectionName" readonly />
+              </el-form-item>
+            </el-form>
+          </template>
+          <template v-else>
+            <div class="import-preview-summary">
+              <el-icon><InfoFilled /></el-icon>
+              <span>{{ $t('apiTesting.interface.importBatch.parsed', { count: importPreview.total }) }}</span>
+              <el-button link type="primary" @click="returnToImportFile">{{ $t('apiTesting.interface.importBatch.reselect') }}</el-button>
+            </div>
+            <div class="import-preview-list">
+              <section v-for="group in importPreview.groups" :key="group.name" class="import-preview-group">
+                <header>
+                  <el-checkbox
+                    :model-value="isImportGroupSelected(group)"
+                    :indeterminate="isImportGroupIndeterminate(group)"
+                    @change="toggleImportGroup(group, $event)"
+                  >
+                    {{ group.name }}
+                  </el-checkbox>
+                  <span class="import-group-count">{{ group.items.length }}</span>
+                </header>
+                <el-checkbox-group v-model="selectedImportIds">
+                  <div v-for="item in group.items" :key="item.id" class="import-preview-item">
+                    <el-checkbox :value="item.id" />
+                    <el-tag size="small" type="warning" effect="plain">{{ item.method }}</el-tag>
+                    <span class="import-item-name" :title="importItemName(item)">{{ importItemName(item) }}</span>
+                    <span class="import-item-url" :title="importItemPath(item) || $t('apiTesting.interface.importBatch.urlMissing')">
+                      {{ importItemPath(item) || $t('apiTesting.interface.importBatch.urlMissing') }}
+                    </span>
+                  </div>
+                </el-checkbox-group>
+              </section>
+            </div>
+            <div class="import-selection-footer">
+              <el-checkbox :model-value="allImportSelected" @change="toggleAllImportItems">{{ $t('apiTesting.interface.importBatch.selectAll') }}</el-checkbox>
+              <span>{{ $t('apiTesting.interface.importBatch.selected', { selected: selectedImportIds.length, total: importPreview.total }) }}</span>
+            </div>
+          </template>
+        </el-tab-pane>
+
+        <el-tab-pane :label="$t('apiTesting.interface.importCurl')" name="curl">
+          <el-form label-width="76px" class="curl-import-form">
+            <el-form-item :label="$t('apiTesting.interface.importBatch.targetCollection')">
+              <el-tree-select
+                v-model="curlCollectionId"
+                :data="collectionSelectOptions"
+                node-key="id"
+                check-strictly
+                clearable
+                default-expand-all
+                :render-after-expand="false"
+                :placeholder="$t('apiTesting.interface.importBatch.selectCollection')"
+                style="width: 100%"
+              />
+            </el-form-item>
+          </el-form>
+          <CurlImportPanel
+            ref="curlImportPanelRef"
+            v-model="curlCommand"
+            :rows="12"
+            show-details
+            :placeholder="$t('apiTesting.interface.pasteCurlCommand')"
+            @parsed="curlPreview = $event"
+          />
+        </el-tab-pane>
+      </el-tabs>
+
       <template #footer>
-        <el-button @click="showBatchImportDialog = false">{{ $t('apiTesting.interface.cancel') }}</el-button>
-        <el-button v-if="!importPreview" type="primary" :loading="importLoading" :disabled="!importFile || !importProjectId" @click="parseBatchImport">{{ $t('apiTesting.interface.importBatch.preview') }}</el-button>
-        <el-button v-else type="primary" :loading="importLoading" :disabled="!selectedImportIds.length" @click="submitBatchImport">{{ $t('apiTesting.interface.importBatch.importSelected') }}</el-button>
+        <el-button @click="showImportDialog = false">{{ $t('apiTesting.common.cancel') }}</el-button>
+        <template v-if="importTab === 'batch'">
+          <el-button v-if="!importPreview" type="primary" :loading="importLoading" :disabled="!importFile || !importProjectId" @click="parseBatchImport">{{ $t('apiTesting.interface.importBatch.preview') }}</el-button>
+          <el-button v-else type="primary" :loading="importLoading" :disabled="!selectedImportIds.length" @click="submitBatchImport">{{ $t('apiTesting.interface.importBatch.importSelected') }}</el-button>
+        </template>
+        <template v-else>
+          <el-button @click="parseAndImportCurl">{{ $t('apiTesting.requestEditor.preview') }}</el-button>
+          <el-button v-if="curlPreview" type="primary" :loading="curlImporting" @click="applyCurlPreview">{{ $t('apiTesting.interface.parseAndImport') }}</el-button>
+        </template>
       </template>
     </el-dialog>
 
@@ -558,13 +559,14 @@ import { ref, reactive, computed, onMounted, onBeforeUnmount, nextTick, watch } 
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Folder, Document, Search, CopyDocument, Delete, Upload, UploadFilled, InfoFilled } from '@element-plus/icons-vue'
 import api from '@/utils/api'
-import RequestEditor from '@/components/api-testing/RequestEditor.vue'
-import ResponseViewer from '@/components/api-testing/ResponseViewer.vue'
-import { cloneDraft, createRequestDraft, serializeRequestDraft, previewRequestUrl, toCodegenModel, curlModelToDraft } from '@/utils/requestDraft'
+import RequestResponsePanel from '@/components/api-testing/RequestResponsePanel.vue'
+import CurlImportPanel from '@/components/api-testing/CurlImportPanel.vue'
+import { cloneDraft, createRequestDraft, serializeRequestDraft, previewRequestUrl, toCodegenModel } from '@/utils/requestDraft'
 import DataFactorySelector from '@/components/DataFactorySelector.vue'
 import { RequestModelParser } from '@/utils/requestModel'
 import { getVariableFunctions } from '@/api/data-factory'
 import { getPreferredProjectId, useRememberedProject } from '@/utils/projectSelection'
+import { findRememberedEnvironment, rememberEnvironment } from '@/utils/environmentPreference'
 import { CodeGenerator } from '@/utils/codeGenerator'
 import { useI18n } from 'vue-i18n'
 
@@ -657,21 +659,58 @@ const helperTarget = ref(null)
 const variableCategories = ref([])
 const loading = ref(false)
 
+// 导入弹窗：Swagger / Postman 与 cURL 两个 Tab 共用
+const showImportDialog = ref(false)
+const importTab = ref('batch')
+
 // CURL导入相关
-const showCurlImportDialog = ref(false)
 const curlCommand = ref('')
 const curlPreview = ref(null)
-const applyCurlPreview = () => {
-  if (!curlPreview.value) return
-  if (!selectedRequest.value) createEmptyRequest()
-  if (!selectedRequest.value) return
-  requestDraft.value = curlPreview.value.draft
-  showCurlImportDialog.value = false
-  ElMessage.success(t('apiTesting.interface.imported'))
+const curlCollectionId = ref(null)
+const curlImporting = ref(false)
+const curlImportPanelRef = ref()
+
+// 导入弹窗里的目录选择只展示集合节点，去掉树中的接口节点。
+const collectionSelectOptions = computed(() => {
+  const toOptions = (nodes) => (nodes || [])
+    .filter(item => item.type === 'collection')
+    .map(item => ({
+      id: item.id,
+      label: item.name,
+      children: toOptions(item.children)
+    }))
+  return toOptions(collections.value)
+})
+
+const applyCurlPreview = async () => {
+  if (!curlPreview.value || curlImporting.value) return
+  const collectionId = curlCollectionId.value || null
+  const targetKey = collectionId ? `collection:${collectionId}` : null
+  try {
+    curlImporting.value = true
+    const model = curlPreview.value.model
+    const draft = await serializeRequestDraft(curlPreview.value.draft)
+    const fallbackName = `${model.method || draft.method || 'GET'} ${model.path || ''}`.trim()
+    await api.post('/api-testing/requests/', {
+      ...draft,
+      name: (fallbackName || t('apiTesting.interface.unnamedRequest')).slice(0, 200),
+      collection: collectionId,
+      project: selectedProject.value
+    })
+    ElMessage.success(t('apiTesting.interface.imported'))
+    showImportDialog.value = false
+    await loadCollections(selectedProject.value)
+    // 展开目标目录，保证导入结果立即可见。
+    if (targetKey && !expandedKeys.value.includes(targetKey)) expandedKeys.value.push(targetKey)
+  } catch (error) {
+    ElMessage.error(error.response?.data?.error || requestErrorMessage(error) || t('apiTesting.interface.importBatch.importFailed'))
+    console.error('导入CURL失败:', error)
+  } finally {
+    curlImporting.value = false
+  }
 }
 
 // Swagger / Postman 批量导入
-const showBatchImportDialog = ref(false)
 const batchImportUploadRef = ref(null)
 const importFormat = ref('openapi')
 const importFile = ref(null)
@@ -697,15 +736,18 @@ const importTargetCollectionName = computed(() => {
   return collection?.name || ''
 })
 
-const openBatchImport = (targetCollection = null) => {
+const openImportDialog = (tab = 'batch', targetCollection = null) => {
+  importTab.value = tab
   importProjectId.value = selectedProject.value
   importCollectionId.value = targetCollection?.id || null
-  showBatchImportDialog.value = true
+  // cURL 导入默认落到右键/当前请求所在的目录，仍可在弹窗内修改。
+  curlCollectionId.value = targetCollection?.id || selectedRequest.value?.collection || null
+  showImportDialog.value = true
 }
 
 const openCollectionImport = () => {
   if (rightClickedNode.value?.type !== 'collection') return
-  openBatchImport(rightClickedNode.value)
+  openImportDialog('batch', rightClickedNode.value)
   showContextMenu.value = false
 }
 
@@ -724,6 +766,15 @@ const resetBatchImport = () => {
   selectedImportIds.value = []
   importLoading.value = false
   batchImportUploadRef.value?.clearFiles()
+}
+
+const resetImportDialog = () => {
+  resetBatchImport()
+  curlCommand.value = ''
+  curlPreview.value = null
+  curlCollectionId.value = null
+  curlImporting.value = false
+  importTab.value = 'batch'
 }
 
 const returnToImportFile = () => {
@@ -788,7 +839,7 @@ const submitBatchImport = async () => {
   try {
     const response = await postImportFile('/api-testing/requests/import-batch/', true)
     ElMessage.success(t('apiTesting.interface.importBatch.imported', { count: response.data.imported }))
-    showBatchImportDialog.value = false
+    showImportDialog.value = false
     if (Number(importProjectId.value) === Number(selectedProject.value)) {
       await loadCollections(selectedProject.value)
     }
@@ -861,9 +912,14 @@ const onProjectChange = async (projectId) => {
 
 const loadProjects = async () => {
   try {
-    const response = await api.get('/api-testing/projects/')
+    const response = await api.get('/api-testing/projects/', {
+      // 暂时只展示 HTTP 项目，WebSocket 功能恢复时移除此过滤条件。
+      params: { project_type: 'HTTP' }
+    })
     // 后端可能返回分页格式 { results: [...] } 或直接返回数组
-    projects.value = response.data.results || response.data || []
+    // 暂时隐藏 WebSocket 项目入口；保留后端能力，恢复时移除此过滤。
+    projects.value = (response.data.results || response.data || [])
+      .filter(project => project.project_type !== 'WEBSOCKET')
     if (projects.value.length > 0) {
       selectedProject.value = getPreferredProjectId(projects.value, projects.value[0].id)
     }
@@ -904,6 +960,9 @@ const loadEnvironments = async (projectId) => {
       env.scope === 'GLOBAL' ||
       (env.scope === 'LOCAL' && (!projectId || env.project === projectId))
     )
+    // 恢复用户上次选择的环境（不在当前项目/全局可用范围内则忽略）
+    const remembered = findRememberedEnvironment(environments.value)
+    if (remembered) selectedEnvironment.value = remembered.id
   } catch (error) {
     ElMessage.error(t('apiTesting.interface.loadEnvironmentsFailed'))
     console.error('加载环境失败:', error)
@@ -1068,10 +1127,12 @@ const onNodeClick = async (data) => {
 
 const onNodeRightClick = async (event, node) => {
   event.preventDefault()
-  if (node.type !== 'collection') {
+  if (!['collection', 'request'].includes(node.type)) {
     showContextMenu.value = false
     return
   }
+  // 接口节点的右键菜单基于当前请求详情（导出 / 生成代码），先载入该接口
+  if (node.type === 'request') await onNodeClick(node)
 
   contextMenuReady.value = false
   showContextMenu.value = true
@@ -1141,10 +1202,6 @@ const closeCreateCollectionDialog = () => {
 
 const closeEditCollectionDialog = () => {
   showEditCollectionDialog.value = false
-}
-
-const closeCurlImportDialog = () => {
-  showCurlImportDialog.value = false
 }
 
 const closeCodeGenerateDialog = () => {
@@ -1275,29 +1332,72 @@ const copyRequest = async (node) => {
   }
 }
 
-// 仅接口节点可拖拽（集合不可拖，避免改动集合树结构）
-const allowDrag = (node) => node.data.type === 'request'
+// 集合和接口都支持拖拽：集合可改变父目录，接口可在目录间移动，同级拖拽会持久化顺序。
+const allowDrag = () => true
 
-// 仅允许把接口“放进”某个集合节点，不实现同集合内 prev/next 重排持久化
-const allowDrop = (draggingNode, dropNode, type) =>
-  type === 'inner' && dropNode?.data?.type === 'collection'
-
-const handleDrop = async (draggingNode, dropNode) => {
-  const requestId = draggingNode.data.id
-  const targetCollectionId = dropNode.data.id
-  // 同集合：el-tree 已乐观移动，统一 reload 回到服务端真实状态
-  if (draggingNode.data.collection === targetCollectionId) {
-    await loadCollections(selectedProject.value)
-    return
+const isDescendantNode = (ancestorNode, node) => {
+  let parent = node.parent
+  while (parent) {
+    if (parent.data === ancestorNode.data) return true
+    parent = parent.parent
   }
+  return false
+}
+
+const allowDrop = (draggingNode, dropNode, type) => {
+  const dragging = draggingNode.data
+  const target = dropNode?.data
+  if (!target || dragging === target) return false
+
+  if (dragging.type === 'collection') {
+    // 目录只能落在目录上：inner 表示改变父目录，prev/next 表示同级排序。
+    if (target.type !== 'collection') return false
+    return !isDescendantNode(draggingNode, dropNode)
+  }
+
+  // 接口：inner 表示放入目录，prev/next 表示与同级接口排序。
+  if (type === 'inner') return target.type === 'collection'
+  return target.type === 'request'
+}
+
+const handleDrop = async (draggingNode, dropNode, dropType) => {
+  const node = draggingNode.data
+  if (!node || !dropNode) return
+
+  // el-tree 在触发 node-drop 前已 remove() 被拖节点（其 parent 会被置为 null），
+  // 再用数据副本插入新位置，所以目标父级只能从 dropNode/dropType 推导。
+  const parentNode = dropType === 'inner' ? dropNode : dropNode.parent
+  if (!parentNode) return
+
+  const siblings = Array.isArray(parentNode.data)
+    ? parentNode.data
+    : (parentNode.data.children || [])
+  const parentId = parentNode.level === 0 ? null : parentNode.data.id
+  const parentKey = parentNode.level === 0 ? null : parentNode.data.treeKey
+  const siblingIds = siblings
+    .filter(item => item.type === node.type)
+    .map(item => item.id)
+
   try {
-    await api.patch(`/api-testing/requests/${requestId}/`, { collection: targetCollectionId })
+    if (node.type === 'collection') {
+      await api.post(`/api-testing/collections/${node.id}/move/`, {
+        parent: parentId,
+        collection_ids: siblingIds
+      })
+    } else {
+      await api.post(`/api-testing/requests/${node.id}/move/`, {
+        collection: parentId,
+        request_ids: siblingIds
+      })
+    }
     ElMessage.success(t('apiTesting.interface.moved'))
+    // 展开新的父目录，保证移动后的节点仍然可见。
+    if (parentKey && !expandedKeys.value.includes(parentKey)) expandedKeys.value.push(parentKey)
   } catch (error) {
     ElMessage.error(t('apiTesting.interface.moveFailed'))
     console.error('移动失败:', error)
   } finally {
-    // el-tree 已乐观改了本地 collections，无论成败都用服务端状态覆盖，避免脏数据
+    // el-tree 已乐观移动，无论成败都用服务端顺序重建树，避免脏数据。
     await loadCollections(selectedProject.value)
   }
 }
@@ -1365,15 +1465,6 @@ const getBackendPreview = async () => {
   const { data } = await api.post(`/api-testing/requests/${id}/preview-url/`, { ...draft, environment_id: environmentId })
   if (key !== requestEditorKey.value || String(environmentId) !== String(selectedEnvironment.value) || snapshot !== JSON.stringify(requestDraft.value)) return null
   return data.url
-}
-
-const confirmUrlPreview = async () => {
-  try {
-    const url = await getBackendPreview()
-    if (url) await ElMessageBox.alert(url, t('apiTesting.requestEditor.confirmPreview'))
-  } catch (error) {
-    ElMessage.error(error.response?.data?.error || requestErrorMessage(error) || t('apiTesting.requestEditor.previewFailed'))
-  }
 }
 
 const sendRequest = async () => {
@@ -1463,32 +1554,8 @@ const updateCollection = async () => {
   }
 }
 
-const importCurl = () => {
-  // 清空上次的 curl 命令
-  curlCommand.value = ''
-  curlPreview.value = null
-  showCurlImportDialog.value = true
-}
-
-const parseAndImportCurl = async () => {
-  if (!curlCommand.value.trim()) {
-  ElMessage.warning(t('apiTesting.interface.curlRequired'))
-    return
-  }
-
-  try {
-    const requestModel = await RequestModelParser.parseCurl(curlCommand.value)
-
-    if (!selectedRequest.value) {
-      createEmptyRequest()
-    }
-
-    // Import is explicit; the host is only a suggestion and never updates an environment.
-    curlPreview.value = { model: requestModel, draft: curlModelToDraft(requestModel) }
-  } catch (error) {
-    ElMessage.error(t('apiTesting.interface.curlParseFailed'))
-    console.error('解析CURL命令失败:', error)
-  }
+const parseAndImportCurl = () => {
+  curlImportPanelRef.value?.parse()
 }
 
 // 辅助函数：将对象格式转换为数组格式
@@ -1933,7 +2000,7 @@ const useLocalVariableCategories = () => {
   gap: 12px;
   align-items: stretch;
   position: relative;
-  background: #f8f9fa;
+  background: #ffffff;
 }
 
 .header-actions {
@@ -2128,7 +2195,12 @@ const useLocalVariableCategories = () => {
 
 .node-actions .el-button {
   padding: 2px;
+  margin-left: 0;
   color: #909399;
+}
+
+.node-actions .el-button + .el-button {
+  margin-left: 0;
 }
 
 .node-actions .el-button:hover {
@@ -2202,7 +2274,7 @@ const useLocalVariableCategories = () => {
   display: flex;
   flex-direction: column;
   overflow: auto;
-  background: #f8f9fa;
+  background: #ffffff;
 }
 
 .empty-state {
@@ -2210,27 +2282,33 @@ const useLocalVariableCategories = () => {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: #fafafa;
+  background: #ffffff;
 }
 
 .request-detail {
   flex: 1;
   display: flex;
   flex-direction: column;
-  padding: 24px;
-  gap: 20px;
+  gap: 0;
+  /* 与左侧栏保持同样的内边距，环境选择器在顶部区域内垂直居中 */
+  padding: 10px;
+}
+
+.environment-row {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  height: 32px;
+  margin-bottom: 10px;
 }
 
 .env-select {
-  width: 128px;
-  flex: 0 0 128px;
+  width: 180px;
 }
 
 .env-select .el-select {
   border-radius: 6px;
 }
-
-.curl-preview pre { max-height: 280px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
 
 /* 请求元数据 */
 .request-meta {
@@ -2304,8 +2382,8 @@ const useLocalVariableCategories = () => {
 }
 
 .context-menu li:hover {
-  background: #f5f3ff;
-  color: #5046e5;
+  background: var(--el-fill-color-light);
+  color: var(--el-color-primary);
   font-weight: 500;
 }
 

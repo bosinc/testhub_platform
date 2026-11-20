@@ -1,61 +1,102 @@
 <template>
-  <div class="project-management">
-    <div class="header">
-      <h2>{{ $t('apiTesting.project.title') }}</h2>
+  <div class="page-container">
+    <div class="page-header">
+      <h1 class="page-title">{{ $t('apiTesting.project.title') }}</h1>
       <el-button type="primary" @click="showCreateDialog = true">
         <el-icon><Plus /></el-icon>
         {{ $t('apiTesting.project.createProject') }}
       </el-button>
     </div>
 
-
     <!-- 项目列表 -->
-    <el-table :data="projects" v-loading="loading" style="width: 100%">
-      <el-table-column prop="name" :label="$t('apiTesting.project.projectName')" min-width="200" />
-      <el-table-column prop="project_type" :label="$t('apiTesting.project.projectType')" width="120">
-        <template #default="scope">
-          <el-tag :type="scope.row.project_type === 'HTTP' ? 'primary' : 'success'">
-            {{ scope.row.project_type }}
-          </el-tag>
-        </template>
-      </el-table-column>
-      <el-table-column prop="status" :label="$t('apiTesting.project.projectStatus')" width="120">
-        <template #default="scope">
-          <el-tag
-            :type="getStatusType(scope.row.status)"
-          >
-            {{ getStatusText(scope.row.status) }}
-          </el-tag>
-        </template>
-      </el-table-column>
-      <el-table-column prop="owner.username" :label="$t('apiTesting.project.owner')" width="150" />
-      <el-table-column prop="start_date" :label="$t('apiTesting.project.startDate')" width="120" />
-      <el-table-column prop="end_date" :label="$t('apiTesting.project.endDate')" width="120" />
-      <el-table-column prop="created_at" :label="$t('apiTesting.project.createdAt')" width="180">
-        <template #default="scope">
-          {{ formatDate(scope.row.created_at) }}
-        </template>
-      </el-table-column>
-      <el-table-column :label="$t('apiTesting.common.operation')" width="200">
-        <template #default="scope">
-          <el-button link type="primary" @click="editProject(scope.row)">{{ $t('apiTesting.common.edit') }}</el-button>
-          <el-button link type="primary" @click="viewProject(scope.row)">{{ $t('apiTesting.common.view') }}</el-button>
-          <el-button link type="danger" @click="deleteProject(scope.row)">{{ $t('apiTesting.common.delete') }}</el-button>
-        </template>
-      </el-table-column>
-    </el-table>
+    <div class="card-container">
+      <div class="filter-bar">
+        <el-row :gutter="20">
+          <el-col :span="6">
+            <el-input
+              v-model="searchText"
+              :placeholder="$t('apiTesting.project.projectName')"
+              clearable
+              @keyup.enter="handleSearch"
+              @clear="handleSearch"
+            >
+              <template #prefix>
+                <el-icon><Search /></el-icon>
+              </template>
+            </el-input>
+          </el-col>
+          <el-col :span="4">
+            <el-select v-model="statusFilter" :placeholder="$t('apiTesting.project.projectStatus')" clearable @change="handleFilter">
+              <el-option :label="$t('apiTesting.project.status.notStarted')" value="NOT_STARTED" />
+              <el-option :label="$t('apiTesting.project.status.inProgress')" value="IN_PROGRESS" />
+              <el-option :label="$t('apiTesting.project.status.completed')" value="COMPLETED" />
+            </el-select>
+          </el-col>
+          <el-col :span="4">
+            <el-button type="primary" @click="handleSearch">
+              <el-icon><Search /></el-icon>
+              {{ $t('apiTesting.common.search') }}
+            </el-button>
+          </el-col>
+        </el-row>
+      </div>
 
-    <!-- 分页 -->
-    <el-pagination
-      v-model:current-page="currentPage"
-      v-model:page-size="pageSize"
-      :page-sizes="[10, 20, 50, 100]"
-      :total="total"
-      layout="total, sizes, prev, pager, next, jumper"
-      @size-change="handleSizeChange"
-      @current-change="handleCurrentChange"
-      class="pagination"
-    />
+      <el-table :data="projects" v-loading="loading" style="width: 100%">
+        <el-table-column prop="name" :label="$t('apiTesting.project.projectName')" min-width="200" />
+        <el-table-column prop="project_type" :label="$t('apiTesting.project.projectType')" width="120">
+          <template #default="scope">
+            <el-tag :type="scope.row.project_type === 'HTTP' ? 'primary' : 'success'">
+              {{ scope.row.project_type }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="status" :label="$t('apiTesting.project.projectStatus')" width="120">
+          <template #default="scope">
+            <el-tag :type="getStatusType(scope.row.status)">
+              {{ getStatusText(scope.row.status) }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="owner.username" :label="$t('apiTesting.project.owner')" width="150" />
+        <el-table-column prop="start_date" :label="$t('apiTesting.project.startDate')" width="120" />
+        <el-table-column prop="end_date" :label="$t('apiTesting.project.endDate')" width="120" />
+        <el-table-column prop="created_at" :label="$t('apiTesting.project.createdAt')" width="180">
+          <template #default="scope">
+            {{ formatDate(scope.row.created_at) }}
+          </template>
+        </el-table-column>
+        <el-table-column :label="$t('apiTesting.common.operation')" width="240" fixed="right" align="center">
+          <template #default="scope">
+            <div class="project-action-buttons">
+              <el-button size="small" type="primary" @click="viewProject(scope.row)">
+                <el-icon><View /></el-icon>
+                {{ $t('apiTesting.common.view') }}
+              </el-button>
+              <el-button size="small" @click="editProject(scope.row)">
+                <el-icon><Edit /></el-icon>
+                {{ $t('apiTesting.common.edit') }}
+              </el-button>
+              <el-button size="small" type="danger" @click="deleteProject(scope.row)">
+                <el-icon><Delete /></el-icon>
+                {{ $t('apiTesting.common.delete') }}
+              </el-button>
+            </div>
+          </template>
+        </el-table-column>
+      </el-table>
+
+      <div class="pagination-container">
+        <el-pagination
+          v-model:current-page="currentPage"
+          v-model:page-size="pageSize"
+          :page-sizes="[10, 20, 50, 100]"
+          layout="total, sizes, prev, pager, next, jumper"
+          :total="total"
+          @size-change="handleSizeChange"
+          @current-change="handleCurrentChange"
+        />
+      </div>
+    </div>
 
     <!-- 新建/编辑项目对话框 -->
     <el-dialog
@@ -84,12 +125,14 @@
           />
         </el-form-item>
 
+        <!-- 暂时隐藏 WebSocket 项目创建入口，相关代码保留便于后续恢复。
         <el-form-item :label="$t('apiTesting.project.projectType')" prop="project_type">
           <el-radio-group v-model="form.project_type">
             <el-radio value="HTTP">HTTP</el-radio>
             <el-radio value="WEBSOCKET">WebSocket</el-radio>
           </el-radio-group>
         </el-form-item>
+        -->
 
         <el-form-item :label="$t('apiTesting.project.projectStatus')" prop="status">
           <el-select v-model="form.status" :placeholder="$t('apiTesting.project.selectStatus')">
@@ -204,7 +247,7 @@
 import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox, ElDescriptions, ElDescriptionsItem } from 'element-plus'
 import { useI18n } from 'vue-i18n'
-import { Plus } from '@element-plus/icons-vue'
+import { Delete, Edit, Plus, Search, View } from '@element-plus/icons-vue'
 import api from '@/utils/api'
 import dayjs from 'dayjs'
 
@@ -215,6 +258,8 @@ const users = ref([])
 const currentPage = ref(1)
 const pageSize = ref(20)
 const total = ref(0)
+const searchText = ref('')
+const statusFilter = ref('')
 const showCreateDialog = ref(false)
 const showViewDialog = ref(false)
 const editingProject = ref(null)
@@ -276,10 +321,15 @@ const loadProjects = async () => {
     const response = await api.get('/api-testing/projects/', {
       params: {
         page: currentPage.value,
-        page_size: pageSize.value
+        page_size: pageSize.value,
+        // 暂时只展示 HTTP 项目，WebSocket 功能恢复时移除此过滤条件。
+        project_type: 'HTTP',
+        search: searchText.value || undefined,
+        status: statusFilter.value || undefined
       }
     })
-    projects.value = response.data.results
+    // 暂时隐藏 WebSocket 项目入口；保留后端能力，恢复时移除此过滤。
+    projects.value = (response.data.results || []).filter(project => project.project_type !== 'WEBSOCKET')
     total.value = response.data.count
   } catch (error) {
     ElMessage.error(t('apiTesting.messages.error.loadProjects'))
@@ -306,6 +356,16 @@ const handleSizeChange = (size) => {
 
 const handleCurrentChange = (page) => {
   currentPage.value = page
+  loadProjects()
+}
+
+const handleSearch = () => {
+  currentPage.value = 1
+  loadProjects()
+}
+
+const handleFilter = () => {
+  currentPage.value = 1
   loadProjects()
 }
 
@@ -406,25 +466,74 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.project-management {
-  padding: 20px;
+.page-container {
+  height: 100%;
+  overflow-y: auto;
+  background: #f5f5f5;
 }
 
-.header {
+.page-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 20px;
+  margin-bottom: 10px;
+  background: #fff;
+  padding: 10px 20px;
+  border-radius: 4px;
 }
 
-.header h2 {
+.page-container .page-header .page-title {
   margin: 0;
+  font-size: 24px;
+  font-weight: 700;
   color: #303133;
 }
 
-.pagination {
-  margin-top: 20px;
+/* 与 UI 自动化对应页面保持一致的响应式标题字号。 */
+@media screen and (max-width: 1920px) {
+  .page-container .page-header .page-title { font-size: 22px; }
+}
+
+@media screen and (max-width: 1600px) {
+  .page-container .page-header .page-title { font-size: 20px; }
+}
+
+@media screen and (max-width: 1440px) {
+  .page-container .page-header .page-title { font-size: 18px; }
+}
+
+@media screen and (max-width: 1280px) {
+  .page-container .page-header .page-title { font-size: 16px; }
+}
+
+@media screen and (max-width: 480px) {
+  .page-container .page-header .page-title { font-size: 14px; }
+}
+
+.card-container {
+  background: #fff;
+  border-radius: 4px;
+  padding: 20px;
+}
+
+.filter-bar {
+  margin-bottom: 10px;
+}
+
+.pagination-container {
+  margin-top: 10px;
   display: flex;
+  justify-content: flex-end;
+}
+
+.project-action-buttons {
+  display: flex;
+  flex-wrap: nowrap;
   justify-content: center;
+  gap: 8px;
+
+  :deep(.el-button + .el-button) {
+    margin-left: 0;
+  }
 }
 </style>

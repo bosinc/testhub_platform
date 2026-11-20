@@ -1,34 +1,31 @@
 <template>
   <div class="request-editor">
     <div class="request-line">
-      <slot name="environment" />
-      <el-select v-if="allowedProtocols.length > 1" v-model="draft.request_type" class="protocol-select">
-        <el-option v-for="protocol in allowedProtocols" :key="protocol" :label="protocol" :value="protocol" />
-      </el-select>
       <div class="request-target">
         <el-select v-if="draft.request_type !== 'WEBSOCKET'" v-model="draft.method" class="method-select" :class="draft.method.toLowerCase()">
           <el-option v-for="method in methods" :key="method" :label="method" :value="method" />
         </el-select>
-        <el-input v-model="draft.url" :placeholder="$t('apiTesting.requestEditor.pathPlaceholder', { id: '{id}' })" class="url-input" />
+        <div class="url-shell">
+          <el-tag v-if="baseUrl" class="base-url-tag" type="info" :title="baseUrl">{{ baseUrl }}</el-tag>
+          <el-input v-model="draft.url" :placeholder="$t('apiTesting.requestEditor.pathPlaceholder', { id: '{id}' })" class="url-input" />
+        </div>
       </div>
-      <el-button v-if="draft.request_type !== 'WEBSOCKET'" type="primary" :loading="busy" @click="emit('send')">
+      <el-button v-if="showSend && draft.request_type !== 'WEBSOCKET'" type="primary" :loading="busy" @click="emit('send')">
         {{ $t('apiTesting.interface.send') }}
       </el-button>
-      <el-button v-else :loading="wsStatus === 'connecting'" :disabled="busy" @click="emit(wsStatus === 'disconnected' ? 'wsConnect' : 'wsDisconnect')">
+      <!-- 暂时隐藏 WebSocket 连接入口，保留原实现便于后续恢复。
+      <el-button v-else-if="draft.request_type === 'WEBSOCKET'" :loading="wsStatus === 'connecting'" :disabled="busy" @click="emit(wsStatus === 'disconnected' ? 'wsConnect' : 'wsDisconnect')">
         {{ $t(wsStatus === 'disconnected' ? 'apiTesting.interface.connect' : wsStatus === 'connecting' ? 'apiTesting.interface.connecting' : 'apiTesting.interface.disconnect') }}
       </el-button>
-    </div>
-    <div class="url-preview">
-      <strong>{{ $t('apiTesting.requestEditor.preview') }}</strong>
-      <code>{{ estimatedUrl || $t('apiTesting.requestEditor.environmentRequired') }}</code>
-      <el-button size="small" :disabled="busy" @click="emit('preview')">{{ $t('apiTesting.requestEditor.confirmPreview') }}</el-button>
-      <div class="preview-note">{{ $t('apiTesting.requestEditor.previewHint') }}</div>
+      -->
+      <!-- 页面级操作（如保存）紧跟在发送按钮右侧 -->
+      <slot name="request-actions" />
     </div>
     <slot name="meta" />
     <el-tabs v-model="activeTab" class="request-tabs">
       <el-tab-pane label="Params" name="params">
         <KeyValueEditor :show-type="true" v-model="draft.params" :placeholder-key="$t('apiTesting.interface.paramName')" :placeholder-value="$t('apiTesting.interface.paramValue')" />
-        <div class="path-parameters-panel">
+        <div v-if="draft.path_params.length" class="path-parameters-panel">
           <div class="path-parameters-title">Path Params</div>
           <KeyValueEditor :show-type="true" v-model="draft.path_params" :placeholder-key="$t('apiTesting.interface.paramName')" :placeholder-value="$t('apiTesting.interface.paramValue')" />
         </div>
@@ -41,18 +38,21 @@
           <el-radio-group :model-value="draft.body.type" @update:model-value="changeBodyType">
             <el-radio v-for="type in BODY_TYPES" :key="type" :value="type">{{ type }}</el-radio>
           </el-radio-group>
-          <div class="body-content" v-if="['form-data', 'x-www-form-urlencoded'].includes(draft.body.type)">
+          <div class="body-content body-none" v-if="draft.body.type === 'none'">
+            {{ $t('apiTesting.requestEditor.noBody') }}
+          </div>
+          <div class="body-content" v-else-if="['form-data', 'x-www-form-urlencoded'].includes(draft.body.type)">
             <KeyValueEditor v-model="draft.body.data" :show-file="draft.body.type === 'form-data'" />
           </div>
           <div class="body-content" v-else-if="draft.body.type === 'binary'">
             <el-upload :auto-upload="false" :show-file-list="false" :on-change="uploadBinary"><el-button>{{ $t('apiTesting.component.keyValueEditor.selectFile') }}</el-button></el-upload>
             <span>{{ draft.body.data?.filename }}</span>
-            <el-button size="small" @click="draft.body = { type: 'binary', data: null }">{{ $t('apiTesting.interface.clear') }}</el-button>
+            <el-button @click="draft.body = { type: 'binary', data: null }">{{ $t('apiTesting.interface.clear') }}</el-button>
           </div>
           <div class="body-content" v-else>
             <div class="raw-options">
-              <el-button size="small" :icon="MagicStick" @click="emit('data-factory', { field: 'rawBody' })">{{ $t('apiTesting.interface.referDataFactory') }}</el-button>
-              <el-button size="small" :icon="MagicStick" @click="emit('variable-helper', { field: 'rawBody' })">{{ $t('apiTesting.interface.variableHelper') }}</el-button>
+              <el-button :icon="MagicStick" @click="emit('data-factory', { field: 'rawBody' })">{{ $t('apiTesting.interface.referDataFactory') }}</el-button>
+              <el-button :icon="MagicStick" @click="emit('variable-helper', { field: 'rawBody' })">{{ $t('apiTesting.interface.variableHelper') }}</el-button>
             </div>
             <el-input ref="rawBodyInputRef" :model-value="bodyText" @update:model-value="draft.body.data = $event" type="textarea" :rows="10" :placeholder="$t('apiTesting.interface.inputRequestBody')" class="raw-body" />
           </div>
@@ -74,12 +74,12 @@
         </el-form>
       </el-tab-pane>
       <template v-if="draft.request_type !== 'WEBSOCKET'">
-        <el-tab-pane v-for="script in scripts" :key="script.field" :label="script.label" :name="script.field">
+        <el-tab-pane v-for="script in scripts" :key="script.field" :label="$t(script.label)" :name="script.field">
           <div class="script-editor-container">
             <el-input v-model="draft[script.field]" type="textarea" :rows="10" :placeholder="$t(script.placeholder)" />
             <div class="script-buttons">
-              <el-button size="small" :icon="MagicStick" @click="emit('data-factory', { field: script.field })">{{ $t('apiTesting.interface.referDataFactory') }}</el-button>
-              <el-button size="small" :icon="MagicStick" @click="emit('variable-helper', { field: script.field })">{{ $t('apiTesting.interface.variableHelper') }}</el-button>
+              <el-button :icon="MagicStick" @click="emit('data-factory', { field: script.field })">{{ $t('apiTesting.interface.referDataFactory') }}</el-button>
+              <el-button :icon="MagicStick" @click="emit('variable-helper', { field: script.field })">{{ $t('apiTesting.interface.variableHelper') }}</el-button>
             </div>
           </div>
         </el-tab-pane>
@@ -87,12 +87,14 @@
           <AssertionEditor v-model="draft.assertions" :show-helpers="true" @data-factory="helper('data-factory', $event)" @variable-helper="helper('variable-helper', $event)" />
         </el-tab-pane>
         <el-tab-pane :label="$t('apiTesting.interface.variableExtraction')" name="extractors"><VariableExtractorEditor v-model="draft.extractors" :results="extractionResults" /></el-tab-pane>
-        <el-tab-pane label="Settings" name="settings">
-          <el-form label-width="180px" class="auth-settings">
-            <el-form-item :label="$t('apiTesting.requestEditor.timeout')"><el-input-number :model-value="draft.settings.timeout ?? 30" @update:model-value="draft.settings.timeout = $event" :min="0.1" :max="300" /></el-form-item>
-            <el-form-item :label="$t('apiTesting.requestEditor.redirects')"><el-switch :model-value="draft.settings.follow_redirects ?? true" @update:model-value="draft.settings.follow_redirects = $event" /></el-form-item>
-            <el-form-item :label="$t('apiTesting.requestEditor.verifySsl')"><el-switch :model-value="draft.settings.verify_ssl ?? true" @update:model-value="draft.settings.verify_ssl = $event" /></el-form-item>
-          </el-form>
+        <el-tab-pane :label="$t('apiTesting.requestEditor.settings')" name="settings">
+          <div class="settings-panel">
+            <el-form label-width="180px" class="settings-form">
+              <el-form-item :label="$t('apiTesting.requestEditor.timeout')"><el-input-number :model-value="draft.settings.timeout ?? 30" @update:model-value="draft.settings.timeout = $event" :min="0.1" :max="300" /></el-form-item>
+              <el-form-item :label="$t('apiTesting.requestEditor.redirects')"><el-switch :model-value="draft.settings.follow_redirects ?? true" @update:model-value="draft.settings.follow_redirects = $event" /></el-form-item>
+              <el-form-item :label="$t('apiTesting.requestEditor.verifySsl')"><el-switch :model-value="draft.settings.verify_ssl ?? true" @update:model-value="draft.settings.verify_ssl = $event" /></el-form-item>
+            </el-form>
+          </div>
         </el-tab-pane>
       </template>
       <el-tab-pane v-else label="Message" name="message"><slot name="ws-message" :send="() => emit('wsSend')" /></el-tab-pane>
@@ -108,13 +110,15 @@ import { MagicStick } from '@element-plus/icons-vue'
 import KeyValueEditor from '@/views/api-testing/components/KeyValueEditor.vue'
 import AssertionEditor from './AssertionEditor.vue'
 import VariableExtractorEditor from './VariableExtractorEditor.vue'
-import { BODY_TYPES, cloneDraft, createRequestDraft, previewRequestUrl, serializeFile } from '@/utils/requestDraft'
+import { BODY_TYPES, cloneDraft, createRequestDraft, serializeFile } from '@/utils/requestDraft'
 
 const props = defineProps({
   modelValue: { type: Object, required: true }, environment: { type: Object, default: null },
   extractionResults: { type: Array, default: () => [] }, busy: { type: Boolean, default: false },
   allowedProtocols: { type: Array, default: () => ['HTTP', 'WEBSOCKET'] },
-  wsStatus: { type: String, default: 'disconnected' }
+  wsStatus: { type: String, default: 'disconnected' },
+  // Scenario steps reuse the editor without the single-request send button.
+  showSend: { type: Boolean, default: true }
 })
 const emit = defineEmits(['update:modelValue', 'send', 'wsConnect', 'wsDisconnect', 'wsSend', 'preview', 'data-factory', 'variable-helper'])
 const { t } = useI18n()
@@ -124,8 +128,8 @@ const rawBodyInputRef = ref(null)
 // Keep the editor list identical to the backend DTO allow-list.
 const methods = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS']
 const scripts = [
-  { field: 'pre_request_script', label: 'Pre-request Script', placeholder: 'apiTesting.interface.scriptBeforePlaceholder' },
-  { field: 'post_request_script', label: 'Tests', placeholder: 'apiTesting.interface.scriptAfterPlaceholder' }
+  { field: 'pre_request_script', label: 'apiTesting.requestEditor.preCondition', placeholder: 'apiTesting.interface.scriptBeforePlaceholder' },
+  { field: 'post_request_script', label: 'apiTesting.requestEditor.postCondition', placeholder: 'apiTesting.interface.scriptAfterPlaceholder' }
 ]
 let syncing = false
 let unmounted = false
@@ -146,10 +150,22 @@ watch(() => draft.value.url, url => {
   const names = [...new Set(Array.from(String(url).matchAll(/(?<!\{)\{([^{}]+)\}(?!\})/g), match => match[1]))]
   const missing = names.filter(key => !draft.value.path_params.some(row => row.key === key))
   if (missing.length) draft.value.path_params = [...draft.value.path_params, ...missing.map(key => ({ key, value: '', enabled: true, type: 'text', description: '' }))]
-}, { flush: 'sync' })
-const estimatedUrl = computed(() => previewRequestUrl(draft.value, props.environment))
+}, { flush: 'sync', immediate: true })
+// The environment base URL is shown inside the path input, matching the
+// reference layout; the backend still owns the final address.
+const baseUrl = computed(() => {
+  const value = props.environment?.base_url
+  if (!value) return ''
+  const trimmed = String(value).replace(/\/+$/, '')
+  return draft.value.request_type === 'WEBSOCKET' ? trimmed.replace(/^http/, 'ws') : trimmed
+})
 const bodyText = computed(() => typeof draft.value.body.data === 'string' ? draft.value.body.data : JSON.stringify(draft.value.body.data, null, 2))
 function changeBodyType(type) {
+  if (type === 'none') {
+    // The `none` body must not carry a data key.
+    draft.value.body = { type: 'none' }
+    return
+  }
   draft.value.body = { type, data: ['form-data', 'x-www-form-urlencoded'].includes(type) ? [] : type === 'binary' ? null : '' }
 }
 function helper(event, { field, index }) { emit(event, { field, index, target: 'assertion' }) }
@@ -176,12 +192,20 @@ defineExpose({ insertText })
 </script>
 
 <style scoped>
-.request-editor { padding: 20px; background: white; border: 1px solid #e9ecef; border-radius: 12px; min-width: 0; }
+.request-editor { min-width: 0; }
 .request-line, .request-target, .raw-options, .script-buttons { display: flex; align-items: center; gap: 8px; }
-.request-line { flex-wrap: wrap; }
+.request-line { flex-wrap: wrap; margin-bottom: 10px; }
 .request-target { flex: 1; min-width: 240px; gap: 0; }
-.protocol-select { width: 140px; }
 .method-select { width: 110px; flex: 0 0 110px; }
+.url-shell {
+  display: flex; align-items: center; flex: 1; min-width: 0;
+  border: 1px solid var(--el-border-color); border-radius: 0 6px 6px 0;
+  background: var(--el-fill-color-blank); overflow: hidden;
+}
+.url-shell:focus-within { border-color: var(--el-color-primary); }
+.base-url-tag { flex: 0 1 auto; max-width: 46%; margin: 0 8px; overflow: hidden; }
+.base-url-tag :deep(.el-tag__content) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.url-shell :deep(.el-input__wrapper) { box-shadow: none !important; background: transparent; }
 .method-select.get { --method-color: #61affe; }
 .method-select.post { --method-color: #49cc90; }
 .method-select.put { --method-color: #fca130; }
@@ -193,17 +217,18 @@ defineExpose({ insertText })
 .method-select.trace { --method-color: #e67e22; }
 .method-select :deep(.el-select__selected-item), .method-select :deep(.el-input__inner) { color: var(--method-color); }
 .request-target .method-select :deep(.el-input__wrapper) { border-radius: 6px 0 0 6px; }
-.request-target .url-input :deep(.el-input__wrapper) { border-radius: 0 6px 6px 0; }
 .request-tabs :deep(.el-tabs__item) { height: 36px; font-size: 13px; }
-.request-tabs :deep(.el-tabs__item.is-active) { color: #6366f1; }
 @media (max-width: 768px) { .request-target { min-width: 0; width: 100%; flex-basis: 100%; } .raw-options, .script-buttons { flex-wrap: wrap; } }
 .url-input { flex: 1; min-width: 0; }
-.url-preview { margin: 12px 0; overflow-wrap: anywhere; }
-.url-preview code { margin: 0 8px; }
-.preview-note { color: #909399; font-size: 12px; margin-top: 6px; }
 .path-parameters-panel { margin-top: 16px; border-top: 1px solid #ebeef5; padding-top: 12px; }
 .path-parameters-title { margin-bottom: 8px; font-weight: 600; }
 .body-content, .script-buttons { margin-top: 12px; }
+.body-none { color: #909399; font-size: 13px; padding: 12px 0; }
 .raw-options { margin-bottom: 12px; }
 .auth-settings { max-width: 640px; padding-top: 12px; }
+/* Settings 与 Params 一样使用紧凑的边框面板：8px 内边距与行间距。 */
+.settings-panel { padding: 8px; background: white; border: 1px solid #e4e7ed; border-radius: 4px; }
+.settings-form { max-width: 560px; }
+.settings-form :deep(.el-form-item) { margin-bottom: 8px; }
+.settings-form :deep(.el-form-item:last-child) { margin-bottom: 0; }
 </style>

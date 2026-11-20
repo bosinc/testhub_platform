@@ -102,6 +102,48 @@ class ExecutionRecordTests(TestCase):
             execution_id=result['execution_id'], step_id_snapshot=body['id']).order_by('sequence')
         self.assertEqual([row.iteration_path for row in rows], ['0', '1'])
 
+    def test_control_steps_persist_real_order_and_break_condition_output(self):
+        loop = {
+            'id': str(uuid4()), 'parent': None, 'position': 0, 'type': 'for',
+            'name': '循环', 'enabled': True,
+            'config': STEP_REGISTRY['for'].validate_config({'count': 2}),
+            'source_type': None, 'source_id': None,
+        }
+        wait = {
+            'id': str(uuid4()), 'parent': loop['id'], 'position': 0, 'type': 'wait',
+            'name': '等待', 'enabled': True,
+            'config': STEP_REGISTRY['wait'].validate_config({'duration_ms': 1000}),
+            'source_type': None, 'source_id': None,
+        }
+        break_if = {
+            'id': str(uuid4()), 'parent': loop['id'], 'position': 1, 'type': 'break_if',
+            'name': 'Break If', 'enabled': True,
+            'config': STEP_REGISTRY['break_if'].validate_config({
+                'left': '{{ loop.index }}', 'operator': 'gte', 'right': 0,
+                'right_type': 'number',
+            }),
+            'source_type': None, 'source_id': None,
+        }
+        self._save([loop, wait, break_if])
+        with patch('apps.api_testing.scenario_executor.time.sleep'):
+            result = execute_scenario_tree(self.scenario, self.environment, self.user)
+
+        rows = list(StepExecution.objects.filter(
+            execution_id=result['execution_id']).order_by('sequence'))
+        self.assertEqual([row.type_snapshot for row in rows], ['wait', 'break_if', 'for'])
+        self.assertEqual(rows[1].status, 'PASSED')
+        self.assertEqual(rows[1].output, {
+            'matched': True,
+            'left': '{{ loop.index }}',
+            'operator': 'gte',
+            'right': 0,
+            'right_type': 'number',
+        })
+        execution = TestExecution.objects.get(pk=result['execution_id'])
+        self.assertEqual(execution.results['total_steps'], len(rows))
+        self.assertNotIn('output', execution.results)
+        self.assertNotIn('logs', execution.results)
+
     def test_execution_snapshot_records_environment_base_url(self):
         self._save([http_node()])
         with patch('apps.api_testing.scenario_executor.execute_request', transport()):
@@ -196,7 +238,8 @@ class ExecutionRecordTests(TestCase):
         execution.refresh_from_db()
         self.assertEqual(execution.status, 'FAILED')
         self.assertEqual(execution.conclusion, 'FAILED')
-        self.assertIn('失联', execution.results[-1]['error'])
+        self.assertIn('失联', execution.results['error'])
+        self.assertNotIsInstance(execution.results, list)
 
     def test_fresh_heartbeat_is_not_swept(self):
         TestExecution.objects.create(

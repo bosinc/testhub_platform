@@ -19,23 +19,39 @@
           <el-input
             v-model="row.key"
             :placeholder="placeholderKey"
-            size="small"
+           
             @input="updateValue"
           />
         </div>
 
         <div class="column value-column">
+          <el-select
+            v-if="showFile || showType"
+            :model-value="displayType(row.type)"
+            class="row-type-select"
+            popper-class="row-type-popper"
+            style="width: 100px;"
+            @update:model-value="changeType(row, $event)"
+          >
+            <el-option label="Text" value="text" />
+            <el-option v-if="showFile" label="File" value="file" />
+            <template v-if="showType">
+              <el-option label="Number" value="number" />
+              <el-option label="Boolean" value="boolean" />
+              <el-option label="JSON" value="json" />
+            </template>
+          </el-select>
           <el-input
             v-if="!showFile || row.type !== 'file'"
             :model-value="displayValue(row.value)"
             @update:model-value="row.value = $event"
             :placeholder="placeholderValue"
-            size="small"
+           
             @input="updateValue"
           >
             <template #append>
               <el-button
-                size="small"
+               
                 :icon="MagicStick"
                 @click="openDataFactorySelector(index)"
                 :title="$t('apiTesting.component.keyValueEditor.referDataFactory')"
@@ -49,10 +65,10 @@
             :show-file-list="false"
             @change="(file) => handleFileChange(index, file)"
           >
-            <el-button size="small">{{ $t('apiTesting.component.keyValueEditor.selectFile') }}</el-button>
+            <el-button>{{ $t('apiTesting.component.keyValueEditor.selectFile') }}</el-button>
           </el-upload>
           <el-tooltip :content="$t('apiTesting.component.keyValueEditor.insertDynamicVariable')" placement="top" v-if="!showFile || row.type !== 'file'">
-            <el-button size="small" style="margin-left: 5px" @click="openVariableHelper(index)" class="variable-helper-btn">
+            <el-button style="margin-left: 5px" @click="openVariableHelper(index)" class="variable-helper-btn">
               <el-icon><MagicStick /></el-icon>
             </el-button>
           </el-tooltip>
@@ -63,31 +79,16 @@
           <el-input
             v-model="row.description"
             :placeholder="$t('apiTesting.component.keyValueEditor.description')"
-            size="small"
+           
             @input="updateValue"
           />
         </div>
         
         <div class="column action-column">
-          <el-select
-            v-if="showFile || showType"
-            v-model="row.type"
-            size="small"
-            style="width: 70px; margin-right: 5px;"
-            @change="updateValue"
-          >
-            <el-option label="Text" value="text" />
-            <el-option v-if="showFile" label="File" value="file" />
-            <template v-if="showType">
-              <el-option label="Number" value="number" />
-              <el-option label="Boolean" value="boolean" />
-              <el-option label="JSON" value="json" />
-            </template>
-          </el-select>
-          
+
           <el-button
-            size="small"
             type="danger"
+            link
             :icon="Delete"
             @click="removeRow(index)"
             :disabled="rows.length <= 1"
@@ -97,7 +98,7 @@
     </div>
     
     <div class="footer">
-      <el-button size="small" @click="addRow">
+      <el-button @click="addRow">
         <el-icon><Plus /></el-icon>
         {{ $t('apiTesting.component.keyValueEditor.addRow') }}
       </el-button>
@@ -127,7 +128,7 @@
             <el-table :data="category.variables" style="width: 100%" @row-click="insertVariable" highlight-current-row>
               <el-table-column prop="name" :label="$t('apiTesting.component.keyValueEditor.functionName')" width="150" show-overflow-tooltip>
                 <template #default="{ row }">
-                  <el-tag size="small">{{ row.name }}</el-tag>
+                  <el-tag>{{ row.name }}</el-tag>
                 </template>
               </el-table-column>
               <el-table-column prop="desc" :label="$t('apiTesting.component.keyValueEditor.desc')" min-width="150" />
@@ -135,7 +136,7 @@
               <el-table-column prop="example" :label="$t('apiTesting.component.keyValueEditor.example')" min-width="200" show-overflow-tooltip />
               <el-table-column :label="$t('apiTesting.component.keyValueEditor.operation')" width="80" fixed="right">
                 <template #default="{ row }">
-                  <el-button link type="primary" size="small">{{ $t('apiTesting.component.keyValueEditor.insert') }}</el-button>
+                  <el-button link type="primary">{{ $t('apiTesting.component.keyValueEditor.insert') }}</el-button>
                 </template>
               </el-table-column>
             </el-table>
@@ -358,6 +359,15 @@ const useLocalVariableCategories = () => {
 }
 
 const displayValue = value => typeof value === 'object' ? JSON.stringify(value) : String(value ?? '')
+
+// 后端默认类型是 string/integer，而编辑器只提供 Text/Number 等选项；
+// 显示时做一次映射，避免选择器显示未匹配的原始值（如 "string"）。
+const displayType = type => ({ string: 'text', integer: 'number' }[type] || type || 'text')
+
+const changeType = (row, type) => {
+  row.type = type
+  updateValue()
+}
 const initializeRows = () => {
   const data = props.modelValue || []
   // Other existing consumers can still provide a dictionary; the request DTO cannot.
@@ -504,7 +514,7 @@ defineExpose({
 .header {
   /* 表头和数据行使用同一套网格，避免列标题与输入框错位。 */
   display: grid;
-  grid-template-columns: minmax(150px, 1fr) minmax(280px, 1.55fr) minmax(160px, 1fr) auto;
+  grid-template-columns: minmax(100px, 1fr) minmax(260px, 2.4fr) minmax(120px, 1fr) auto;
   column-gap: 12px;
   background: #f5f7fa;
   border-bottom: 1px solid #e4e7ed;
@@ -521,7 +531,7 @@ defineExpose({
 
 .row {
   display: grid;
-  grid-template-columns: minmax(150px, 1fr) minmax(280px, 1.55fr) minmax(160px, 1fr) auto;
+  grid-template-columns: minmax(100px, 1fr) minmax(260px, 2.4fr) minmax(120px, 1fr) auto;
   column-gap: 12px;
   border-bottom: 1px solid #f5f7fa;
   padding: 8px;
@@ -549,14 +559,19 @@ defineExpose({
 }
 
 .action-column {
-  min-width: 40px;
+  /* 操作列只保留图标按钮宽度（约 20px），与描述列之间仅剩 12px 列间距。 */
+  min-width: 20px;
   justify-content: flex-end;
-  gap: 8px;
+  gap: 4px;
 }
 
-/* 两个变量辅助按钮属于同一组操作，保持紧邻显示。 */
+.row-type-select {
+  flex: 0 0 100px;
+}
+
+/* 类型选择器、值输入和辅助按钮同列，保持 8px 间距 */
 .value-column {
-  gap: 0;
+  gap: 8px;
 }
 
 .value-column .variable-helper-btn {
@@ -655,5 +670,28 @@ defineExpose({
 
 :deep(.el-table__row.current-row) {
   background-color: #ecf5ff;
+}
+</style>
+
+<style>
+/* 类型下拉与选择器同宽，选项不被压缩 */
+.row-type-popper {
+  width: 100px !important;
+  min-width: 100px !important;
+}
+/* 选项高亮收在圆角容器内，避免选中背景贴边/溢出 */
+.row-type-popper .el-select-dropdown {
+  padding: 4px;
+  overflow: hidden;
+  border-radius: 8px;
+  box-sizing: border-box;
+}
+.row-type-popper .el-select-dropdown__list {
+  padding: 0;
+}
+.row-type-popper .el-select-dropdown__item {
+  padding-left: 8px;
+  padding-right: 8px;
+  border-radius: 4px;
 }
 </style>

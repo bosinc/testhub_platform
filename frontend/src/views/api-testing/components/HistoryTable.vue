@@ -6,7 +6,8 @@
       style="width: 100%"
       @selection-change="$emit('selection-change', $event)"
     >
-      <el-table-column type="selection" width="55" align="center" />
+      <el-table-column type="selection" width="40" align="center" />
+      <el-table-column prop="id" label="ID" width="60" align="center" />
       <el-table-column prop="request.name" :label="$t('apiTesting.component.historyTable.requestName')" min-width="200" />
       <el-table-column prop="request.method" :label="$t('apiTesting.component.historyTable.method')" width="80">
         <template #default="scope">
@@ -44,8 +45,9 @@
           {{ formatDate(scope.row.executed_at) }}
         </template>
       </el-table-column>
-      <el-table-column :label="$t('apiTesting.common.operation')" width="200" fixed="right">
+      <el-table-column :label="$t('apiTesting.common.operation')" width="180" fixed="right" align="center">
         <template #default="scope">
+          <div class="row-actions">
           <el-button link type="primary" @click="$emit('view-detail', scope.row)" size="small">
             {{ $t('apiTesting.component.historyTable.viewDetail') }}
           </el-button>
@@ -55,6 +57,7 @@
           <el-button link type="danger" @click="$emit('delete-item', scope.row)" size="small">
             {{ $t('apiTesting.component.historyTable.delete') }}
           </el-button>
+          </div>
         </template>
       </el-table-column>
     </el-table>
@@ -96,12 +99,26 @@ const getStatusType = (status) => {
 }
 
 const formatDate = (dateString) => {
-  return dayjs(dateString).format('MM-DD HH:mm')
+  return dayjs(dateString).format('YYYY-MM-DD HH:mm:ss')
 }
 </script>
 
 <style scoped>
 .history-table {
   height: 100%;
+}
+
+.row-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: nowrap;
+  gap: 2px;
+  white-space: nowrap;
+}
+
+.row-actions :deep(.el-button) {
+  margin: 0;
+  padding: 0 4px;
 }
 </style>

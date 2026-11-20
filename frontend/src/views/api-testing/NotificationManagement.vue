@@ -1,17 +1,18 @@
 <template>
-  <div class="notification-management">
+  <div class="page-container">
     <!-- 顶部标题 -->
-    <div class="header">
-      <h3>{{ $t('apiTesting.notification.title') }}</h3>
+    <div class="page-header">
+      <h1 class="page-title">{{ $t('apiTesting.notification.title') }}</h1>
     </div>
 
     <!-- Tab页 -->
-    <el-tabs v-model="activeTab" class="notification-tabs">
+    <div class="card-container">
+      <el-tabs v-model="activeTab" class="notification-tabs">
       <!-- 通知列表Tab -->
       <el-tab-pane :label="$t('apiTesting.notification.notificationList')" name="list">
         <div class="tab-content">
           <!-- 筛选条件 -->
-          <div class="filters">
+          <div class="filter-bar">
             <el-row :gutter="20">
               <el-col :span="6">
                 <el-input
@@ -72,10 +73,11 @@
                 </el-tag>
               </template>
             </el-table-column>
-            <el-table-column :label="$t('apiTesting.common.operation')" width="100">
+            <el-table-column :label="$t('apiTesting.common.operation')" width="100" fixed="right" align="center">
               <template #default="{ row }">
                 <el-button
                   type="primary"
+                  text
                   size="small"
                   @click="showNotificationDetail(row)"
                 >
@@ -86,7 +88,7 @@
           </el-table>
 
           <!-- 分页 -->
-          <div class="pagination">
+          <div class="pagination-container">
             <el-pagination
               v-model:current-page="pagination.current"
               v-model:page-size="pagination.size"
@@ -220,7 +222,8 @@
           </div>
         </div>
       </el-tab-pane>
-    </el-tabs>
+      </el-tabs>
+    </div>
 
     <!-- 通知详情对话框 -->
     <el-dialog
@@ -589,40 +592,44 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.notification-management {
-  padding: 20px;
-  background: #f5f7fa;
-  min-height: 100%;
+.page-container {
+  height: 100%;
+  overflow-y: auto;
+  background: #f5f5f5;
 }
 
-.header {
-  margin-bottom: 20px;
+.page-header {
+  display: flex;
+  align-items: center;
+  margin-bottom: 10px;
+  background: #fff;
+  padding: 10px 20px;
+  border-radius: 4px;
 }
 
-.header h3 {
+.page-title {
   margin: 0;
+  font-size: 24px;
+  font-weight: 700;
   color: #303133;
 }
 
-.notification-tabs {
-  background: white;
-  border-radius: 8px;
-  overflow: hidden;
+.card-container {
+  background: #fff;
+  padding: 20px;
+  border-radius: 4px;
 }
 
 .tab-content {
   padding: 20px;
 }
 
-.filters {
+.filter-bar {
   margin-bottom: 20px;
-  background: #f8f9fa;
-  padding: 20px;
-  border-radius: 8px;
 }
 
-.pagination {
-  margin-top: 20px;
+.pagination-container {
+  margin-top: 10px;
   display: flex;
   justify-content: flex-end;
 }

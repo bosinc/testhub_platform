@@ -69,7 +69,7 @@ def request_dto_mock():
 class StepRegistryTests(unittest.TestCase):
     def test_fixed_registry_is_immutable_and_has_no_execution_handlers(self):
         self.assertEqual(set(STEP_REGISTRY), {
-            'http', 'group', 'condition', 'else', 'for', 'foreach', 'wait', 'script', 'scenario_ref',
+            'http', 'group', 'condition', 'else', 'break_if', 'for', 'foreach', 'wait', 'script', 'scenario_ref',
         })
         with self.assertRaises(TypeError):
             STEP_REGISTRY['custom'] = object()
@@ -80,12 +80,14 @@ class StepRegistryTests(unittest.TestCase):
             self.assertFalse(hasattr(capability, 'handler'))
 
     def test_capabilities_match_container_name_and_source_rules(self):
+        # 系统节点使用面向用户的名称，其余类型仍以类型键作为系统名称。
+        display_names = {'condition': 'If', 'else': 'Else'}
         for key in STEP_REGISTRY:
             with self.subTest(key=key):
                 capability = get_step_type(key)
                 self.assertEqual(capability.allows_children, key in {'group', 'condition', 'else', 'for', 'foreach'})
                 self.assertEqual(capability.name_editable, key == 'http')
-                self.assertEqual(capability.system_name, key)
+                self.assertEqual(capability.system_name, display_names.get(key, key))
         self.assertFalse(get_step_type('else').independently_creatable)
         self.assertTrue(get_step_type('scenario_ref').source_required)
 
@@ -142,25 +144,37 @@ class StepRegistryTests(unittest.TestCase):
             with self.subTest(count=count), self.assertRaises(StepValidationError):
                 get_step_type('for').validate_config({'count': count})
 
-    def test_loop_options_use_typed_break_and_fixed_policies(self):
+    def test_loop_options_use_fixed_policies(self):
         for kind in ('for', 'foreach'):
             base = node(1, kind)['config']
-            for policy in ('continue', 'break_loop', 'abort_scenario'):
-                config = dict(base, break_if=condition(), on_error=policy, max_iterations=10)
+            for policy in ('continue', 'next_iteration', 'break_loop', 'abort_scenario'):
+                config = dict(base, on_error=policy, max_iterations=10)
                 result = get_step_type(kind).validate_config(config)
-                self.assertEqual(result['break_if'], condition())
                 self.assertEqual(result['on_error'], policy)
-            for change in ({'break_if': 'eval(1)'}, {'on_error': 'success'}, {'on_error': []},
+            for change in ({'runtime': 'python'}, {'on_error': 'success'}, {'on_error': []},
                            {'max_iterations': 1001}, {'max_iterations': True}, {'runtime': 'python'}):
                 with self.subTest(kind=kind, change=change), self.assertRaises(StepValidationError):
                     get_step_type(kind).validate_config(dict(base, **change))
         with self.assertRaises(StepValidationError):
             get_step_type('for').validate_config({'count': 11, 'max_iterations': 10})
 
+
     def test_foreach_requires_full_array_expression(self):
         result = get_step_type('foreach').validate_config({'array_expression': '{{vars.items}}'})
         self.assertEqual(result['array_expression'], '{{vars.items}}')
-        for expression in ([], {}, '[]', '', 'prefix {{vars.items}}', '{{items}}', True):
+        self.assertEqual(
+            get_step_type('foreach').validate_config({'array_expression': '{{post_list}}'})[
+                'array_expression'
+            ],
+            '{{post_list}}',
+        )
+        self.assertEqual(
+            get_step_type('foreach').validate_config({'array_expression': '{{steps.1.response.body}}'})[
+                'array_expression'
+            ],
+            '{{steps.1.response.body}}',
+        )
+        for expression in ([], {}, '[]', '', 'prefix {{vars.items}}', '{{}}', '{{post-list}}', True):
             with self.subTest(expression=expression), self.assertRaises(StepValidationError):
                 get_step_type('foreach').validate_config({'array_expression': expression})
 
@@ -355,10 +369,11 @@ class ScenarioDefinitionTests(unittest.TestCase):
         self.assertEqual(validate_definition([node(2, 'wait')], previous_steps=previous)[0]['type'], 'wait')
 
     def test_new_nonhttp_names_are_generated_and_updates_reject_tampering(self):
+        display_names = {'condition': 'If'}
         for kind in ('group', 'for', 'foreach', 'script', 'wait', 'scenario_ref', 'condition'):
             with self.subTest(kind=kind):
                 previous = validate_definition([node(1, kind, name='client override')])
-                self.assertEqual(previous[0]['name'], kind)
+                self.assertEqual(previous[0]['name'], display_names.get(kind, kind))
                 self.assertEqual(validate_definition([node(1, kind)], previous_steps=previous), previous)
                 with self.assertRaisesRegex(StepValidationError, 'name'):
                     validate_definition([node(1, kind, name='changed')], previous_steps=previous)
@@ -557,7 +572,7 @@ class CloneDefinitionTests(unittest.TestCase):
     def test_clone_rejects_ordinal_or_malformed_step_references(self):
         for reference in ('{{steps.1.response}}', '{{steps.not_a_uuid.response}}'):
             steps = [node(1, 'scenario_ref', config={'input_mapping': {'x': reference}})]
-            with self.subTest(reference=reference), self.assertRaisesRegex(StepValidationError, '稳定 UUID'):
+            with self.subTest(reference=reference), self.assertRaisesRegex(StepValidationError, '复制范围外'):
                 clone_definition(steps)
 
     def test_clone_does_not_rewrite_source_uuid_or_unrelated_uuid_literals(self):

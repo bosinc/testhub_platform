@@ -29,7 +29,7 @@
               @change="handleSearch"
           />
         </el-col>
-        <el-col :span="6">
+        <el-col :span="4">
           <el-select
               v-model="searchForm.status"
               :placeholder="$t('notification.logs.notificationStatus')"
@@ -606,10 +606,8 @@ export default {
 }
 
 .page-actions {
-  margin-bottom: 20px;
-  padding: 20px;
-  background: #f8f9fa;
-  border-radius: 6px;
+  margin-bottom: 10px;
+  border-radius: 4px;
 }
 
 .filter-row {
@@ -623,7 +621,7 @@ export default {
 }
 
 .pagination-container {
-  margin-top: 20px;
+  margin-top: 10px;
   display: flex;
   justify-content: flex-end;
 }

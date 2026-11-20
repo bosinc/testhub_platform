@@ -1,14 +1,14 @@
 <template>
-  <div class="test-suites-page">
-    <div class="test-suites-header">
-      <h2 class="test-suites-title">{{ $t('apiTesting.testSuiteManagement.title') }}</h2>
+  <div class="page-container">
+    <div class="page-header">
+      <h1 class="page-title">{{ $t('apiTesting.testSuiteManagement.title') }}</h1>
       <div class="test-suites-header-actions">
         <el-select
           v-model="selectedProject"
           class="project-select"
           filterable
           :placeholder="$t('apiTesting.testSuiteManagement.projectPlaceholder')"
-          @change="loadTestSuites"
+          @change="handleProjectChange"
         >
           <el-option v-for="project in projects" :key="project.id" :label="project.name" :value="project.id" />
         </el-select>
@@ -16,21 +16,27 @@
       </div>
     </div>
 
-    <el-card class="table-card" shadow="never">
-      <el-input
-        v-model="searchText"
-        class="search-input"
-        clearable
-        :placeholder="$t('apiTesting.testSuiteManagement.searchPlaceholder')"
-        :prefix-icon="Search"
-      />
+    <div class="card-container">
+      <div class="filter-bar">
+        <el-input
+          v-model="searchText"
+          class="search-input"
+          clearable
+          :placeholder="$t('apiTesting.testSuiteManagement.searchPlaceholder')"
+          :prefix-icon="Search"
+        />
+      </div>
 
       <el-table v-loading="loading" :data="pagedSuites" style="width: 100%" :empty-text="$t('apiTesting.testSuiteManagement.empty')">
+        <el-table-column prop="id" :label="$t('apiTesting.testSuiteManagement.id')" width="40" align="center" />
         <el-table-column prop="name" :label="$t('apiTesting.testSuiteManagement.suiteName')" min-width="100">
           <template #default="{ row }"><el-link type="primary" @click="editSuite(row)">{{ row.name }}</el-link></template>
         </el-table-column>
         <el-table-column :label="$t('apiTesting.testSuiteManagement.includedCases')" width="130" align="center">
           <template #default="{ row }">{{ row.scenario_cases?.length || 0 }}</template>
+        </el-table-column>
+        <el-table-column :label="$t('apiTesting.testSuiteManagement.executionEnvironment')" min-width="140">
+          <template #default="{ row }">{{ row.environment_name || $t('apiTesting.common.noEnvironment') }}</template>
         </el-table-column>
         <el-table-column prop="created_at" :label="$t('apiTesting.testSuiteManagement.createdAt')" width="160">
           <template #default="{ row }">{{ formatDate(row.created_at) }}</template>
@@ -38,26 +44,43 @@
         <el-table-column prop="updated_at" :label="$t('apiTesting.testSuiteManagement.updatedAt')" width="160">
           <template #default="{ row }">{{ formatDate(row.updated_at) }}</template>
         </el-table-column>
-        <el-table-column :label="$t('apiTesting.testSuiteManagement.operation')" width="230" fixed="right">
+        <el-table-column :label="$t('apiTesting.testSuiteManagement.operation')" width="150" fixed="right">
           <template #default="{ row }">
             <div class="row-actions">
-              <el-button link type="primary" :icon="Edit" @click="editSuite(row)">{{ $t('apiTesting.common.edit') }}</el-button>
-              <el-button link type="success" :icon="VideoPlay" :loading="runningSuiteId === row.id" @click="runSuite(row)">{{ $t('apiTesting.testSuiteManagement.run') }}</el-button>
-              <el-button link type="danger" :icon="Delete" @click="deleteSuite(row)">{{ $t('apiTesting.common.delete') }}</el-button>
+              <el-button size="small" text type="primary" @click="editSuite(row)">
+                <el-icon><Edit /></el-icon>
+                {{ $t('apiTesting.common.edit') }}
+              </el-button>
+              <el-button size="small" text type="success" :loading="runningSuiteId === row.id" @click="runSuite(row)">
+                <el-icon><VideoPlay /></el-icon>
+                {{ $t('apiTesting.testSuiteManagement.run') }}
+              </el-button>
+              <el-tooltip :content="$t('apiTesting.common.delete')">
+                <el-button
+                  size="small"
+                  text
+                  type="danger"
+                  :aria-label="$t('apiTesting.common.delete')"
+                  @click="deleteSuite(row)"
+                >
+                  <el-icon><Delete /></el-icon>
+                </el-button>
+              </el-tooltip>
             </div>
           </template>
         </el-table-column>
       </el-table>
 
-      <el-pagination
-        v-model:current-page="currentPage"
-        v-model:page-size="pageSize"
-        class="pagination"
-        :page-sizes="[10, 20, 50, 100]"
-        :total="filteredSuites.length"
-        layout="total, sizes, prev, pager, next, jumper"
-      />
-    </el-card>
+      <div class="pagination-container">
+        <el-pagination
+          v-model:current-page="currentPage"
+          v-model:page-size="pageSize"
+          :page-sizes="[10, 20, 50, 100]"
+          :total="filteredSuites.length"
+          layout="total, sizes, prev, pager, next, jumper"
+        />
+      </div>
+    </div>
 
     <el-dialog
       v-model="dialogVisible"
@@ -72,6 +95,22 @@
         </el-form-item>
         <el-form-item :label="$t('apiTesting.testSuiteManagement.descriptionLabel')">
           <el-input v-model="form.description" type="textarea" :rows="2" :placeholder="$t('apiTesting.testSuiteManagement.descriptionPlaceholder')" />
+        </el-form-item>
+        <el-form-item :label="$t('apiTesting.testSuiteManagement.executionEnvironment')" required>
+          <el-select
+            v-model="form.environment"
+            class="environment-select"
+            filterable
+            :loading="environmentsLoading"
+            :placeholder="$t('apiTesting.testSuiteManagement.selectEnvironment')"
+          >
+            <el-option
+              v-for="environment in environments"
+              :key="environment.id"
+              :label="environment.scope === 'GLOBAL' ? `${environment.name} (${$t('apiTesting.testSuiteManagement.globalEnvironment')})` : environment.name"
+              :value="environment.id"
+            />
+          </el-select>
         </el-form-item>
       </el-form>
 
@@ -116,7 +155,7 @@ import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Delete, Document, Edit, Folder, Plus, Search, VideoPlay } from '@element-plus/icons-vue'
 import api from '@/utils/api'
-import { getAllScenarioCases, getScenarioCaseFolders } from '@/api/api-testing'
+import { getAllScenarioCases, getEnvironments, getScenarioCaseFolders } from '@/api/api-testing'
 import { getPreferredProjectId, useRememberedProject } from '@/utils/projectSelection'
 
 const testSuites = ref([])
@@ -127,6 +166,8 @@ const selectedProject = ref(null)
 useRememberedProject(selectedProject, projects)
 const loading = ref(false)
 const scenariosLoading = ref(false)
+const environmentsLoading = ref(false)
+const environments = ref([])
 const saving = ref(false)
 const runningSuiteId = ref(null)
 const dialogVisible = ref(false)
@@ -140,7 +181,7 @@ const form = ref(emptyForm())
 const { t } = useI18n()
 
 function emptyForm() {
-  return { name: '', description: '', project: null, scenario_case_ids: [] }
+  return { name: '', description: '', project: null, environment: null, scenario_case_ids: [] }
 }
 
 const filteredSuites = computed(() => {
@@ -205,10 +246,38 @@ async function loadProjects() {
       .filter((project) => project.project_type !== 'WEBSOCKET')
     if (projects.value.length) {
       selectedProject.value = getPreferredProjectId(projects.value, projects.value[0].id)
+      await loadEnvironments()
       await loadTestSuites()
     }
   } catch {
     ElMessage.error(t('apiTesting.testSuiteManagement.loadProjectsFailed'))
+  }
+}
+
+async function handleProjectChange() {
+  await loadEnvironments()
+  await loadTestSuites()
+}
+
+async function loadEnvironments(projectId = selectedProject.value) {
+  if (!projectId) {
+    environments.value = []
+    return
+  }
+  environmentsLoading.value = true
+  try {
+    const response = await getEnvironments()
+    const allEnvironments = response.data.results || response.data
+    // 套件可以使用全局环境或当前项目的局部环境，不能选择其他项目的局部环境。
+    environments.value = allEnvironments.filter((environment) =>
+      environment.scope === 'GLOBAL' ||
+      (environment.scope === 'LOCAL' && String(environment.project) === String(projectId))
+    )
+  } catch {
+    environments.value = []
+    ElMessage.error(t('apiTesting.testSuiteManagement.loadEnvironmentsFailed'))
+  } finally {
+    environmentsLoading.value = false
   }
 }
 
@@ -251,6 +320,7 @@ async function openCreateSuite() {
   editingSuite.value = null
   form.value = { ...emptyForm(), project: selectedProject.value }
   scenarioSearch.value = ''
+  await loadEnvironments()
   await loadScenarios()
   dialogVisible.value = true
   await nextTick()
@@ -264,9 +334,11 @@ async function editSuite(item) {
     name: item.name,
     description: item.description || '',
     project: projectId,
+    environment: typeof item.environment === 'object' ? item.environment.id : item.environment,
     scenario_case_ids: (item.scenario_cases || []).map((scenario) => scenario.id)
   }
   scenarioSearch.value = ''
+  await loadEnvironments(projectId)
   await loadScenarios(projectId)
   dialogVisible.value = true
   await nextTick()
@@ -279,6 +351,7 @@ async function saveSuite() {
     ? (typeof editingSuite.value.project === 'object' ? editingSuite.value.project.id : editingSuite.value.project)
     : selectedProject.value
   if (!projectId) return ElMessage.warning(t('apiTesting.testSuiteManagement.selectProject'))
+  if (!form.value.environment) return ElMessage.warning(t('apiTesting.testSuiteManagement.selectEnvironment'))
   const checkedNodes = scenarioTreeRef.value?.getCheckedNodes(true, false) || []
   const scenarioCaseIds = checkedNodes.filter((node) => node.type === 'scenario').map((node) => node.id)
   saving.value = true
@@ -286,6 +359,7 @@ async function saveSuite() {
     name: form.value.name.trim(),
     description: form.value.description,
     project: projectId,
+    environment: form.value.environment,
     scenario_case_ids: scenarioCaseIds
   }
   try {
@@ -338,18 +412,27 @@ onMounted(loadProjects)
 </script>
 
 <style scoped>
-.test-suites-header { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 16px; padding: 20px; margin-bottom: 20px; background: #fff; border-radius: 4px; }
-.test-suites-title { margin: 0; font-size: 22px; }
+.page-container { height: 100%; overflow-y: auto; background: #f5f5f5; }
+.page-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; background: #fff; padding: 10px 20px; border-radius: 4px; }
+.page-container .page-header .page-title { margin: 0; font-size: 24px; font-weight: 700; color: #303133; }
+/* 与 UI 自动化对应页面保持一致的响应式标题字号。 */
+@media screen and (max-width: 1920px) { .page-container .page-header .page-title { font-size: 22px; } }
+@media screen and (max-width: 1600px) { .page-container .page-header .page-title { font-size: 20px; } }
+@media screen and (max-width: 1440px) { .page-container .page-header .page-title { font-size: 18px; } }
+@media screen and (max-width: 1280px) { .page-container .page-header .page-title { font-size: 16px; } }
+@media screen and (max-width: 480px) { .page-container .page-header .page-title { font-size: 14px; } }
 .test-suites-header-actions { display: flex; width: max-content; align-items: center; justify-self: end; gap: 16px; }
 .project-select { flex: 0 0 200px; width: 200px; }
-.row-actions { display: flex; flex-wrap: nowrap; align-items: center; gap: 4px; white-space: nowrap; }
-.row-actions :deep(.el-button) { flex-shrink: 0; }
-.table-card { border: 0; }
-.search-input { width: 380px; margin-bottom: 16px; }
-.pagination { justify-content: flex-end; margin-top: 18px; }
+.environment-select { width: 100%; }
+.row-actions { display: flex; flex-wrap: nowrap; align-items: center; gap: 0; white-space: nowrap; }
+.row-actions :deep(.el-button) { flex-shrink: 0; margin-left: 0 !important; padding: 5px 3px; }
+.card-container { background: #fff; padding: 20px; border-radius: 4px; }
+.filter-bar { margin-bottom: 10px; }
+.search-input { width: 380px; }
+.pagination-container { margin-top: 10px; display: flex; justify-content: flex-end; }
 .scenario-picker { border: 1px solid var(--el-border-color); border-radius: 4px; }
 .picker-header { display: flex; justify-content: space-between; align-items: center; padding: 10px 12px; border-bottom: 1px solid var(--el-border-color); font-weight: 600; }
 .picker-header :deep(.el-input) { width: 240px; font-weight: 400; }
 .tree-node-label { display: inline-flex; align-items: center; gap: 8px; }
-@media (max-width: 760px) { .test-suites-header { grid-template-columns: minmax(0, 1fr); } .test-suites-header-actions { width: 100%; justify-self: stretch; } .project-select { flex: 1 1 auto; } .search-input { width: 100%; } }
+@media (max-width: 760px) { .page-header { flex-wrap: wrap; gap: 10px; } .test-suites-header-actions { width: 100%; justify-self: stretch; } .project-select { flex: 1 1 auto; } .search-input { width: 100%; } }
 </style>

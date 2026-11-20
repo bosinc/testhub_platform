@@ -1,62 +1,83 @@
 <template>
-  <div class="request-history">
-    <div class="header">
-      <h3>{{ $t('apiTesting.history.title') }}</h3>
-      <div class="filters">
-        <el-input
-          v-model="searchText"
-          :placeholder="$t('apiTesting.history.searchRequest')"
-          style="width: 200px"
-          clearable
-          @input="loadHistory"
-        />
-        <el-button
-          type="danger"
-          :disabled="selectedIds.length === 0"
-          @click="handleBatchDelete"
-        >
-          {{ $t('apiTesting.history.batchDelete') }}
-        </el-button>
-        <el-button @click="clearHistory" type="danger" plain>
-          {{ $t('apiTesting.history.clearHistory') }}
-        </el-button>
-      </div>
+  <div class="page-container">
+    <div class="page-header">
+      <h1 class="page-title">{{ $t('apiTesting.history.title') }}</h1>
     </div>
 
-    <el-tabs v-model="activeTab" @tab-change="onTabChange">
-      <el-tab-pane :label="$t('apiTesting.history.httpRequest')" name="HTTP">
-        <HistoryTable
-          :data="httpHistory"
-          :loading="loading"
-          @view-detail="viewDetail"
-          @retry-request="retryRequest"
-          @selection-change="handleSelectionChange"
-          @delete-item="handleDelete"
-        />
-      </el-tab-pane>
-      <el-tab-pane :label="$t('apiTesting.history.websocketRequest')" name="WEBSOCKET">
-        <HistoryTable
-          :data="websocketHistory"
-          :loading="loading"
-          @view-detail="viewDetail"
-          @retry-request="retryRequest"
-          @selection-change="handleSelectionChange"
-          @delete-item="handleDelete"
-        />
-      </el-tab-pane>
-    </el-tabs>
+    <div class="card-container">
+      <div class="filter-bar">
+        <el-form :inline="true">
+          <el-form-item>
+            <el-input
+              v-model="searchText"
+              :placeholder="$t('apiTesting.history.searchRequest')"
+              style="width: 240px"
+              clearable
+              @input="loadHistory"
+            />
+          </el-form-item>
+          <el-form-item>
+            <el-button
+              type="danger"
+              :disabled="selectedIds.length === 0"
+              @click="handleBatchDelete"
+            >
+              {{ $t('apiTesting.history.batchDelete') }}
+            </el-button>
+            <el-button @click="clearHistory" type="danger" plain>
+              {{ $t('apiTesting.history.clearHistory') }}
+            </el-button>
+          </el-form-item>
+        </el-form>
+      </div>
 
-    <!-- 分页 -->
-    <el-pagination
-      v-model:current-page="currentPage"
-      v-model:page-size="pageSize"
-      :page-sizes="[10, 20, 50, 100]"
-      :total="total"
-      layout="total, sizes, prev, pager, next, jumper"
-      @size-change="handleSizeChange"
-      @current-change="handleCurrentChange"
-      class="pagination"
-    />
+      <HistoryTable
+        :data="httpHistory"
+        :loading="loading"
+        @view-detail="viewDetail"
+        @retry-request="retryRequest"
+        @selection-change="handleSelectionChange"
+        @delete-item="handleDelete"
+      />
+
+      <!-- 暂时隐藏请求类型 Tab，默认直接展示 HTTP 请求历史；原实现保留便于后续恢复。
+      <el-tabs v-model="activeTab" @tab-change="onTabChange">
+        <el-tab-pane :label="$t('apiTesting.history.httpRequest')" name="HTTP">
+          <HistoryTable
+            :data="httpHistory"
+            :loading="loading"
+            @view-detail="viewDetail"
+            @retry-request="retryRequest"
+            @selection-change="handleSelectionChange"
+            @delete-item="handleDelete"
+          />
+        </el-tab-pane>
+        暂时隐藏 WebSocket 历史记录入口，保留原实现便于后续恢复。
+        <el-tab-pane :label="$t('apiTesting.history.websocketRequest')" name="WEBSOCKET">
+          <HistoryTable
+            :data="websocketHistory"
+            :loading="loading"
+            @view-detail="viewDetail"
+            @retry-request="retryRequest"
+            @selection-change="handleSelectionChange"
+            @delete-item="handleDelete"
+          />
+        </el-tab-pane>
+      </el-tabs>
+      -->
+
+      <div class="pagination-container">
+        <el-pagination
+          v-model:current-page="currentPage"
+          v-model:page-size="pageSize"
+          :page-sizes="[10, 20, 50, 100]"
+          :total="total"
+          layout="total, sizes, prev, pager, next, jumper"
+          @size-change="handleSizeChange"
+          @current-change="handleCurrentChange"
+        />
+      </div>
+    </div>
 
     <!-- 详情对话框 -->
     <el-dialog
@@ -175,9 +196,9 @@ import dayjs from 'dayjs'
 import HistoryTable from './components/HistoryTable.vue'
 
 const { t } = useI18n()
-const activeTab = ref('HTTP')
 const httpHistory = ref([])
-const websocketHistory = ref([])
+// 暂时隐藏 WebSocket 历史状态，保留原实现便于后续恢复。
+// const websocketHistory = ref([])
 const loading = ref(false)
 const searchText = ref('')
 const currentPage = ref(1)
@@ -188,9 +209,11 @@ const selectedHistory = ref(null)
 const detailTab = ref('request')
 const selectedIds = ref([])
 
-const currentHistory = computed(() => {
-  return activeTab.value === 'HTTP' ? httpHistory.value : websocketHistory.value
-})
+// 暂时隐藏请求类型 Tab 状态，默认只展示 HTTP 请求历史。
+// const activeTab = ref('HTTP')
+// const currentHistory = computed(() => {
+//   return activeTab.value === 'HTTP' ? httpHistory.value : websocketHistory.value
+// })
 
 const responseBodyText = computed(() => {
   if (!selectedHistory.value?.response_data) return ''
@@ -243,21 +266,29 @@ const loadHistory = async () => {
     const params = {
       page: currentPage.value,
       page_size: pageSize.value,
-      request__request_type: activeTab.value
+      // 暂时固定查询 HTTP 历史，恢复 Tab 后改回 activeTab.value。
+      request__request_type: 'HTTP'
     }
 
     if (searchText.value) {
       params.search = searchText.value
     }
 
-    const response = await api.get('/api-testing/histories/', { params })
+    let response
+    try {
+      response = await api.get('/api-testing/histories/', { params })
+    } catch (error) {
+      // 删除当前页最后一条记录后，原页码可能超出范围，回退到上一页再加载。
+      if (error.response?.status === 404 && currentPage.value > 1) {
+        currentPage.value -= 1
+        await loadHistory()
+        return
+      }
+      throw error
+    }
     const data = response.data.results || response.data
 
-    if (activeTab.value === 'HTTP') {
-      httpHistory.value = data
-    } else {
-      websocketHistory.value = data
-    }
+    httpHistory.value = data
 
     total.value = response.data.count || data.length
   } catch (error) {
@@ -268,11 +299,12 @@ const loadHistory = async () => {
   }
 }
 
-const onTabChange = () => {
-  currentPage.value = 1
-  selectedIds.value = []
-  loadHistory()
-}
+// 暂时隐藏请求类型 Tab 切换逻辑，保留原实现便于后续恢复。
+// const onTabChange = () => {
+//   currentPage.value = 1
+//   selectedIds.value = []
+//   loadHistory()
+// }
 
 const handleSizeChange = (size) => {
   pageSize.value = size
@@ -387,35 +419,63 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.request-history {
-  padding: 20px;
+.page-container {
   height: 100%;
-  display: flex;
-  flex-direction: column;
+  overflow-y: auto;
+  background: #f5f5f5;
 }
 
-.header {
+.page-header {
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  margin-bottom: 20px;
+  margin-bottom: 10px;
+  background: #fff;
+  padding: 10px 20px;
+  border-radius: 4px;
 }
 
-.header h3 {
+.page-container .page-header .page-title {
   margin: 0;
+  font-size: 24px;
+  font-weight: 700;
   color: #303133;
 }
 
-.filters {
-  display: flex;
-  gap: 10px;
-  align-items: center;
+/* 与 UI 自动化对应页面保持一致的响应式标题字号。 */
+@media screen and (max-width: 1920px) {
+  .page-container .page-header .page-title { font-size: 22px; }
 }
 
-.pagination {
-  margin-top: 20px;
+@media screen and (max-width: 1600px) {
+  .page-container .page-header .page-title { font-size: 20px; }
+}
+
+@media screen and (max-width: 1440px) {
+  .page-container .page-header .page-title { font-size: 18px; }
+}
+
+@media screen and (max-width: 1280px) {
+  .page-container .page-header .page-title { font-size: 16px; }
+}
+
+@media screen and (max-width: 480px) {
+  .page-container .page-header .page-title { font-size: 14px; }
+}
+
+.card-container {
+  background: #fff;
+  padding: 20px;
+  border-radius: 4px;
+}
+
+.filter-bar {
+  margin-bottom: 10px;
+}
+
+.pagination-container {
+  margin-top: 10px;
   display: flex;
-  justify-content: center;
+  justify-content: flex-end;
 }
 
 .history-detail {

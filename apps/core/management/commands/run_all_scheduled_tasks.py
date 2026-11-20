@@ -46,6 +46,9 @@ class Command(BaseCommand):
                 # 调度 API 测试模块的定时任务
                 api_count = self.schedule_api_tasks()
 
+                # 收敛 Worker 异常退出后永久停留在 RUNNING 的场景执行记录
+                self.sweep_api_executions()
+
                 # 调度 UI 自动化模块的定时任务
                 ui_count = self.schedule_ui_tasks()
 
@@ -78,6 +81,24 @@ class Command(BaseCommand):
                     break
                 self.stdout.write(f"等待 {interval} 秒后重试...")
                 time.sleep(interval)
+
+    def sweep_api_executions(self):
+        """把失联的 API 场景执行记录收敛为 FAILED。
+        方案要求 Worker 异常终止后不能永久停在 RUNNING；该动作本身不重跑场景，
+        只标记中断，因此可以每个调度周期执行。
+        """
+        try:
+            from apps.api_testing.tasks import sweep_stale_executions
+
+            count = sweep_stale_executions()
+            if count:
+                self.stdout.write(self.style.WARNING(
+                    f"  [API] 已收敛失联的执行记录 {count} 条"))
+            return count
+        except Exception as e:  # noqa: BLE001 - 清理失败不能中断调度器
+            logger.error(f"收敛失联执行记录失败: {e}", exc_info=True)
+            self.stdout.write(self.style.ERROR(f"  [API] 收敛失联执行记录失败: {e}"))
+            return 0
 
     def schedule_api_tasks(self):
         """调度 API 测试模块的定时任务"""

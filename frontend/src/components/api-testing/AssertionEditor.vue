@@ -1,7 +1,7 @@
 <template>
   <div class="assertions-editor" :class="{ compact }">
     <div class="assertions-header">
-      <el-button size="small" type="primary" @click="addAssertion">
+      <el-button type="primary" size="small" @click="addAssertion">
         <el-icon><Plus /></el-icon>
         {{ $t('apiTesting.interface.addAssertion') }}
       </el-button>
@@ -13,32 +13,48 @@
           <el-input
             v-model="assertion.name"
             :placeholder="$t('apiTesting.interface.assertionName')"
-            size="small"
             class="assertion-name"
           />
-          <el-button size="small" type="danger" @click="removeAssertion(index)" circle>
+          <el-button link type="danger" @click="removeAssertion(index)">
             <el-icon><Delete /></el-icon>
           </el-button>
         </div>
 
         <div class="assertion-config">
-          <el-select
-            v-model="assertion.type"
-            :placeholder="$t('apiTesting.interface.selectAssertionType')"
-            size="small"
-            @change="resetAssertion(assertion)"
-          >
-            <el-option :label="$t('apiTesting.interface.assertionTypes.statusCode')" value="status_code" />
-            <el-option :label="$t('apiTesting.interface.assertionTypes.responseTime')" value="response_time" />
-            <el-option :label="$t('apiTesting.interface.assertionTypes.contains')" value="contains" />
-            <el-option :label="$t('apiTesting.interface.assertionTypes.jsonPath')" value="json_path" />
-            <el-option :label="$t('apiTesting.interface.assertionTypes.header')" value="header" />
-            <el-option :label="$t('apiTesting.interface.assertionTypes.equals')" value="equals" />
-          </el-select>
+          <div class="assertion-config-row">
+            <el-select
+              v-model="assertion.type"
+              class="assertion-type"
+              :placeholder="$t('apiTesting.interface.selectAssertionType')"
+
+              @change="resetAssertion(assertion)"
+            >
+              <el-option :label="$t('apiTesting.interface.assertionTypes.statusCode')" value="status_code" />
+              <el-option :label="$t('apiTesting.interface.assertionTypes.responseTime')" value="response_time" />
+              <el-option :label="$t('apiTesting.interface.assertionTypes.contains')" value="contains" />
+              <el-option :label="$t('apiTesting.interface.assertionTypes.jsonPath')" value="json_path" />
+              <el-option :label="$t('apiTesting.interface.assertionTypes.header')" value="header" />
+              <el-option :label="$t('apiTesting.interface.assertionTypes.equals')" value="equals" />
+            </el-select>
+            <el-select
+              v-if="assertion.type === 'json_path'"
+              v-model="assertion.operator"
+              class="assertion-operator"
+
+              @change="resetOperator(assertion)"
+            >
+              <el-option
+                v-for="option in operatorOptions"
+                :key="option.value"
+                :label="$t(option.label)"
+                :value="option.value"
+              />
+            </el-select>
+          </div>
 
           <div v-if="assertion.type" class="assertion-params">
             <template v-if="assertion.type === 'status_code' && isCollectionAssertion(assertion)">
-              <el-input :model-value="JSON.stringify(assertion.expected)" readonly size="small" />
+              <el-input :model-value="JSON.stringify(assertion.expected)" readonly />
               <span class="assertion-hint">
                 {{ $t('apiTesting.interface.collectionAssertionReadOnly') }}
               </span>
@@ -48,38 +64,25 @@
               v-model="assertion.expected"
               :min="100"
               :max="599"
-              size="small"
+             
               :placeholder="$t('apiTesting.interface.expectedStatusCode')"
             />
             <el-input-number
               v-else-if="assertion.type === 'response_time'"
               v-model="assertion.expected"
               :min="1"
-              size="small"
+             
               :placeholder="$t('apiTesting.interface.maxResponseTime')"
             />
             <template v-else-if="assertion.type === 'json_path'">
-              <el-select
-                v-model="assertion.operator"
-                class="assertion-operator"
-                size="small"
-                @change="resetOperator(assertion)"
-              >
-                <el-option
-                  v-for="option in operatorOptions"
-                  :key="option.value"
-                  :label="$t(option.label)"
-                  :value="option.value"
-                />
-              </el-select>
               <el-input
                 v-model="assertion.json_path"
                 :placeholder="$t('apiTesting.interface.jsonPathExample')"
-                size="small"
+               
                 class="assertion-input"
               />
               <template v-if="isCollectionAssertion(assertion)">
-                <el-input :model-value="JSON.stringify(assertion.expected)" readonly size="small" />
+                <el-input :model-value="JSON.stringify(assertion.expected)" readonly />
                 <span class="assertion-hint">
                   {{ $t('apiTesting.interface.collectionAssertionReadOnly') }}
                 </span>
@@ -87,7 +90,7 @@
               <AssertionValueInput
                 v-else-if="operatorNeedsValue(assertion)"
                 v-model="assertion.expected"
-                :placeholder="$t('apiTesting.interface.expectedValue')"
+                placeholder="apiTesting.interface.expectedValue"
                 :show-helpers="showHelpers"
                 :assertion="assertion"
                 field="expected"
@@ -103,12 +106,12 @@
               <el-input
                 v-model="assertion.header_name"
                 :placeholder="$t('apiTesting.interface.headerNameLabel')"
-                size="small"
+               
                 class="assertion-input"
               />
               <AssertionValueInput
                 v-model="assertion.expected_value"
-                :placeholder="$t('apiTesting.interface.expectedValue')"
+                placeholder="apiTesting.interface.expectedValue"
                 :show-helpers="showHelpers"
                 :assertion="assertion"
                 field="expected_value"
@@ -134,7 +137,7 @@
 
       <div v-if="assertions.length === 0" class="no-assertions">
         <p>{{ $t('apiTesting.interface.noAssertions') }}</p>
-        <el-button size="small" type="primary" @click="addAssertion">
+        <el-button type="primary" size="small" @click="addAssertion">
           <el-icon><Plus /></el-icon>
           {{ $t('apiTesting.interface.addFirstAssertion') }}
         </el-button>
@@ -242,21 +245,16 @@ const valuePlaceholder = type => (
 </script>
 
 <style scoped>
+/* 与 KeyValueEditor 保持一致的紧凑分区：8px 内边距与间距。 */
 .assertions-editor {
-  padding: 20px;
-  background: #f8f9fa;
-  border-radius: 12px;
-  border: 1px solid #e9ecef;
+  background: white;
+  border: 1px solid #e4e7ed;
+  border-radius: 4px;
 }
 
 .assertions-editor.compact {
-  padding: 0;
   border: 0;
   background: transparent;
-}
-
-.assertions-editor.compact .assertion-item {
-  padding: 14px;
 }
 
 .assertions-editor.compact .assertions-list {
@@ -266,74 +264,73 @@ const valuePlaceholder = type => (
 }
 
 .assertions-header {
-  margin-bottom: 20px;
-  padding-bottom: 16px;
-  border-bottom: 1px solid #e9ecef;
+  display: flex;
+  align-items: center;
+  padding: 8px;
+  border-bottom: 1px solid #e4e7ed;
+  background: #fafbfc;
 }
 
 .assertions-list {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 8px;
+  padding: 8px;
 }
 
 .assertion-item {
-  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
   background: white;
   border: 1px solid #e9ecef;
-  border-radius: 10px;
+  border-radius: 4px;
 }
 
 .assertion-header {
   display: flex;
   align-items: center;
-  margin-bottom: 16px;
+  gap: 8px;
 }
 
 .assertion-name {
   flex: 1;
-  margin-right: 12px;
+  min-width: 0;
 }
 
-.assertion-config,
-.assertion-params {
+.assertion-config {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 8px;
 }
 
-.assertion-config .el-select {
+.assertion-config-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.assertion-type,
+.assertion-operator {
+  flex: 0 0 200px;
   width: 200px;
 }
 
-.assertion-input {
-  margin-bottom: 12px;
-}
-
-.assertion-operator {
-  width: 100%;
-  margin-bottom: 8px;
+.assertion-params {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .assertion-hint {
   display: block;
-  margin-bottom: 12px;
   font-size: 12px;
   color: #909399;
 }
 
-.assertion-value-input {
-  display: flex;
-  align-items: center;
-  width: 100%;
-  gap: 5px;
-}
-
-.assertion-value-input .el-input {
-  flex: 1;
-}
-
 .no-assertions {
+  padding: 8px;
   text-align: center;
   color: #909399;
 }

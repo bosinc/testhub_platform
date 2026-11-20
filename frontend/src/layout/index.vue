@@ -621,7 +621,8 @@ const breadcrumbTitle = computed(() => {
 // 无法从路由表推断的页面（详情页等）：固定文案
 const detailBreadcrumbs = {
   ExecutionDetail: { parent: 'menu.testPlan', parentPath: '/ai-generation/executions', leaf: 'execution.planDetail' },
-  UiReportDetail: { parent: 'menu.testReport', parentPath: '/ui-automation/reports', leaf: 'uiAutomation.report.reportDetail' }
+  UiReportDetail: { parent: 'menu.testReport', parentPath: '/ui-automation/reports', leaf: 'uiAutomation.report.reportDetail' },
+  ApiReportDetail: { parent: 'menu.testReport', parentPath: '/api-testing/reports', leaf: 'apiTesting.report.reportDetail' }
 }
 
 const breadcrumbItems = computed(() => {

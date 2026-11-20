@@ -15,7 +15,7 @@ from django.utils import timezone
 from rest_framework.test import APIClient
 
 from ..models import (
-    ApiProject, ScenarioCase, TestExecution, TestSuite, TestSuiteItem,
+    ApiProject, Environment, ScenarioCase, TestExecution, TestSuite, TestSuiteItem,
 )
 
 User = get_user_model()
@@ -28,8 +28,10 @@ class ExecuteViewFixture(TestCase):
             name='接口项目', project_type='HTTP', status='IN_PROGRESS', owner=self.user)
         self.scenario = ScenarioCase.objects.create(
             project=self.project, name='登录场景', created_by=self.user)
+        self.environment = Environment.objects.create(
+            name='测试环境', scope='LOCAL', project=self.project, created_by=self.user)
         self.suite = TestSuite.objects.create(
-            project=self.project, name='冒烟套件', created_by=self.user)
+            project=self.project, name='冒烟套件', environment=self.environment, created_by=self.user)
         TestSuiteItem.objects.create(
             test_suite=self.suite, scenario_case=self.scenario)
 
@@ -95,7 +97,7 @@ class TestSuiteExecuteViewTest(ExecuteViewFixture):
 
     def test_empty_suite_is_reported_as_failure(self):
         empty_suite = TestSuite.objects.create(
-            project=self.project, name='空套件', created_by=self.user)
+            project=self.project, name='空套件', environment=self.environment, created_by=self.user)
         with patch('apps.api_testing.views.execute_test_suite',
                    return_value={'success': False, 'test_suite': empty_suite.name,
                                  'suite_execution_id': 99, 'results': []}):

@@ -5,7 +5,7 @@ from rest_framework.routers import DefaultRouter
 from .views import (
     ApiProjectViewSet, ApiCollectionViewSet, ApiRequestViewSet,
     EnvironmentViewSet, RequestHistoryViewSet, ScenarioCaseViewSet,
-    ScenarioCaseRequestViewSet, TestExecutionViewSet, UserViewSet,
+    TestExecutionViewSet, UserViewSet, ApiSuiteExecutionViewSet,
     ScheduledTaskViewSet, TaskExecutionLogViewSet, NotificationLogViewSet,
     TaskNotificationSettingViewSet, OperationLogViewSet,
     ApiDashboardViewSet, AIServiceConfigViewSet,
@@ -22,8 +22,8 @@ router.register(r'histories', RequestHistoryViewSet)
 router.register(r'scenario-cases', ScenarioCaseViewSet, basename='scenario-case')
 router.register(r'scenario-case-folders', ScenarioCaseFolderViewSet, basename='scenario-case-folder')
 router.register(r'test-suites', TestSuiteViewSet, basename='test-suite')
-router.register(r'scenario-case-requests', ScenarioCaseRequestViewSet, basename='scenario-case-request')
 router.register(r'test-executions', TestExecutionViewSet)
+router.register(r'suite-executions', ApiSuiteExecutionViewSet, basename='suite-execution')
 # The plan exposes step polling under /executions/; keep the historical
 # /test-executions/ route so existing pages keep working.
 router.register(r'executions', TestExecutionViewSet, basename='execution')

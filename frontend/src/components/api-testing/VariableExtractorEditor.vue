@@ -2,7 +2,7 @@
   <div class="extractors-editor" :class="{ compact }">
     <div class="extractors-header">
       <span v-if="showTitle">{{ $t('apiTesting.interface.variableExtraction') }}</span>
-      <el-button size="small" type="primary" @click="addExtractor">
+      <el-button type="primary" @click="addExtractor">
         <el-icon><Plus /></el-icon>
         {{ $t('apiTesting.interface.addExtractor') }}
       </el-button>
@@ -10,26 +10,29 @@
 
     <div v-if="extractors.length" class="extractors-list">
       <div v-for="(extractor, index) in extractors" :key="index" class="extractor-row">
-        <el-input v-model="extractor.name" size="small" :placeholder="$t('apiTesting.interface.variableName')" />
-        <el-select v-model="extractor.source" size="small" class="extractor-source">
+        <el-input v-model="extractor.name" :placeholder="$t('apiTesting.interface.variableName')" />
+        <el-select v-model="extractor.source" class="extractor-source">
           <el-option :label="$t('apiTesting.interface.responseBody')" value="body" />
         </el-select>
-        <el-select v-model="extractor.type" size="small" class="extractor-type">
+        <el-select v-model="extractor.type" class="extractor-type">
           <el-option label="JSONPath" value="json_path" />
         </el-select>
         <el-input
           v-model="extractor.expression"
-          size="small"
           class="extractor-expression"
           :placeholder="$t('apiTesting.interface.jsonPathExtractorPlaceholder')"
         />
         <el-input
           v-model="extractor.default_value"
-          size="small"
           class="extractor-default"
           :placeholder="$t('apiTesting.interface.defaultValue')"
         />
-        <el-button size="small" type="danger" :icon="Delete" circle @click="removeExtractor(index)" />
+        <el-button
+          link
+          type="danger"
+          :icon="Delete"
+          @click.stop="removeExtractor(index)"
+        />
       </div>
     </div>
     <el-empty
@@ -42,7 +45,7 @@
       <strong>{{ $t('apiTesting.interface.extractionResults') }}</strong>
       <div v-for="(result, index) in results" :key="`${result.name}-${index}`" class="extraction-result-row">
         <span>{{ result.name }}</span>
-        <el-tag :type="result.success ? 'success' : 'danger'" size="small">
+        <el-tag :type="result.success ? 'success' : 'danger'">
           {{ result.success ? formatValue(result.value) : result.error }}
         </el-tag>
       </div>
@@ -96,33 +99,45 @@ const formatValue = value => (
 </script>
 
 <style scoped>
+/* 与 KeyValueEditor 保持一致的紧凑分区：8px 内边距与间距。 */
 .extractors-editor {
-  padding: 20px;
-  background: #f8f9fa;
-  border: 1px solid #e9ecef;
-  border-radius: 8px;
+  background: white;
+  border: 1px solid #e4e7ed;
+  border-radius: 4px;
 }
 
 .extractors-editor.compact {
-  padding: 0;
-  background: transparent;
   border: 0;
+  background: transparent;
 }
 
 .extractors-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 16px;
+  gap: 8px;
+  padding: 8px;
+  border-bottom: 1px solid #e4e7ed;
+  background: #fafbfc;
   font-weight: 600;
+}
+
+.extractors-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
 }
 
 .extractor-row {
   display: grid;
-  grid-template-columns: minmax(90px, 1fr) 90px 96px minmax(150px, 1.7fr) minmax(96px, 1fr) 36px;
+  grid-template-columns: minmax(90px, 1fr) 90px 96px minmax(150px, 1.7fr) minmax(96px, 1fr) 24px;
   gap: 8px;
   align-items: center;
-  margin-bottom: 10px;
+}
+
+.extractors-editor :deep(.el-empty) {
+  padding: 8px 0;
 }
 
 .extractor-source,
@@ -139,8 +154,8 @@ const formatValue = value => (
 }
 
 .extraction-results {
-  margin-top: 18px;
-  padding-top: 14px;
+  margin: 0 8px 8px;
+  padding-top: 8px;
   border-top: 1px solid #e4e7ed;
 }
 

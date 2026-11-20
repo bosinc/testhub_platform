@@ -9,7 +9,7 @@ staying in progress forever.
 import logging
 from datetime import timedelta
 
-from django.db import close_old_connections
+from django.db import close_old_connections, connection
 from django.db.models import Q
 from django.utils import timezone
 
@@ -53,11 +53,25 @@ def run_scenario_execution(execution_id, environment_id=None):
         logger.exception('[ApiExecutor] 异步执行异常 execution_id=%s', execution_id)
         TestExecution.objects.filter(pk=execution_id).update(
             status='FAILED', conclusion='FAILED', end_time=timezone.now(),
-            results=[{'status': 'ERROR', 'error': str(exc)}],
+            results={
+                'total_steps': 0,
+                'passed_steps': 0,
+                'failed_steps': 1,
+                'skipped_steps': 0,
+                'passed_requests': 0,
+                'failed_requests': 0,
+                'total_requests': 0,
+                'average_response_time': 0,
+                'error': str(exc),
+            },
         )
         return {'execution_id': execution_id, 'success': False, 'error': str(exc)}
     finally:
-        close_old_connections()
+        # Django TestCase keeps an outer transaction open; closing that connection
+        # here marks it broken and makes the next test query fail. Real queue
+        # workers are outside an atomic block and still release stale connections.
+        if not connection.in_atomic_block:
+            close_old_connections()
 
 
 def sweep_stale_executions(older_than=STALE_HEARTBEAT):
@@ -72,9 +86,11 @@ def sweep_stale_executions(older_than=STALE_HEARTBEAT):
         execution.status = 'FAILED'
         execution.conclusion = 'FAILED'
         execution.end_time = timezone.now()
-        execution.results = list(execution.results or []) + [{
-            'status': 'ERROR', 'error': '执行进程失联，已标记为中断',
-        }]
+        execution.results = {
+            **(execution.results if isinstance(execution.results, dict) else {}),
+            'failed_steps': 1,
+            'error': '执行进程失联，已标记为中断',
+        }
         execution.save(update_fields=['status', 'conclusion', 'end_time', 'results'])
         count += 1
     return count

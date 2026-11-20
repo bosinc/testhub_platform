@@ -192,6 +192,17 @@ class ControlFlowTests(SimpleTestCase):
         self.assertEqual(statuses[then_step['id']], SKIPPED)
         self.assertEqual(statuses[else_step['id']], PASSED)
 
+    def test_skipped_condition_children_keep_their_parent_invocation(self):
+        condition = node('condition', {'left': 1, 'operator': 'gte', 'right': 2,
+                                       'right_type': 'number'})
+        child = http_node(parent=condition['id'])
+        transport = fake_transport(FakeResponse({}))
+        with patch('apps.api_testing.scenario_executor.execute_request', transport):
+            _, outcome = run([condition, child])
+        result = next(item for item in outcome['results'] if item['step_id'] == child['id'])
+        self.assertEqual(result['parent_invocation_id'], condition['id'])
+        self.assertEqual(result['invocation_id'], f'{condition["id"]}/{child["id"]}')
+
     def test_condition_operators_cover_common_cases(self):
         cases = [
             ({'left': 'abc', 'operator': 'contains', 'right': 'b', 'right_type': 'string'}, True),
@@ -215,7 +226,9 @@ class ControlFlowTests(SimpleTestCase):
         with patch('apps.api_testing.scenario_executor.execute_request', transport):
             _, outcome = run([loop, body])
         self.assertEqual(len(transport.calls), 3)
-        self.assertEqual(outcome['passed'], 4)
+        # The loop container aggregates its body; only leaf steps count as passes.
+        self.assertEqual(outcome['passed'], 3)
+        self.assertEqual(outcome['request_total'], 3)
 
     def test_foreach_iterates_the_array_expression(self):
         loop = node('foreach', {'array_expression': '{{ vars.items }}'})
@@ -223,6 +236,16 @@ class ControlFlowTests(SimpleTestCase):
         transport = fake_transport(FakeResponse({}))
         with patch('apps.api_testing.scenario_executor.execute_request', transport):
             _, outcome = run([loop, body], variables={'items': [{'id': 1}, {'id': 2}]})
+        self.assertEqual([call['dto']['url'] for call in transport.calls],
+                         ['/users/1', '/users/2'])
+        self.assertEqual(outcome['failed'], 0)
+
+    def test_foreach_iterates_a_bare_variable_expression(self):
+        loop = node('foreach', {'array_expression': '{{post_list}}'})
+        body = http_node(parent=loop['id'], url='/users/{{ loop.item.id }}')
+        transport = fake_transport(FakeResponse({}))
+        with patch('apps.api_testing.scenario_executor.execute_request', transport):
+            _, outcome = run([loop, body], variables={'post_list': [{'id': 1}, {'id': 2}]})
         self.assertEqual([call['dto']['url'] for call in transport.calls],
                          ['/users/1', '/users/2'])
         self.assertEqual(outcome['failed'], 0)
@@ -235,14 +258,100 @@ class ControlFlowTests(SimpleTestCase):
         self.assertEqual(outcome['failed'], 1)
         self.assertIn('数组', outcome['results'][0]['error'])
 
-    def test_break_if_stops_the_loop(self):
-        loop = node('for', {'count': 5, 'break_if': {
-            'left': '{{ loop.index }}', 'operator': 'gte', 'right': 2, 'right_type': 'number'}})
-        body = http_node(parent=loop['id'])
+    def test_break_if_step_stops_after_steps_before_it(self):
+        loop = node('for', {'count': 5})
+        body = http_node(parent=loop['id'], position=0)
+        break_if = node('break_if', {
+            'left': '{{ loop.index }}', 'operator': 'gte', 'right': 2, 'right_type': 'number'
+        }, parent=loop['id'], position=1)
         transport = fake_transport(FakeResponse({}))
         with patch('apps.api_testing.scenario_executor.execute_request', transport):
-            run([loop, body])
-        self.assertEqual(len(transport.calls), 2)
+            _, outcome = run([loop, body, break_if])
+        self.assertEqual(len(transport.calls), 3)
+        loop_result = next(result for result in outcome['results'] if result['type'] == 'for')
+        self.assertEqual(loop_result['output']['iterations'], 3)
+        self.assertEqual(loop_result['output']['completed_iterations'], 2)
+        self.assertEqual(loop_result['output']['break_iteration'], 2)
+
+    def test_break_if_step_before_request_skip_request(self):
+        loop = node('for', {'count': 5})
+        break_if = node('break_if', {
+            'left': '{{ loop.index }}', 'operator': 'gte', 'right': 0, 'right_type': 'number'
+        }, parent=loop['id'], position=0)
+        body = http_node(parent=loop['id'], position=1)
+        transport = fake_transport(FakeResponse({}))
+        with patch('apps.api_testing.scenario_executor.execute_request', transport):
+            _, outcome = run([loop, break_if, body])
+        self.assertEqual(len(transport.calls), 0)
+        loop_result = next(result for result in outcome['results'] if result['type'] == 'for')
+        self.assertEqual(loop_result['output']['iterations'], 1)
+        self.assertEqual(loop_result['output']['completed_iterations'], 0)
+        self.assertEqual(loop_result['output']['break_iteration'], 0)
+
+    def test_break_if_before_wait_does_not_count_interrupt_round_as_complete(self):
+        loop = node('for', {'count': 3})
+        break_if = node('break_if', {
+            'left': '{{ loop.index }}', 'operator': 'gt', 'right': 1, 'right_type': 'number'
+        }, parent=loop['id'], position=0)
+        body = node('wait', {'duration_ms': 1000}, parent=loop['id'], position=1)
+        with patch('apps.api_testing.scenario_executor.time.sleep') as sleep:
+            _, outcome = run([loop, break_if, body])
+        wait_results = [result for result in outcome['results'] if result['type'] == 'wait']
+        self.assertEqual(len(wait_results), 2)
+        self.assertGreater(sleep.call_count, 0)
+        loop_result = next(result for result in outcome['results'] if result['type'] == 'for')
+        self.assertEqual(loop_result['output']['iterations'], 3)
+        self.assertEqual(loop_result['output']['completed_iterations'], 2)
+        self.assertEqual(loop_result['output']['break_iteration'], 2)
+
+    def test_wait_before_break_if_records_execution_order_and_condition_details(self):
+        loop = node('for', {'count': 3})
+        wait = node('wait', {'duration_ms': 1000}, parent=loop['id'], position=0)
+        break_if = node('break_if', {
+            'left': '{{ loop.index }}', 'operator': 'gte', 'right': 0, 'right_type': 'number'
+        }, parent=loop['id'], position=1)
+        following = http_node(parent=loop['id'], position=2)
+        transport = fake_transport(FakeResponse({}))
+        with patch('apps.api_testing.scenario_executor.execute_request', transport):
+            with patch('apps.api_testing.scenario_executor.time.sleep'):
+                _, outcome = run([loop, wait, break_if, following])
+
+        executed = outcome['results']
+        self.assertEqual([result['type'] for result in executed[:3]], ['wait', 'break_if', 'for'])
+        break_result = executed[1]
+        self.assertEqual(break_result['status'], PASSED)
+        self.assertEqual(break_result['output'], {
+            'matched': True,
+            'left': '{{ loop.index }}',
+            'operator': 'gte',
+            'right': 0,
+            'right_type': 'number',
+        })
+        self.assertEqual(len(transport.calls), 0)
+
+    def test_loop_on_error_policies(self):
+        assertion = [{'name': '状态码', 'type': 'status_code', 'expected': 201}]
+        expectations = {
+            # 忽略：本轮剩余步骤继续执行。
+            'continue': 6,
+            # 跳到下一轮：本轮第二个请求被跳过。
+            'next_iteration': 3,
+            # 结束循环：第一轮失败后不再进入下一轮。
+            'break_loop': 1,
+            # 结束运行：第一轮第一个请求失败后终止场景。
+            'abort_scenario': 1,
+        }
+        for policy, calls in expectations.items():
+            with self.subTest(policy=policy):
+                loop = node('for', {'count': 3, 'on_error': policy})
+                failing = http_node(parent=loop['id'], position=0, assertions=assertion)
+                following = http_node(parent=loop['id'], position=1)
+                transport = fake_transport(FakeResponse({}))
+                with patch('apps.api_testing.scenario_executor.execute_request', transport):
+                    _, outcome = run([loop, failing, following])
+                self.assertEqual(len(transport.calls), calls)
+                if policy == 'abort_scenario':
+                    self.assertIn('断言未通过', outcome['error'])
 
     def test_disabled_steps_are_skipped_with_their_subtree(self):
         group = node('group', enabled=False)
@@ -304,7 +413,8 @@ class ScenarioTreeTests(TestCase):
         execution = TestExecution.objects.get(pk=result['execution_id'])
         self.assertEqual(execution.status, 'COMPLETED')
         self.assertEqual(execution.total_requests, 1)
-        self.assertEqual(execution.results[0]['status'], PASSED)
+        self.assertEqual(execution.results['passed_requests'], 1)
+        self.assertNotIn('output', execution.results)
 
     def test_environment_variables_reach_the_request(self):
         self._save([http_node(url='/{{ env.tenant }}/users')])
@@ -357,17 +467,3 @@ class ScenarioTreeTests(TestCase):
         forward = node('scenario_ref', {}, source_type='scenario_case', source_id=str(other.pk))
         with self.assertRaises(ValidationError):
             self._save([forward])
-
-    def test_flat_legacy_scenario_still_uses_the_old_path(self):
-        from ..models import ApiCollection, ApiRequest, ScenarioCaseRequest
-        from ..utils import execute_scenario_case
-
-        collection = ApiCollection.objects.create(name='集合', project=self.project)
-        api_request = ApiRequest.objects.create(
-            collection=collection, name='请求', method='GET', url='/legacy',
-            created_by=self.user)
-        ScenarioCaseRequest.objects.create(
-            scenario_case=self.scenario, request=api_request, order=0)
-        result = execute_scenario_case(self.scenario, self.environment, self.user)
-        self.assertIn('execution_id', result)
-        self.assertEqual(result['total_count'], 1)

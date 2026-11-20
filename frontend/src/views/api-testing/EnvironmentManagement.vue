@@ -1,58 +1,60 @@
 <template>
-  <div class="environment-management">
-    <div class="header">
-      <h3>{{ $t('apiTesting.environment.title') }}</h3>
+  <div class="page-container">
+    <div class="page-header">
+      <h1 class="page-title">{{ $t('apiTesting.environment.title') }}</h1>
       <el-button type="primary" @click="openCreateDialog">
         <el-icon><Plus /></el-icon>
         {{ $t('apiTesting.environment.createEnvironment') }}
       </el-button>
     </div>
 
-    <el-tabs v-model="activeTab" @tab-change="onTabChange">
-      <el-tab-pane :label="$t('apiTesting.environment.scopeTypes.global')" name="GLOBAL">
-        <EnvironmentTable
-          :data="globalEnvironments"
-          :loading="loading"
-          scope="GLOBAL"
-          @edit="editEnvironment"
-          @delete="deleteEnvironment"
-          @activate="activateEnvironment"
-          @duplicate="duplicateEnvironment"
-        />
-      </el-tab-pane>
-      <el-tab-pane :label="$t('apiTesting.environment.scopeTypes.local')" name="LOCAL">
-        <div class="local-env-header">
-          <el-select
-            v-model="selectedProject"
-            :placeholder="$t('apiTesting.common.selectProject')"
-            @change="loadLocalEnvironments"
-            style="width: 200px;"
-          >
-            <el-option
-              v-for="project in projects"
-              :key="project.id"
-              :label="project.name"
-              :value="project.id"
-            />
-          </el-select>
-        </div>
-        <EnvironmentTable
-          :data="localEnvironments"
-          :loading="loading"
-          scope="LOCAL"
-          @edit="editEnvironment"
-          @delete="deleteEnvironment"
-          @activate="activateEnvironment"
-          @duplicate="duplicateEnvironment"
-        />
-      </el-tab-pane>
-    </el-tabs>
+    <div class="card-container">
+      <el-tabs v-model="activeTab" @tab-change="onTabChange">
+        <el-tab-pane :label="$t('apiTesting.environment.scopeTypes.global')" name="GLOBAL">
+          <EnvironmentTable
+            :data="globalEnvironments"
+            :loading="loading"
+            scope="GLOBAL"
+            @edit="editEnvironment"
+            @delete="deleteEnvironment"
+            @activate="activateEnvironment"
+            @duplicate="duplicateEnvironment"
+          />
+        </el-tab-pane>
+        <el-tab-pane :label="$t('apiTesting.environment.scopeTypes.local')" name="LOCAL">
+          <div class="local-env-header">
+            <el-select
+              v-model="selectedProject"
+              :placeholder="$t('apiTesting.common.selectProject')"
+              @change="loadLocalEnvironments"
+              style="width: 200px;"
+            >
+              <el-option
+                v-for="project in projects"
+                :key="project.id"
+                :label="project.name"
+                :value="project.id"
+              />
+            </el-select>
+          </div>
+          <EnvironmentTable
+            :data="localEnvironments"
+            :loading="loading"
+            scope="LOCAL"
+            @edit="editEnvironment"
+            @delete="deleteEnvironment"
+            @activate="activateEnvironment"
+            @duplicate="duplicateEnvironment"
+          />
+        </el-tab-pane>
+      </el-tabs>
+    </div>
 
     <!-- 创建/编辑环境对话框 -->
     <el-dialog
       v-model="showCreateDialog"
       :title="editingEnvironment ? $t('apiTesting.environment.editEnvironment') : $t('apiTesting.environment.createEnvironment')"
-      width="800px"
+      width="60vw"
       :close-on-click-modal="false"
       @close="resetForm"
     >
@@ -60,7 +62,7 @@
         ref="formRef"
         :model="form"
         :rules="rules"
-        label-width="120px"
+        label-width="90px"
       >
         <el-form-item :label="$t('apiTesting.environment.environmentName')" prop="name">
           <el-input v-model="form.name" :placeholder="$t('apiTesting.environment.inputEnvironmentName')" />
@@ -117,21 +119,18 @@
                   <el-input
                     v-model="variable.key"
                     :placeholder="$t('apiTesting.environment.variableName')"
-                    size="small"
                   />
                 </div>
                 <div class="column">
                   <el-input
                     v-model="variable.initialValue"
                     :placeholder="$t('apiTesting.environment.initialValue')"
-                    size="small"
                   />
                 </div>
                 <div class="column">
                   <el-input
                     v-model="variable.currentValue"
                     :placeholder="$t('apiTesting.environment.currentValue')"
-                    size="small"
                   />
                 </div>
                 <div class="column">
@@ -527,26 +526,58 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.environment-management {
-  padding: 20px;
+.page-container {
+  height: 100%;
+  overflow-y: auto;
+  background: #f5f5f5;
 }
 
-.header {
+.page-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 20px;
+  margin-bottom: 10px;
+  background: #fff;
+  padding: 10px 20px;
+  border-radius: 4px;
 }
 
-.header h3 {
+.page-container .page-header .page-title {
   margin: 0;
+  font-size: 24px;
+  font-weight: 700;
   color: #303133;
 }
 
+/* 与 UI 自动化对应页面保持一致的响应式标题字号。 */
+@media screen and (max-width: 1920px) {
+  .page-container .page-header .page-title { font-size: 22px; }
+}
+
+@media screen and (max-width: 1600px) {
+  .page-container .page-header .page-title { font-size: 20px; }
+}
+
+@media screen and (max-width: 1440px) {
+  .page-container .page-header .page-title { font-size: 18px; }
+}
+
+@media screen and (max-width: 1280px) {
+  .page-container .page-header .page-title { font-size: 16px; }
+}
+
+@media screen and (max-width: 480px) {
+  .page-container .page-header .page-title { font-size: 14px; }
+}
+
+.card-container {
+  background: #fff;
+  border-radius: 4px;
+  padding: 20px;
+}
+
 .local-env-header {
-  margin-bottom: 15px;
-  padding-bottom: 15px;
-  border-bottom: 1px solid #e4e7ed;
+  margin-bottom: 10px;
 }
 
 .scope-help {
@@ -554,6 +585,7 @@ onMounted(async () => {
 }
 
 .variables-editor {
+  width: 100%;
   border: 1px solid #e4e7ed;
   border-radius: 4px;
   background: white;
@@ -563,7 +595,7 @@ onMounted(async () => {
   display: flex;
   background: #f5f7fa;
   border-bottom: 1px solid #e4e7ed;
-  padding: 8px;
+  padding: 0 4px;
   font-weight: 500;
   font-size: 12px;
   color: #606266;
@@ -592,6 +624,12 @@ onMounted(async () => {
   align-items: center;
   gap: 8px;
   padding: 0 4px;
+  min-width: 0;
+}
+
+/* 变量输入框使用标准尺寸，并撑满对应的表格列。 */
+.variable-row .column :deep(.el-input) {
+  width: 100%;
 }
 
 .column:last-child {

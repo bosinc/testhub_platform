@@ -52,9 +52,20 @@ export function batchGenerate(data) {
 }
 
 // 获取变量函数列表（用于变量助手）
+let variableFunctionsRequest = null
+
 export function getVariableFunctions() {
-  return request({
-    url: '/data-factory/variable_functions/',
-    method: 'get'
-  })
+  // 场景详情页会同时挂载多个 KeyValueEditor，共用同一个变量函数请求，避免重复调用接口。
+  if (!variableFunctionsRequest) {
+    variableFunctionsRequest = request({
+      url: '/data-factory/variable_functions/',
+      method: 'get'
+    }).catch(error => {
+      // 请求失败时清除缓存，后续重新进入页面仍可正常重试。
+      variableFunctionsRequest = null
+      throw error
+    })
+  }
+
+  return variableFunctionsRequest
 }

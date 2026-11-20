@@ -35,8 +35,9 @@ class ScopeLookupTests(SimpleTestCase):
         self.assertEqual(self.scope.require('env.nested.flag'), True)
         self.assertEqual(self.scope.require('vars.token'), 'abc')
 
-    def test_legacy_bare_name_prefers_environment_then_variables(self):
-        self.assertEqual(self.scope.require('tenant'), 'acme')
+    def test_legacy_bare_name_prefers_variables_then_environment(self):
+        self.scope.variables['tenant'] = 'scenario-tenant'
+        self.assertEqual(self.scope.require('tenant'), 'scenario-tenant')
         self.assertEqual(self.scope.require('token'), 'abc')
 
     def test_missing_placeholder_raises(self):
@@ -71,6 +72,12 @@ class StepOutputTests(SimpleTestCase):
         scope = VariableScope()
         scope.record_output('step-1', {'response': {'body': {'data': {'id': 5}}}})
         self.assertEqual(scope.require('steps.step-1.response.body.data.id'), 5)
+
+    def test_step_output_is_addressable_by_numeric_reference_id(self):
+        scope = VariableScope()
+        scope.step_reference_map['1'] = 'step-1'
+        scope.record_output('step-1', {'response': {'body': {'data': {'id': 5}}}})
+        self.assertEqual(scope.require('steps.1.response.body.data.id'), 5)
 
     def test_missing_step_output_raises(self):
         with self.assertRaises(VariableResolutionError):

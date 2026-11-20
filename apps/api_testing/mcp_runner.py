@@ -7,7 +7,7 @@ apps.mcp.actions 依赖本模块的 ``start_scenario_execution`` 与
 ``start_suite_execution``。与页面的同步执行不同，MCP 契约要求
 「立即返回执行记录 ID → 后台执行 → Agent 轮询结果」：
 
-- 场景用例执行复用 ``utils.execute_scenario_case``，执行体与页面一致
+- 场景用例执行复用 ``utils.execute_scenario_case``
 - 套件执行复用 ``utils.execute_test_suite``（传入预建记录），循环 / 汇总 /
   成功判定只有一份实现，本模块只负责建记录与起线程
 """
@@ -42,7 +42,17 @@ def _run_scenario_worker(execution, scenario_case, environment, user):
         try:
             execution.status = 'FAILED'
             execution.end_time = timezone.now()
-            execution.results = [{'passed': False, 'error': str(exc)}]
+            execution.results = {
+                'total_steps': 0,
+                'passed_steps': 0,
+                'failed_steps': 1,
+                'skipped_steps': 0,
+                'passed_requests': 0,
+                'failed_requests': 0,
+                'total_requests': 0,
+                'average_response_time': 0,
+                'error': str(exc),
+            }
             execution.save(update_fields=['status', 'end_time', 'results'])
         except Exception:  # noqa: BLE001
             logger.exception('[ApiSuiteRunner] 执行记录落库失败 id=%s', execution.id)
@@ -61,7 +71,7 @@ def start_scenario_execution(scenario_case, user, environment=None):
     Returns:
         TestExecution
     """
-    enabled_count = scenario_case.scenariocaserequest_set.filter(enabled=True).count()
+    enabled_count = scenario_case.steps.filter(enabled=True, type='http').count()
     execution = TestExecution.objects.create(
         scenario_case=scenario_case,
         status='RUNNING',
@@ -107,11 +117,11 @@ def start_suite_execution(test_suite, user, environment=None):
     """
     from .models import TestSuiteItem
 
-    total_scenarios = TestSuiteItem.objects.filter(
-        test_suite=test_suite, enabled=True).count()
+    items = list(TestSuiteItem.objects.filter(
+        test_suite=test_suite, enabled=True).select_related('scenario_case'))
+    total_scenarios = len(items)
     if not total_scenarios:
         raise ValueError(f'测试套件「{test_suite.name}」未包含任何启用的场景用例，无法执行')
-
     suite_execution = ApiSuiteExecution.objects.create(
         test_suite=test_suite,
         status='RUNNING',

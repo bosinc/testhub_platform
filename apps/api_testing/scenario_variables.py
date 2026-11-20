@@ -4,7 +4,7 @@ The plan replaces the legacy flat ``{{name}}`` lookup with explicit namespaces::
 
     {{env.tenant_id}}                           environment variables
     {{vars.token}}                              scenario run variables
-    {{steps.<step_uuid>.response.body.data}}    a previous step output
+    {{steps.<reference_id>.response.body.data}}  a previous step output
     {{loop.item.id}}                            current ForEach element
     {{loop.index}}                              current loop index
 
@@ -62,7 +62,7 @@ class VariableScope:
     """Mutable resolution scope shared by every step of one run.
 
     ``path`` identifies the current call path (empty for the scenario being
-    executed, ``('<ref_step_uuid>',)`` inside a referenced scenario). Step
+    executed, ``('<ref_step_id>',)`` inside a referenced scenario). Step
     outputs are stored per call path so a referenced scenario invoked twice, or
     a loop body run on several iterations, cannot read a neighbour's output.
     """
@@ -73,6 +73,7 @@ class VariableScope:
         self.outputs = {}
         self.path = tuple(path)
         self.loop_stack = []
+        self.step_reference_map = {}
 
     # -- scope bookkeeping -------------------------------------------------
     def push_loop(self, frame):
@@ -94,6 +95,7 @@ class VariableScope:
         scope.outputs = self.outputs
         scope.path = self.path + (str(invocation_id),)
         scope.loop_stack = list(self.loop_stack)
+        scope.step_reference_map = dict(self.step_reference_map)
         return scope
 
     def record_output(self, step_id, output):
@@ -118,6 +120,7 @@ class VariableScope:
             return navigate(self.variables, rest)
         if head == 'steps':
             step_id, _, path = rest.partition('.')
+            step_id = self.step_reference_map.get(step_id, step_id)
             for candidate in self._output_paths(step_id):
                 if candidate in self.outputs:
                     return navigate(self.outputs[candidate], path)
@@ -126,12 +129,10 @@ class VariableScope:
             if not self.loop_stack:
                 return MISSING
             return navigate(self.loop_stack[-1], rest)
-        # Legacy bare ``{{name}}``: environment first, then run variables. Kept
-        # only for data that predates the migration; new references must be
-        # namespaced.
-        value = navigate(self.environment, expression)
+        # Bare variables resolve from the scenario first, then the environment.
+        value = navigate(self.variables, expression)
         if value is MISSING:
-            value = navigate(self.variables, expression)
+            value = navigate(self.environment, expression)
         return value
 
     def require(self, expression):

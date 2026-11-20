@@ -1,8 +1,9 @@
-from rest_framework import viewsets, status
+from rest_framework import mixins, viewsets, status
 from rest_framework import serializers
 from rest_framework.decorators import action, api_view
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.exceptions import ValidationError
 from django.contrib.auth import get_user_model
 from django.shortcuts import get_object_or_404
 from django_filters.rest_framework import DjangoFilterBackend
@@ -24,26 +25,27 @@ import uuid
 import subprocess
 from urllib.parse import parse_qsl, quote, urlsplit
 from datetime import datetime, timedelta
+from copy import deepcopy
 
 from .models import (
     ApiProject, ApiCollection, ApiRequest, Environment,
-    RequestHistory, ScenarioCase, ScenarioCaseFolder, TestExecution, ScenarioCaseRequest,
+    RequestHistory, ScenarioCase, ScenarioCaseFolder, ScenarioStep, TestExecution,
     ScheduledTask, TaskExecutionLog, NotificationLog,
     TaskNotificationSetting, OperationLog, AIServiceConfig,
-    TestSuite,
+    TestSuite, ApiSuiteExecution,
 )
 
 from .serializers import (
     ApiProjectSerializer, ApiCollectionSerializer, ApiRequestSerializer,
     ApiCollectionTreeSerializer, ApiRequestTreeSerializer,
     EnvironmentSerializer, RequestHistorySerializer, ScenarioCaseSerializer,
-    ScenarioCaseRequestSerializer, ScenarioCaseFolderSerializer, TestExecutionSerializer,
+    ScenarioCaseFolderSerializer, TestExecutionSerializer,
     StepExecutionSerializer, UserSerializer,
     ScheduledTaskSerializer, TaskExecutionLogSerializer,
     NotificationLogSerializer, TaskNotificationSettingSerializer,
     NotificationLogDetailSerializer,
     TaskNotificationSettingDetailSerializer, OperationLogSerializer,
-    TestSuiteSerializer, AIServiceConfigSerializer,
+    TestSuiteSerializer, ApiSuiteExecutionSerializer, AIServiceConfigSerializer,
 )
 
 logger = logging.getLogger(__name__)
@@ -70,6 +72,7 @@ from .scenario_service import (
     step_capabilities,
     validate_only,
 )
+from .scenario_definition import clone_definition
 User = get_user_model()
 
 
@@ -79,6 +82,44 @@ def _wants_async(payload):
     if isinstance(value, bool):
         return value
     return str(value).lower() in ('1', 'true', 'yes')
+
+
+def _parse_sibling_ids(value):
+    """Validate the complete ordered sibling id list submitted by a move request."""
+    if not isinstance(value, list) or not value:
+        return None, '必须提交目标目录下完整的同级节点列表'
+    parsed = []
+    for item in value:
+        if isinstance(item, bool) or not isinstance(item, int):
+            return None, '同级节点列表必须由整数 id 组成'
+        parsed.append(item)
+    return parsed, None
+
+
+def _collection_is_ancestor_of(ancestor, node):
+    """Return True when ``ancestor`` is ``node`` or one of its parent collections."""
+    seen = set()
+    current = node
+    while current is not None:
+        if current.pk == ancestor.pk:
+            return True
+        if current.pk in seen:
+            return False
+        seen.add(current.pk)
+        current = current.parent
+    return False
+
+
+def _renumber_siblings(queryset):
+    """Persist a compact 0..n-1 ``order`` for one sibling set."""
+    siblings = list(queryset.order_by('order', 'created_at', 'id'))
+    dirty = []
+    for index, item in enumerate(siblings):
+        if item.order != index:
+            item.order = index
+            dirty.append(item)
+    if dirty:
+        queryset.model.objects.bulk_update(dirty, ['order'])
 
 
 from rest_framework.pagination import PageNumberPagination
@@ -315,6 +356,72 @@ class ApiCollectionViewSet(viewsets.ModelViewSet):
             user=self.request.user
         )
         instance.delete()
+
+    @action(detail=True, methods=['post'], url_path='move')
+    def move(self, request, pk=None):
+        """把集合移动到新的父目录，并按提交顺序重排同级集合。"""
+        collection = self.get_object()
+        parent_id = request.data.get('parent')
+        collection_ids, error = _parse_sibling_ids(request.data.get('collection_ids'))
+        if error:
+            return Response({'collection_ids': error}, status=status.HTTP_400_BAD_REQUEST)
+
+        parent = None
+        if parent_id is not None:
+            try:
+                parent = ApiCollection.objects.filter(
+                    pk=parent_id, project=collection.project).first()
+            except (TypeError, ValueError):
+                parent = None
+            if parent is None:
+                return Response({'parent': '父级目录不存在或不属于当前项目'},
+                                status=status.HTTP_400_BAD_REQUEST)
+            if _collection_is_ancestor_of(collection, parent):
+                return Response({'parent': '不能把集合移动到自身或其子目录下'},
+                                status=status.HTTP_400_BAD_REQUEST)
+
+        old_parent_id = collection.parent_id
+        new_parent_id = parent.pk if parent else None
+        with transaction.atomic():
+            siblings = list(
+                ApiCollection.objects.select_for_update()
+                .filter(project=collection.project, parent=parent)
+                .exclude(pk=collection.pk)
+            )
+            siblings_by_id = {item.pk: item for item in siblings}
+            siblings_by_id[collection.pk] = collection
+            if (len(collection_ids) != len(siblings_by_id)
+                    or set(collection_ids) != set(siblings_by_id)):
+                return Response(
+                    {'collection_ids': '必须提交目标目录下完整且有效的集合列表'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            collection.parent = parent
+            collection.save(update_fields=['parent', 'updated_at'])
+
+            ordered = []
+            for order, collection_id in enumerate(collection_ids):
+                node = siblings_by_id[collection_id]
+                node.order = order
+                ordered.append(node)
+            ApiCollection.objects.bulk_update(ordered, ['order'])
+
+            if old_parent_id != new_parent_id:
+                _renumber_siblings(
+                    ApiCollection.objects.select_for_update()
+                    .filter(project=collection.project, parent_id=old_parent_id)
+                )
+
+        log_operation(
+            operation_type='edit',
+            resource_type='collection',
+            resource_id=collection.id,
+            resource_name=collection.name,
+            user=request.user,
+            description=f"移动集合「{collection.name}」",
+        )
+        return Response(ApiCollectionTreeSerializer(collection).data)
 
     @action(detail=True, methods=['get'], url_path='export')
     def export_collection(self, request, pk=None):
@@ -553,6 +660,77 @@ class ApiRequestViewSet(viewsets.ModelViewSet):
         )
         instance.delete()
 
+    @action(detail=True, methods=['post'], url_path='move')
+    def move(self, request, pk=None):
+        """把接口移动到目标集合，并按提交顺序重排同级接口。"""
+        api_request = self.get_object()
+        collection_id = request.data.get('collection')
+        request_ids, error = _parse_sibling_ids(request.data.get('request_ids'))
+        if error:
+            return Response({'request_ids': error}, status=status.HTTP_400_BAD_REQUEST)
+
+        collection = None
+        if collection_id is not None:
+            accessible_projects = ApiProject.objects.filter(
+                models.Q(owner=request.user) | models.Q(members=request.user)
+            )
+            try:
+                collection = ApiCollection.objects.filter(
+                    pk=collection_id, project__in=accessible_projects).first()
+            except (TypeError, ValueError):
+                collection = None
+            if collection is None:
+                return Response({'collection': '目标目录不存在或无权访问'},
+                                status=status.HTTP_400_BAD_REQUEST)
+
+        old_collection_id = api_request.collection_id
+        new_collection_id = collection.pk if collection else None
+        with transaction.atomic():
+            sibling_filter = {'collection': collection}
+            if collection is None:
+                # 根级接口只展示当前用户创建的，排序范围也必须保持一致。
+                sibling_filter['created_by'] = request.user
+            siblings = list(
+                ApiRequest.objects.select_for_update()
+                .filter(**sibling_filter)
+                .exclude(pk=api_request.pk)
+            )
+            siblings_by_id = {item.pk: item for item in siblings}
+            siblings_by_id[api_request.pk] = api_request
+            if (len(request_ids) != len(siblings_by_id)
+                    or set(request_ids) != set(siblings_by_id)):
+                return Response(
+                    {'request_ids': '必须提交目标目录下完整且有效的接口列表'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            api_request.collection = collection
+            api_request.save(update_fields=['collection', 'updated_at'])
+
+            ordered = []
+            for order, request_id in enumerate(request_ids):
+                node = siblings_by_id[request_id]
+                node.order = order
+                ordered.append(node)
+            ApiRequest.objects.bulk_update(ordered, ['order'])
+
+            if old_collection_id != new_collection_id:
+                source_queryset = ApiRequest.objects.select_for_update().filter(
+                    collection_id=old_collection_id)
+                if old_collection_id is None:
+                    source_queryset = source_queryset.filter(created_by=request.user)
+                _renumber_siblings(source_queryset)
+
+        log_operation(
+            operation_type='edit',
+            resource_type='request',
+            resource_id=api_request.id,
+            resource_name=api_request.name,
+            user=request.user,
+            description=f"移动接口「{api_request.name}」",
+        )
+        return Response(ApiRequestTreeSerializer(api_request).data)
+
     def _parse_import_file(self, request):
         """Read a bounded upload and convert it to normalized interface records."""
         uploaded = request.FILES.get('file')
@@ -575,6 +753,7 @@ class ApiRequestViewSet(viewsets.ModelViewSet):
             group_name = item.pop('group')
             item['id'] = str(index)
             groups.setdefault(group_name, []).append(item)
+
         return Response({
             'total': len(items),
             'groups': [{'name': name, 'items': group_items} for name, group_items in groups.items()],
@@ -1085,6 +1264,98 @@ class ScenarioCaseViewSet(viewsets.ModelViewSet):
         )
         return Response(self._definition_payload(scenario_case))
 
+    @action(detail=True, methods=['post'], url_path='duplicate')
+    def duplicate(self, request, pk=None):
+        """完整复制场景用例：基本信息、步骤树、变量与执行配置。"""
+        scenario_case = self.get_object()
+        name = request.data.get('name')
+        if name is not None and (not isinstance(name, str) or not name.strip()):
+            return Response({'errors': {'name': ['场景用例名称不能为空']}},
+                            status=status.HTTP_400_BAD_REQUEST)
+        duplicate_name = (name or f'{scenario_case.name} - 副本').strip()[:200]
+
+        with transaction.atomic():
+            clone = ScenarioCase.objects.create(
+                project=scenario_case.project,
+                name=duplicate_name,
+                description=scenario_case.description,
+                folder=scenario_case.folder,
+                environment=scenario_case.environment,
+                variables=deepcopy(scenario_case.variables or {}),
+                execution_config=deepcopy(scenario_case.execution_config or {}),
+                created_by=request.user,
+            )
+            # clone_definition 会重新生成步骤 id 并重写父子引用，可直接写入新场景。
+            save_definition(
+                clone, clone_definition(load_definition(scenario_case)), user=request.user)
+
+        log_operation(
+            operation_type='create',
+            resource_type='scenario_case',
+            resource_id=clone.id,
+            resource_name=clone.name,
+            user=request.user,
+            description=f"复制场景用例「{scenario_case.name}」",
+        )
+        return Response(ScenarioCaseSerializer(clone).data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['put'], url_path=r'steps/(?P<step_id>[^/.]+)')
+    def save_step(self, request, pk=None, step_id=None):
+        """只保存指定步骤，不改动场景其他步骤和场景级配置。"""
+        scenario_case = self.get_object()
+
+        updates = {}
+        if 'name' in request.data:
+            name = request.data.get('name')
+            if not isinstance(name, str) or not name.strip():
+                return Response({'errors': {'name': ['步骤名称不能为空']}},
+                                status=status.HTTP_400_BAD_REQUEST)
+            updates['name'] = name.strip()
+        if 'enabled' in request.data:
+            enabled = request.data.get('enabled')
+            if not isinstance(enabled, bool):
+                return Response({'errors': {'enabled': ['enabled 必须是布尔值']}},
+                                status=status.HTTP_400_BAD_REQUEST)
+            updates['enabled'] = enabled
+        if 'config' in request.data:
+            config = request.data.get('config')
+            if not isinstance(config, dict):
+                return Response({'errors': {'config': ['config 必须是对象']}},
+                                status=status.HTTP_400_BAD_REQUEST)
+            updates['config'] = config
+
+        with transaction.atomic():
+            scenario_case = ScenarioCase.objects.select_for_update().get(pk=scenario_case.pk)
+            definition = load_definition(scenario_case)
+            if not any(str(node['id']) == str(step_id) for node in definition):
+                return Response({'detail': '步骤不存在'}, status=status.HTTP_404_NOT_FOUND)
+
+            # 用服务端现有定义做校验，避免客户端只提交单个步骤时丢失树上下文。
+            merged = []
+            for node in definition:
+                node = dict(node)
+                if str(node['id']) == str(step_id):
+                    node.update(updates)
+                merged.append(node)
+            nodes = validate_only(scenario_case, merged, user=request.user)
+            saved = next(node for node in nodes if str(node['id']) == str(step_id))
+
+            step = ScenarioStep.objects.get(pk=step_id)
+            step.name = saved['name']
+            step.enabled = saved['enabled']
+            step.config = saved['config']
+            step.save(update_fields=['name', 'enabled', 'config', 'updated_at'])
+
+        log_operation(
+            operation_type='edit',
+            resource_type='scenario_case',
+            resource_id=scenario_case.id,
+            resource_name=scenario_case.name,
+            user=request.user,
+            description=f"保存步骤「{saved['name']}」",
+        )
+        return Response(saved)
+
     @action(detail=True, methods=['post'], url_path='validate')
     def validate_definition_view(self, request, pk=None):
         """Validate a submitted definition without persisting it."""
@@ -1121,32 +1392,59 @@ class ScenarioCaseViewSet(viewsets.ModelViewSet):
         """Type capabilities for the editor; unknown types stay unrenderable."""
         return Response({'types': step_capabilities()})
 
-    @action(detail=True, methods=['post'], url_path='add-requests')
-    def add_requests(self, request, pk=None):
-        """添加请求到场景用例"""
-        scenario_case = self.get_object()
-        request_ids = request.data.get('request_ids', [])
-        
-        try:
-            for request_id in request_ids:
-                api_request = ApiRequest.objects.get(id=request_id)
-                ScenarioCaseRequest.objects.get_or_create(
-                    scenario_case=scenario_case,
-                    request=api_request,
-                    defaults={
-                        'order': ScenarioCaseRequest.objects.filter(scenario_case=scenario_case).count(),
-                        'enabled': True,
-                        # 新增到场景用例时复制接口配置，之后可在场景用例中独立调整。
-                        'assertions': list(api_request.assertions or []),
-                        'extractors': list(api_request.extractors or [])
-                    }
-                )
-            
-            return Response({'message': '添加成功'})
-            
-        except Exception as e:
-            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+    @action(detail=True, methods=['post'], url_path='debug-step')
+    def debug_step(self, request, pk=None):
+        """Execute one step request draft for debugging without saving it.
 
+        Debug runs against the selected environment and the scenario's initial
+        variables only. Outputs from earlier steps are intentionally unavailable,
+        so a reference such as ``{{ steps.x... }}`` fails before sending.
+        """
+        scenario_case = self.get_object()
+        payload = request.data.get('request')
+        if not isinstance(payload, dict):
+            return Response({'errors': {'request': ['请求配置必须是对象']}},
+                            status=status.HTTP_400_BAD_REQUEST)
+        try:
+            environment = EnvironmentResolver.resolve(
+                request.data.get('environment_id') or scenario_case.environment_id,
+                user=request.user, project_id=scenario_case.project_id)
+            snapshot = EnvironmentResolver.snapshot(
+                environment, user=request.user, project_id=scenario_case.project_id)
+            dto = normalize_request(payload)
+            variables = {
+                **(snapshot.get('variables') or {}),
+                **(scenario_case.variables or {}),
+            }
+            result = execute_request(
+                dto, base_url=snapshot['base_url'], variables=variables)
+            response = result['response']
+            for assertion in dto['assertions']:
+                if assertion.get('type') == 'response_time':
+                    assertion['actual_time'] = result['response_time']
+            assertion_results = execute_assertions(response, dto['assertions'])
+            extraction_results, extracted_variables = extract_response_variables(
+                response, dto['extractors'])
+            content_type = (response.headers.get('content-type') or '').lower()
+            return Response({
+                'status_code': response.status_code,
+                'response_time': result['response_time'],
+                'request_data': result['request'],
+                'response_data': {
+                    'headers': dict(response.headers),
+                    'body': response.text,
+                    'json': response.json() if 'json' in content_type else None,
+                },
+                'assertions_results': assertion_results,
+                'extraction_results': extraction_results,
+                'extracted_variables': extracted_variables,
+            })
+        except ValidationError as exc:
+            return Response(exc.detail, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as exc:  # noqa: BLE001 - debug failure must not 500
+            logger.warning('场景步骤调试失败 scenario_id=%s: %s', scenario_case.id, exc)
+            return Response({'errors': {'request': [str(exc)]}},
+                            status=status.HTTP_400_BAD_REQUEST)
 
 class TestSuiteViewSet(viewsets.ModelViewSet):
     """测试套件：固定场景用例集合。"""
@@ -1171,6 +1469,11 @@ class TestSuiteViewSet(viewsets.ModelViewSet):
         （与定时任务、MCP 异步执行同一实现），本视图只负责返回结果。
         """
         test_suite = self.get_object()
+        if not test_suite.environment_id:
+            return Response(
+                {'detail': '测试套件必须先配置执行环境'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         result = execute_test_suite(test_suite, test_suite.environment, request.user)
         return Response({
             'success': result['success'],
@@ -1180,58 +1483,7 @@ class TestSuiteViewSet(viewsets.ModelViewSet):
         })
 
 
-class ScenarioCaseRequestViewSet(viewsets.ModelViewSet):
-    queryset = ScenarioCaseRequest.objects.all()
-    serializer_class = ScenarioCaseRequestSerializer
-    permission_classes = [IsAuthenticated]
-    filter_backends = [DjangoFilterBackend]
-    filterset_fields = ['scenario_case', 'enabled']
-    
-    def get_queryset(self):
-        user = self.request.user
-        return ScenarioCaseRequest.objects.filter(
-            scenario_case__project__in=ApiProject.objects.filter(
-                models.Q(owner=user) | models.Q(members=user)
-            )
-        ).distinct()
-
-    @action(detail=True, methods=['post'])
-    def move(self, request, pk=None):
-        """在同一场景用例内移动请求，并保持执行顺序连续。"""
-        scenario_case_request = self.get_object()
-        direction = request.data.get('direction')
-        if direction not in {'up', 'down'}:
-            return Response({'error': 'direction must be up or down'}, status=status.HTTP_400_BAD_REQUEST)
-
-        with transaction.atomic():
-            ordered_requests = list(
-                ScenarioCaseRequest.objects.select_for_update()
-                .filter(scenario_case=scenario_case_request.scenario_case)
-                .order_by('order', 'id')
-            )
-            current_index = next(
-                (index for index, item in enumerate(ordered_requests) if item.id == scenario_case_request.id),
-                None,
-            )
-            if current_index is None:
-                return Response({'error': 'request not found'}, status=status.HTTP_404_NOT_FOUND)
-
-            target_index = current_index - 1 if direction == 'up' else current_index + 1
-            if target_index < 0 or target_index >= len(ordered_requests):
-                return Response(ScenarioCaseRequestSerializer(scenario_case_request).data)
-
-            ordered_requests[current_index], ordered_requests[target_index] = (
-                ordered_requests[target_index], ordered_requests[current_index]
-            )
-            for order, item in enumerate(ordered_requests):
-                if item.order != order:
-                    item.order = order
-                    item.save(update_fields=['order'])
-
-        return Response(ScenarioCaseRequestSerializer(scenario_case_request).data)
-
-
-class TestExecutionViewSet(viewsets.ReadOnlyModelViewSet):
+class TestExecutionViewSet(mixins.DestroyModelMixin, viewsets.ReadOnlyModelViewSet):
     queryset = TestExecution.objects.all()
     serializer_class = TestExecutionSerializer
     permission_classes = [IsAuthenticated]
@@ -1251,6 +1503,30 @@ class TestExecutionViewSet(viewsets.ReadOnlyModelViewSet):
         if scenario_case_id:
             queryset = queryset.filter(scenario_case_id=scenario_case_id)
         return queryset
+
+    def perform_destroy(self, instance):
+        """只允许删除已结束的执行记录，避免影响正在运行的任务。"""
+        if instance.status in ('PENDING', 'RUNNING'):
+            raise ValidationError({'error': '执行中的记录不能删除'})
+        instance.delete()
+
+    @action(detail=False, methods=['post'], url_path='batch-delete')
+    def batch_delete(self, request):
+        """批量删除当前用户有权限访问且已结束的执行记录。"""
+        ids = request.data.get('ids', [])
+        if not isinstance(ids, list) or not ids:
+            return Response({'error': '未提供要删除的记录ID'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # 与单条删除保持一致，批量操作不能删除待执行或执行中的记录。
+        queryset = self.get_queryset().filter(id__in=ids)
+        if queryset.filter(status__in=('PENDING', 'RUNNING')).exists():
+            return Response({'error': '执行中的记录不能删除'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # 权限查询使用 distinct()，先取出合法 ID，再对基础查询集执行删除。
+        valid_ids = list(queryset.values_list('id', flat=True))
+        deleted_count = len(valid_ids)
+        TestExecution.objects.filter(id__in=valid_ids).delete()
+        return Response({'message': f'成功删除 {deleted_count} 条记录', 'deleted_count': deleted_count})
 
     @action(detail=True, methods=['get'], url_path='steps')
     def steps(self, request, pk=None):
@@ -1689,19 +1965,21 @@ class TestExecutionViewSet(viewsets.ReadOnlyModelViewSet):
 """
             
             # 添加测试结果列表
-            if execution.results:
-                for i, result in enumerate(execution.results):
-                    result_class = "passed" if result.get('passed', False) else "failed"
-                    method_class = f"method-{result.get('method', 'GET').lower()}"
+            step_rows = list(execution.step_executions.order_by('sequence'))
+            if step_rows:
+                for i, step in enumerate(step_rows):
+                    request_data = step.request_data or {}
+                    result_class = "passed" if step.status == 'PASSED' else "failed"
+                    method_class = f"method-{request_data.get('method', 'GET').lower()}"
                     index_content += f"""
             <div class="test-result-item {result_class}">
                 <div class="test-header">
-                    <span class="test-method {method_class}">{result.get('method', 'GET')}</span>
-                    <span class="test-name">{result.get('name', f'测试请求 {i+1}')}</span>
+                    <span class="test-method {method_class}">{request_data.get('method', 'GET')}</span>
+                    <span class="test-name">{step.name_snapshot or f'步骤 {i+1}'}</span>
                 </div>
-                <div class="test-url">{result.get('url', '')}</div>
-                <div><strong>状态:</strong> {'通过' if result.get('passed', False) else '失败'}</div>
-                {f'<div class="test-error"><strong>错误:</strong> {result.get("error", "")}</div>' if result.get('error') else ""}
+                <div class="test-url">{request_data.get('url', '')}</div>
+                <div><strong>状态:</strong> {'通过' if step.status == 'PASSED' else step.status}</div>
+                {f'<div class="test-error"><strong>错误:</strong> {step.error}</div>' if step.error else ""}
             </div>
 """
             
@@ -1765,8 +2043,8 @@ class TestExecutionViewSet(viewsets.ReadOnlyModelViewSet):
     def _generate_test_result_files(self, execution, report_dir):
         """生成测试结果文件"""
         try:
-            # 检查execution.results是否存在
-            if not execution.results:
+            step_rows = list(execution.step_executions.order_by('sequence'))
+            if not step_rows:
                 logger.warning(f"执行记录 {execution.id} 没有结果数据")
                 return
 
@@ -1778,7 +2056,7 @@ class TestExecutionViewSet(viewsets.ReadOnlyModelViewSet):
             }
 
             # 为每个测试请求添加到children列表
-            for i, result in enumerate(execution.results):
+            for i, step in enumerate(step_rows):
                 container_data["children"].append(f"{execution.id}-{i}")
 
             # 保存容器文件
@@ -1787,17 +2065,19 @@ class TestExecutionViewSet(viewsets.ReadOnlyModelViewSet):
                 json.dump(container_data, f, ensure_ascii=False, indent=2)
 
             # 只生成每个测试请求的结果文件，不生成测试套件的结果文件
-            for i, result in enumerate(execution.results):
+            for i, step in enumerate(step_rows):
+                request_data = step.request_data or {}
+                status_passed = step.status == 'PASSED'
                 request_result = {
                     "uuid": f"{execution.id}-{i}",
-                    "name": result.get('name', f'测试请求 {i+1}'),
-                    "status": "passed" if result.get('passed', False) else "failed",
+                    "name": step.name_snapshot or f'步骤 {i+1}',
+                    "status": "passed" if status_passed else "failed",
                     "stage": "finished",
                     "start": int(time.time() * 1000) - 1000,  # 模拟开始时间
                     "stop": int(time.time() * 1000),  # 模拟结束时间
-                    "description": f"Method: {result.get('method', 'GET')}\nURL: {result.get('url', '')}",
+                    "description": f"Method: {request_data.get('method', 'GET')}\nURL: {request_data.get('url', '')}",
                     "historyId": f"{execution.scenario_case.id}-{i}",
-                    "fullName": f"{execution.scenario_case.name} / {result.get('name', f'请求 {i+1}')}",
+                    "fullName": f"{execution.scenario_case.name} / {step.name_snapshot or f'步骤 {i+1}'}",
                     "links": [],
                     "labels": [
                         {"name": "suite", "value": execution.scenario_case.name},
@@ -1806,13 +2086,13 @@ class TestExecutionViewSet(viewsets.ReadOnlyModelViewSet):
                         {"name": "project", "value": execution.scenario_case.project.name}
                     ],
                     "parameters": [
-                        {"name": "method", "value": result.get('method', 'GET')},
-                        {"name": "url", "value": result.get('url', '')}
+                        {"name": "method", "value": request_data.get('method', 'GET')},
+                        {"name": "url", "value": request_data.get('url', '')}
                     ],
                     "steps": [
                         {
                             "name": "发送请求",
-                            "status": "passed",
+                            "status": "passed" if status_passed else "failed",
                             "stage": "finished",
                             "start": int(time.time() * 1000) - 1000,
                             "stop": int(time.time() * 1000) - 500,
@@ -1820,7 +2100,7 @@ class TestExecutionViewSet(viewsets.ReadOnlyModelViewSet):
                         },
                         {
                             "name": "验证响应",
-                            "status": "passed" if result.get('passed', False) else "failed",
+                            "status": "passed" if status_passed else "failed",
                             "stage": "finished",
                             "start": int(time.time() * 1000) - 500,
                             "stop": int(time.time() * 1000),
@@ -1830,9 +2110,9 @@ class TestExecutionViewSet(viewsets.ReadOnlyModelViewSet):
                 }
                 
                 # 添加错误信息（如果有的话）
-                if result.get('error'):
+                if step.error:
                     request_result["statusDetails"] = {
-                        "message": result.get('error'),
+                        "message": step.error,
                         "trace": ""
                     }
                 
@@ -1845,6 +2125,41 @@ class TestExecutionViewSet(viewsets.ReadOnlyModelViewSet):
             import traceback
             logger.error(f"生成测试结果文件失败: {str(e)}\n{traceback.format_exc()}")
             raise
+
+
+class ApiSuiteExecutionViewSet(mixins.DestroyModelMixin, viewsets.ReadOnlyModelViewSet):
+    """接口测试套件执行报告，按套件维度提供列表与详情。"""
+
+    serializer_class = ApiSuiteExecutionSerializer
+    permission_classes = [IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
+    filterset_fields = ['status', 'test_suite']
+    ordering = ['-created_at']
+    pagination_class = StandardPagination
+
+    def get_queryset(self):
+        user = self.request.user
+        return ApiSuiteExecution.objects.filter(
+            test_suite__project__in=ApiProject.objects.filter(
+                models.Q(owner=user) | models.Q(members=user)
+            )
+        ).select_related(
+            'test_suite', 'test_suite__project', 'test_suite__environment', 'executed_by'
+        ).distinct()
+
+    @action(detail=False, methods=['post'], url_path='batch-delete')
+    def batch_delete(self, request):
+        """批量删除已结束的套件报告。"""
+        ids = request.data.get('ids', [])
+        if not isinstance(ids, list) or not ids:
+            return Response({'error': '未提供记录ID'}, status=status.HTTP_400_BAD_REQUEST)
+        queryset = self.get_queryset().filter(id__in=ids)
+        if queryset.filter(status__in=('PENDING', 'RUNNING')).exists():
+            return Response({'error': '执行中的记录不能删除'}, status=status.HTTP_400_BAD_REQUEST)
+        valid_ids = list(queryset.values_list('id', flat=True))
+        deleted_count = len(valid_ids)
+        ApiSuiteExecution.objects.filter(id__in=valid_ids).delete()
+        return Response({'message': f'成功删除 {deleted_count} 条记录', 'deleted_count': deleted_count})
 
 
 class UserViewSet(viewsets.ReadOnlyModelViewSet):
@@ -1861,7 +2176,8 @@ class ScheduledTaskViewSet(viewsets.ModelViewSet):
     queryset = ScheduledTask.objects.all()
     serializer_class = ScheduledTaskSerializer
     permission_classes = [IsAuthenticated]
-    filter_backends = [filters.SearchFilter, filters.OrderingFilter]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_fields = ['task_type', 'status', 'trigger_type']
     search_fields = ['name', 'description']
     ordering_fields = ['created_at', 'updated_at', 'last_run_time']
     ordering = ['-created_at']
@@ -2004,18 +2320,26 @@ class ScheduledTaskViewSet(viewsets.ModelViewSet):
                     result = self._execute_test_suite(task)
                 elif task.task_type == 'API_REQUEST':
                     result = self._execute_api_request(task)
+                elif task.task_type == 'SCENARIO_CASE':
+                    result = self._execute_scenario_case(task)
                 else:
                     raise ValueError(f"未知的任务类型: {task.task_type}")
                 
-                # 更新执行结果
-                execution_log.status = 'COMPLETED'
+                # 更新执行结果：任务是否成功以执行结论为准，不能只看"没抛异常"。
+                succeeded = bool(isinstance(result, dict) and result.get('success'))
+                execution_log.status = 'COMPLETED' if succeeded else 'FAILED'
                 execution_log.end_time = timezone.now()
                 execution_log.result = result
+                if not succeeded:
+                    execution_log.error_message = str(
+                        (result or {}).get('error') or '任务执行未通过')
                 execution_log.save()
-                
+
                 # 更新任务统计
-                task.update_run_stats(success=True)
+                task.update_run_stats(success=succeeded)
                 task.last_result = result
+                if not succeeded:
+                    task.error_message = execution_log.error_message
                 task.save()
                 
                 logger.info("=== 开始检查发送成功通知 ===")
@@ -2038,14 +2362,18 @@ class ScheduledTaskViewSet(viewsets.ModelViewSet):
                     logger.info("任务没有notification_settings属性")
                 
                 if notification_setting and notification_setting.is_enabled:
-                    logger.info("通知设置已启用，准备发送成功通知")
-                    if notification_setting.notify_on_success:
-                        logger.info("调用 _send_notification 方法发送成功通知")
-                        self._send_notification(task, execution_log, success=True)
+                    # 结论失败时走失败通知规则，不能把失败发成"成功"。
+                    should_notify = (notification_setting.notify_on_success if succeeded
+                                     else notification_setting.notify_on_failure)
+                    logger.info("通知设置已启用，准备发送%s通知",
+                                "成功" if succeeded else "失败")
+                    if should_notify:
+                        self._send_notification(task, execution_log, success=succeeded)
                     else:
-                        logger.info("通知设置中未启用成功通知")
+                        logger.info("通知设置中未启用%s通知",
+                                    "成功" if succeeded else "失败")
                 else:
-                    logger.info("通知设置未启用或不存在，跳过成功通知")
+                    logger.info("通知设置未启用或不存在，跳过通知")
                 logger.info("=== 结束检查发送成功通知 ===")
                 
             except Exception as e:
@@ -2116,6 +2444,14 @@ class ScheduledTaskViewSet(viewsets.ModelViewSet):
             task.created_by
         )
         return result
+
+    def _execute_scenario_case(self, task):
+        """执行定时任务绑定的场景用例，并复用统一场景执行器。"""
+        return execute_scenario_case(
+            task.scenario_case,
+            task.environment,
+            task.created_by,
+        )
     
     def _send_notification(self, task, execution_log, success=True):
         """发送通知邮件"""
@@ -2222,7 +2558,7 @@ class ScheduledTaskViewSet(viewsets.ModelViewSet):
             任务名称: {task.name}
             执行状态: {'成功' if success else '失败'}
             执行时间: {execution_log.created_at.strftime('%Y-%m-%d %H:%M:%S')}
-            任务类型: {'测试套件执行' if task.task_type == 'TEST_SUITE' else 'API请求执行'}
+            任务类型: {task.get_task_type_display()}
 
             执行概要:
             {summary_info}
@@ -2394,7 +2730,7 @@ class ScheduledTaskViewSet(viewsets.ModelViewSet):
 
 执行时间: {execution_log.created_at.strftime('%Y-%m-%d %H:%M:%S')}
 
-任务类型: {'测试套件执行' if task.task_type == 'TEST_SUITE' else 'API请求执行'}"""
+任务类型: {task.get_task_type_display()}"""
                         }
                     }
                 elif bot_type == 'feishu':  # 飞书
@@ -2404,7 +2740,7 @@ class ScheduledTaskViewSet(viewsets.ModelViewSet):
                             "elements": [{
                                 "tag": "div",
                                 "text": {
-                                    "content": f"**定时任务执行{status_text}**\n任务名称: {task.name}\n执行状态: {status_text}\n执行时间: {execution_log.created_at.strftime('%Y-%m-%d %H:%M:%S')}\n任务类型: {'测试套件执行' if task.task_type == 'TEST_SUITE' else 'API请求执行'}",
+                                    "content": f"**定时任务执行{status_text}**\n任务名称: {task.name}\n执行状态: {status_text}\n执行时间: {execution_log.created_at.strftime('%Y-%m-%d %H:%M:%S')}\n任务类型: {task.get_task_type_display()}",
                                     "tag": "lark_md"
                                 }
                             }],
@@ -2430,7 +2766,7 @@ class ScheduledTaskViewSet(viewsets.ModelViewSet):
 
 执行时间: {execution_log.created_at.strftime('%Y-%m-%d %H:%M:%S')}
 
-任务类型: {'测试套件执行' if task.task_type == 'TEST_SUITE' else 'API请求执行'}"""
+任务类型: {task.get_task_type_display()}"""
                         }
                     }
 
@@ -2465,11 +2801,11 @@ class ScheduledTaskViewSet(viewsets.ModelViewSet):
                 elif bot_type == 'slack':  # Slack Incoming Webhook
                     # Slack Incoming Webhook 接收简单的 text 载荷。
                     message_data = {
-                        "text": f"定时任务执行{status_text}\n任务名称: {task.name}\n执行状态: {status_text}\n执行时间: {execution_log.created_at.strftime('%Y-%m-%d %H:%M:%S')}\n任务类型: {'测试套件执行' if task.task_type == 'TEST_SUITE' else 'API请求执行'}"
+                        "text": f"定时任务执行{status_text}\n任务名称: {task.name}\n执行状态: {status_text}\n执行时间: {execution_log.created_at.strftime('%Y-%m-%d %H:%M:%S')}\n任务类型: {task.get_task_type_display()}"
                     }
                 else:  # 通用格式
                     message_data = {
-                        "text": f"定时任务执行{status_text}\n任务名称: {task.name}\n执行状态: {status_text}\n执行时间: {execution_log.created_at.strftime('%Y-%m-%d %H:%M:%S')}\n任务类型: {'测试套件执行' if task.task_type == 'TEST_SUITE' else 'API请求执行'}"
+                        "text": f"定时任务执行{status_text}\n任务名称: {task.name}\n执行状态: {status_text}\n执行时间: {execution_log.created_at.strftime('%Y-%m-%d %H:%M:%S')}\n任务类型: {task.get_task_type_display()}"
                     }
 
                 # 发送webhook请求

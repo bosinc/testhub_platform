@@ -26,6 +26,7 @@ class Migration(migrations.Migration):
             name='ScenarioStep',
             fields=[
                 ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False, verbose_name='步骤ID')),
+                ('reference_id', models.PositiveIntegerField(verbose_name='步骤引用编号')),
                 ('position', models.PositiveIntegerField(default=0, verbose_name='同级顺序')),
                 ('type', models.CharField(max_length=20, verbose_name='步骤类型')),
                 ('name', models.CharField(max_length=255, verbose_name='步骤名称')),
@@ -44,6 +45,7 @@ class Migration(migrations.Migration):
                 'db_table': 'api_scenario_steps',
                 'ordering': ['position', 'id'],
                 'indexes': [models.Index(fields=['scenario_case', 'parent', 'position'], name='api_step_tree_order_idx'), models.Index(fields=['source_type', 'source_id'], name='api_step_source_idx')],
+                'constraints': [models.UniqueConstraint(fields=('scenario_case', 'reference_id'), name='api_step_scenario_reference_uniq')],
             },
         ),
     ]

@@ -17,10 +17,10 @@ class NullableDateField(serializers.DateField):
         return super().to_internal_value(value)
 from .models import (
     ApiProject, ApiCollection, ApiRequest, Environment,
-    RequestHistory, ScenarioCase, ScenarioCaseFolder, TestExecution, ScenarioCaseRequest,
+    RequestHistory, ScenarioCase, ScenarioCaseFolder, TestExecution,
     ScheduledTask, TaskExecutionLog, NotificationLog,
     TaskNotificationSetting, OperationLog, AIServiceConfig,
-    TestSuite, TestSuiteItem, StepExecution,
+    TestSuite, TestSuiteItem, StepExecution, ApiSuiteExecution,
 )
 
 User = get_user_model()
@@ -93,6 +93,21 @@ class ApiCollectionSerializer(serializers.ModelSerializer):
     def get_children(self, obj):
         children = obj.children.all()
         return ApiCollectionSerializer(children, many=True).data
+
+    def validate_parent(self, value):
+        """拒绝把集合挂到自身或自己的子孙目录下，避免形成环。"""
+        if value is None or not self.instance:
+            return value
+        current = value
+        seen = set()
+        while current is not None:
+            if current.pk == self.instance.pk:
+                raise serializers.ValidationError('不能把集合移动到自身或其子目录下')
+            if current.pk in seen:
+                break
+            seen.add(current.pk)
+            current = current.parent
+        return value
 
 
 class ApiCollectionTreeSerializer(serializers.ModelSerializer):
@@ -243,14 +258,6 @@ class RequestHistorySerializer(serializers.ModelSerializer):
         ]
 
 
-class ScenarioCaseRequestSerializer(serializers.ModelSerializer):
-    request = ApiRequestSerializer(read_only=True)
-
-    class Meta:
-        model = ScenarioCaseRequest
-        fields = ['id', 'request', 'order', 'assertions', 'extractors', 'enabled']
-
-
 class ScenarioCaseFolderSerializer(serializers.ModelSerializer):
     parent = serializers.PrimaryKeyRelatedField(
         queryset=ScenarioCaseFolder.objects.all(), required=False, allow_null=True
@@ -283,13 +290,12 @@ class ScenarioCaseFolderSerializer(serializers.ModelSerializer):
 
 class ScenarioCaseSerializer(serializers.ModelSerializer):
     created_by = UserSerializer(read_only=True)
-    scenario_case_requests = ScenarioCaseRequestSerializer(source='scenariocaserequest_set', many=True, read_only=True)
 
     class Meta:
         model = ScenarioCase
         fields = [
             'id', 'name', 'description', 'folder', 'project', 'environment',
-            'scenario_case_requests', 'created_by', 'created_at', 'updated_at'
+            'created_by', 'created_at', 'updated_at'
         ]
         read_only_fields = ['created_at', 'updated_at']
 
@@ -309,10 +315,17 @@ class TestSuiteSerializer(serializers.ModelSerializer):
     created_by = UserSerializer(read_only=True)
     scenario_cases = ScenarioCaseSerializer(many=True, read_only=True)
     scenario_case_ids = serializers.ListField(child=serializers.IntegerField(), write_only=True, required=False)
+    # 测试套件执行必须绑定明确的环境，避免执行时依赖隐式环境回退。
+    environment = serializers.PrimaryKeyRelatedField(
+        queryset=Environment.objects.all(),
+        required=True,
+        allow_null=False,
+    )
+    environment_name = serializers.CharField(source='environment.name', read_only=True, allow_null=True)
 
     class Meta:
         model = TestSuite
-        fields = ['id', 'name', 'description', 'project', 'environment', 'scenario_cases',
+        fields = ['id', 'name', 'description', 'project', 'environment', 'environment_name', 'scenario_cases',
                   'scenario_case_ids', 'created_by', 'created_at', 'updated_at']
         read_only_fields = ['created_at', 'updated_at']
 
@@ -323,6 +336,15 @@ class TestSuiteSerializer(serializers.ModelSerializer):
         for i, scenario_case_id in enumerate(scenario_case_ids):
             TestSuiteItem.objects.create(test_suite=test_suite, scenario_case_id=scenario_case_id, order=i)
         return test_suite
+
+    def validate(self, attrs):
+        project = attrs.get('project', getattr(self.instance, 'project', None))
+        environment = attrs.get('environment', getattr(self.instance, 'environment', None))
+        if environment is None:
+            raise serializers.ValidationError({'environment': '测试套件必须选择执行环境'})
+        if environment.scope == 'LOCAL' and project and environment.project_id != project.id:
+            raise serializers.ValidationError({'environment': '局部环境必须属于当前测试套件项目'})
+        return attrs
 
     def update(self, instance, validated_data):
         scenario_case_ids = validated_data.pop('scenario_case_ids', None)
@@ -335,6 +357,8 @@ class TestSuiteSerializer(serializers.ModelSerializer):
 
 
 class TestExecutionSerializer(serializers.ModelSerializer):
+    """场景执行摘要序列化器；步骤明细通过 ``/steps/`` 获取。"""
+
     scenario_case = ScenarioCaseSerializer(read_only=True)
     executed_by = UserSerializer(read_only=True)
 
@@ -356,6 +380,56 @@ class TestExecutionSerializer(serializers.ModelSerializer):
         return data
 
 
+class ApiSuiteExecutionSerializer(serializers.ModelSerializer):
+    """套件执行报告序列化器，详情中同时返回各场景的步骤结果。"""
+
+    test_suite_name = serializers.CharField(source='test_suite.name', read_only=True)
+    test_suite_description = serializers.CharField(source='test_suite.description', read_only=True)
+    environment_name = serializers.CharField(source='test_suite.environment.name', read_only=True)
+    project_name = serializers.CharField(source='test_suite.project.name', read_only=True)
+    executed_by_name = serializers.CharField(source='executed_by.username', read_only=True)
+    duration = serializers.ReadOnlyField()
+    scenario_results = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ApiSuiteExecution
+        fields = [
+            'id', 'test_suite', 'test_suite_name', 'test_suite_description',
+            'environment_name', 'project_name', 'status',
+            'start_time', 'end_time', 'duration', 'total_scenarios',
+            'passed_scenarios', 'failed_scenarios', 'results', 'error_message',
+            'executed_by', 'executed_by_name', 'created_at', 'scenario_results',
+        ]
+
+    def get_scenario_results(self, instance):
+        execution_ids = [
+            item.get('execution_id')
+            for item in (instance.results or [])
+            if isinstance(item, dict) and item.get('execution_id')
+        ]
+        executions = TestExecution.objects.filter(id__in=execution_ids).select_related(
+            'scenario_case', 'executed_by'
+        ).prefetch_related('step_executions')
+        execution_map = {execution.id: execution for execution in executions}
+        scenario_results = []
+        for item in instance.results or []:
+            if not isinstance(item, dict):
+                continue
+            execution = execution_map.get(item.get('execution_id'))
+            if execution is None:
+                item['suite_status'] = item.get('status')
+                scenario_results.append(item)
+                continue
+            data = TestExecutionSerializer(execution).data
+            # 保留套件本次执行的场景结论，避免单次执行记录与套件汇总状态不一致时误显示为通过。
+            data['suite_status'] = item.get('status')
+            data['steps'] = StepExecutionSerializer(
+                execution.step_executions.order_by('sequence'), many=True
+            ).data
+            scenario_results.append(data)
+        return scenario_results
+
+
 class StepExecutionSerializer(serializers.ModelSerializer):
     """One step instance; identity is snapshotted so deleted steps stay readable."""
 
@@ -365,7 +439,7 @@ class StepExecutionSerializer(serializers.ModelSerializer):
             'id', 'execution', 'step_id_snapshot', 'name_snapshot', 'type_snapshot',
             'invocation_id', 'parent_invocation_id', 'iteration_path', 'sequence',
             'status', 'request_data', 'response_data', 'assertion_results',
-            'extraction_results', 'logs', 'started_at', 'finished_at', 'error',
+            'extraction_results', 'logs', 'started_at', 'finished_at', 'error', 'output',
         ]
         read_only_fields = fields
 
@@ -376,6 +450,8 @@ class ScheduledTaskSerializer(serializers.ModelSerializer):
     test_suite = serializers.PrimaryKeyRelatedField(queryset=TestSuite.objects.all(), required=False)
     test_suite_name = serializers.CharField(source='test_suite.name', read_only=True)
     api_request_name = serializers.CharField(source='api_request.name', read_only=True)
+    scenario_case = serializers.PrimaryKeyRelatedField(queryset=ScenarioCase.objects.all(), required=False)
+    scenario_case_name = serializers.CharField(source='scenario_case.name', read_only=True)
     environment_name = serializers.CharField(source='environment.name', read_only=True)
     created_by_name = serializers.CharField(source='created_by.username', read_only=True)
     notification_type = serializers.SerializerMethodField(read_only=True)
@@ -388,6 +464,7 @@ class ScheduledTaskSerializer(serializers.ModelSerializer):
             'id', 'name', 'description', 'task_type', 'trigger_type',
             'cron_expression', 'interval_seconds', 'execute_at',
             'test_suite', 'test_suite_name', 'api_request', 'api_request_name',
+            'scenario_case', 'scenario_case_name',
             'environment', 'environment_name', 'status', 'last_run_time',
             'next_run_time', 'total_runs', 'successful_runs', 'failed_runs',
             'last_result', 'error_message', 'notify_on_success', 'notify_on_failure',
@@ -440,12 +517,22 @@ class ScheduledTaskSerializer(serializers.ModelSerializer):
             if attrs['execute_at'] <= timezone.now():
                 raise serializers.ValidationError("执行时间必须大于当前时间")
 
+        # 执行环境必须明确选择，编辑时也不能把已有环境清空。
+        environment = attrs.get('environment', getattr(self.instance, 'environment', None))
+        if environment is None:
+            raise serializers.ValidationError({'environment': '执行环境不能为空'})
+
         # 验证任务类型配置
-        task_type = attrs.get('task_type')
+        task_type = attrs.get('task_type', getattr(self.instance, 'task_type', None))
         if task_type == 'TEST_SUITE' and not attrs.get('test_suite'):
-            raise serializers.ValidationError("测试套件不能为空")
+            if not getattr(self.instance, 'test_suite_id', None):
+                raise serializers.ValidationError({'test_suite': '测试套件不能为空'})
         elif task_type == 'API_REQUEST' and not attrs.get('api_request'):
-            raise serializers.ValidationError("API请求不能为空")
+            if not getattr(self.instance, 'api_request_id', None):
+                raise serializers.ValidationError({'api_request': 'API请求不能为空'})
+        elif task_type == 'SCENARIO_CASE' and not attrs.get('scenario_case'):
+            if not getattr(self.instance, 'scenario_case_id', None):
+                raise serializers.ValidationError({'scenario_case': '场景用例不能为空'})
 
         return attrs
 
@@ -453,6 +540,9 @@ class ScheduledTaskSerializer(serializers.ModelSerializer):
         """创建定时任务"""
         # 提取通知相关数据
         notification_type = validated_data.pop('notification_type_input', 'email')
+
+        # 只保留当前任务类型对应的执行目标，避免无效关联影响后续维护。
+        self._clear_unused_targets(validated_data)
 
         validated_data['created_by'] = self.context['request'].user
         task = super().create(validated_data)
@@ -521,6 +611,13 @@ class ScheduledTaskSerializer(serializers.ModelSerializer):
         notification_type = validated_data.pop('notification_type_input', None)
         logger.info(f"任务ID: {instance.id}, 收到的通知类型: {notification_type}")
 
+        # 切换任务类型时清理旧目标关联，保证任务只指向一个实际执行对象。
+        self._clear_unused_targets(
+            validated_data,
+            current_task_type=instance.task_type,
+            clear_targets='task_type' in validated_data,
+        )
+
         # 更新任务基本信息
         task = super().update(instance, validated_data)
 
@@ -580,6 +677,21 @@ class ScheduledTaskSerializer(serializers.ModelSerializer):
 
         logger.info("=== 结束更新定时任务 ===")
         return task
+
+    @staticmethod
+    def _clear_unused_targets(validated_data, current_task_type=None, clear_targets=True):
+        """根据任务类型清理不适用的外键，避免编辑后留下脏关联。"""
+        if not clear_targets:
+            return
+        task_type = validated_data.get('task_type', current_task_type)
+        target_fields = {
+            'TEST_SUITE': 'test_suite',
+            'API_REQUEST': 'api_request',
+            'SCENARIO_CASE': 'scenario_case',
+        }
+        for field_name in target_fields.values():
+            if field_name != target_fields.get(task_type):
+                validated_data[field_name] = None
 
 
 class TaskExecutionLogSerializer(serializers.ModelSerializer):

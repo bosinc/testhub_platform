@@ -136,6 +136,7 @@ def load_definition(scenario):
         stack.extend(reversed(children.get(step.id, [])))
     return [{
         'id': str(step.id),
+        'reference_id': step.reference_id,
         'parent': str(step.parent_id) if step.parent_id else None,
         'position': step.position,
         'type': step.type,
@@ -211,16 +212,20 @@ def save_definition(scenario, steps, *, user, variables=None, execution_config=N
         scenario.save(update_fields=updates)
 
     existing = {str(step.id): step for step in scenario.steps.all()}
+    next_reference_id = max((step.reference_id for step in existing.values()), default=0) + 1
     keep = []
     # Two passes: rows must exist before a parent foreign key can point at them.
     for node in nodes:
         keep.append(node['id'])
         step = existing.get(node['id'])
         fields = {
+            'reference_id': step.reference_id if step is not None else next_reference_id,
             'position': node['position'], 'type': node['type'], 'name': node['name'],
             'enabled': node['enabled'], 'config': node['config'],
             'source_type': node['source_type'], 'source_id': node['source_id'],
         }
+        if step is None:
+            next_reference_id += 1
         if step is None:
             ScenarioStep.objects.create(id=UUID(node['id']), scenario_case=scenario, **fields)
         else:

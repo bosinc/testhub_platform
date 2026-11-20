@@ -7,7 +7,7 @@ from .step_registry import StepValidationError, canonical_uuid, get_step_type
 
 
 NODE_FIELDS = frozenset({
-    'id', 'parent', 'position', 'type', 'name', 'enabled', 'config',
+    'id', 'reference_id', 'parent', 'position', 'type', 'name', 'enabled', 'config',
     'source_type', 'source_id',
 })
 STEP_REFERENCE_PATTERN = re.compile(r'(?<![\w])steps\.(?P<id>[A-Za-z0-9_\-]+)')
@@ -58,6 +58,9 @@ def _node(value, previous):
     if missing:
         raise StepValidationError(f'缺少步骤字段：{", ".join(sorted(missing))}')
     step_id = canonical_uuid(value['id'])
+    reference_id = value.get('reference_id')
+    if reference_id is not None and (type(reference_id) is not int or reference_id < 1):
+        raise StepValidationError('reference_id 必须是正整数')
     capability = get_step_type(value['type'])
     old = previous.get(step_id)
     if old is not None and old['type'] != capability.key:
@@ -80,6 +83,7 @@ def _node(value, previous):
     source_type, source_id = _source(value, capability)
     return {
         'id': step_id,
+        'reference_id': reference_id,
         'parent': parent,
         'position': position,
         'type': capability.key,
@@ -95,6 +99,9 @@ def _tree(nodes, max_depth):
     by_id = {node['id']: node for node in nodes}
     if len(by_id) != len(nodes):
         raise StepValidationError('步骤 id 重复')
+    reference_ids = [node['reference_id'] for node in nodes if node.get('reference_id') is not None]
+    if len(reference_ids) != len(set(reference_ids)):
+        raise StepValidationError('步骤 reference_id 重复')
     for node in nodes:
         parent = node['parent']
         if parent is not None and parent not in by_id:
@@ -121,6 +128,9 @@ def _tree(nodes, max_depth):
         parent = node['parent']
         if parent is not None and not get_step_type(by_id[parent]['type']).allows_children:
             raise StepValidationError(f'叶子步骤 {parent} 不允许子节点')
+        if node['type'] == 'break_if':
+            if parent is None or by_id[parent]['type'] not in {'for', 'foreach'}:
+                raise StepValidationError('Break If 必须作为 for 或 foreach 的直接子步骤')
         siblings[parent].append(node)
     for children in siblings.values():
         children.sort(key=lambda node: (node['position'], node['id']))
@@ -183,20 +193,32 @@ def validate_definition(steps, *, previous_steps=None, source_resolver=None, max
     return ordered
 
 
-def _rewrite_references(value, id_map, external):
+def _rewrite_references(value, id_map, external, reference_map=None):
     if isinstance(value, str):
         def replace(match):
-            step_id = canonical_uuid(match.group('id'), 'steps 引用（必须使用稳定 UUID）')
+            raw_id = match.group('id')
+            if raw_id.isdigit() and len(raw_id) < 32:
+                step_id = (reference_map or {}).get(raw_id)
+                if step_id is None:
+                    external.add(raw_id)
+                    return match.group(0)
+            else:
+                try:
+                    step_id = canonical_uuid(raw_id)
+                except StepValidationError:
+                    external.add(raw_id)
+                    return match.group(0)
             if step_id not in id_map:
-                external.add(step_id)
+                external.add(raw_id)
                 return match.group(0)
             return f'steps.{id_map[step_id]}'
         return STEP_REFERENCE_PATTERN.sub(replace, value)
     if isinstance(value, list):
-        return [_rewrite_references(item, id_map, external) for item in value]
+        return [_rewrite_references(item, id_map, external, reference_map) for item in value]
     if isinstance(value, dict):
         return {
-            _rewrite_references(key, id_map, external): _rewrite_references(item, id_map, external)
+            _rewrite_references(key, id_map, external, reference_map):
+                _rewrite_references(item, id_map, external, reference_map)
             for key, item in value.items()
         }
     return value
@@ -204,12 +226,15 @@ def _rewrite_references(value, id_map, external):
 
 def _clone(nodes, source_resolver, max_depth):
     id_map = {node['id']: str(uuid4()) for node in nodes}
+    reference_map = {str(node['reference_id']): node['id'] for node in nodes
+                     if node.get('reference_id') is not None}
     clones = deepcopy(nodes)
     external = set()
     for node in clones:
-        node['id'] = id_map[node['id']]
+        original_id = node['id']
+        node['id'] = id_map[original_id]
         node['parent'] = id_map.get(node['parent'])
-        node['config'] = _rewrite_references(node['config'], id_map, external)
+        node['config'] = _rewrite_references(node['config'], id_map, external, reference_map)
         if node['type'] == 'else':
             node['config']['if_step_id'] = id_map[node['config']['if_step_id']]
     if external:

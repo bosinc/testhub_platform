@@ -64,6 +64,16 @@ class JsonPathAssertionOperatorTests(SimpleTestCase):
         self.assertIsNone(error)
         self.assertEqual(actual, '200')
 
+    def test_json_path_uses_canonical_field_only(self):
+        response = _FakeResponse(self.PAYLOAD)
+        [result] = execute_assertions(
+            response,
+            [{'type': 'json_path', 'json_path': '$.message', 'expected': 'success'}],
+        )
+        self.assertFalse(result['passed'])
+        self.assertIsNone(result['json_path'])
+        self.assertIn('不能为空', result['error'])
+
     def test_equals_stringifies_like_js(self):
         # 数值 3 与字符串 '3' 视为相等；2.0 归一成 '2'
         passed, _, _ = run_one(

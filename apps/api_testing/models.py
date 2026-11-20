@@ -210,7 +210,6 @@ class ScenarioCase(models.Model):
     description = models.TextField(blank=True, verbose_name='场景用例描述')
     folder = models.ForeignKey(ScenarioCaseFolder, null=True, blank=True, on_delete=models.SET_NULL,
                                related_name='scenario_cases', verbose_name='所属文件夹')
-    requests = models.ManyToManyField(ApiRequest, through='ScenarioCaseRequest', verbose_name='包含请求')
     # Initial variables only; extracted runtime values are never written back here.
     variables = models.JSONField(default=dict, verbose_name='场景初始变量')
     execution_config = models.JSONField(default=dict, verbose_name='执行配置')
@@ -239,6 +238,7 @@ class ScenarioStep(models.Model):
     same source request can appear in several steps.
     """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, verbose_name='步骤ID')
+    reference_id = models.PositiveIntegerField(verbose_name='步骤引用编号')
     scenario_case = models.ForeignKey(ScenarioCase, on_delete=models.CASCADE, related_name='steps',
                                       verbose_name='所属场景')
     parent = models.ForeignKey('self', null=True, blank=True, on_delete=models.CASCADE,
@@ -263,29 +263,13 @@ class ScenarioStep(models.Model):
                          name='api_step_tree_order_idx'),
             models.Index(fields=['source_type', 'source_id'], name='api_step_source_idx'),
         ]
+        constraints = [
+            models.UniqueConstraint(fields=['scenario_case', 'reference_id'],
+                                    name='api_step_scenario_reference_uniq'),
+        ]
 
     def __str__(self):
         return f'{self.scenario_case_id} - {self.name}'
-
-
-class ScenarioCaseRequest(models.Model):
-    """场景用例中的请求关联模型"""
-    scenario_case = models.ForeignKey(ScenarioCase, on_delete=models.CASCADE, verbose_name='场景用例')
-    request = models.ForeignKey(ApiRequest, on_delete=models.CASCADE, verbose_name='API请求')
-    order = models.IntegerField(default=0, verbose_name='执行顺序')
-    assertions = models.JSONField(default=list, verbose_name='断言规则')
-    extractors = models.JSONField(default=list, verbose_name='变量提取规则')
-    enabled = models.BooleanField(default=True, verbose_name='是否启用')
-
-    class Meta:
-        db_table = 'api_scenario_case_requests'
-        verbose_name = '场景用例请求'
-        verbose_name_plural = '场景用例请求'
-        unique_together = ['scenario_case', 'request']
-        ordering = ['order']
-
-    def __str__(self):
-        return f"{self.scenario_case.name} - {self.request.name}"
 
 
 class TestSuite(models.Model):
@@ -357,7 +341,7 @@ class TestExecution(models.Model):
     passed_requests = models.IntegerField(default=0, verbose_name='通过请求数')
     failed_requests = models.IntegerField(default=0, verbose_name='失败请求数')
     skipped_steps = models.IntegerField(default=0, verbose_name='跳过步骤数')
-    results = models.JSONField(default=dict, verbose_name='执行结果')
+    results = models.JSONField(default=dict, verbose_name='执行摘要')
     executed_by = models.ForeignKey(User, on_delete=models.CASCADE, verbose_name='执行者')
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='创建时间')
 
@@ -403,6 +387,7 @@ class StepExecution(models.Model):
     assertion_results = models.JSONField(default=list, blank=True, verbose_name='断言结果')
     extraction_results = models.JSONField(default=list, blank=True, verbose_name='提取结果')
     logs = models.JSONField(default=list, blank=True, verbose_name='脚本日志')
+    output = models.JSONField(default=dict, blank=True, verbose_name='步骤输出')
     started_at = models.DateTimeField(null=True, blank=True, verbose_name='开始时间')
     finished_at = models.DateTimeField(null=True, blank=True, verbose_name='结束时间')
     error = models.TextField(blank=True, default='', verbose_name='错误信息')
@@ -476,6 +461,7 @@ class ScheduledTask(models.Model):
     TASK_TYPE_CHOICES = [
         ('TEST_SUITE', '测试套件执行'),
         ('API_REQUEST', 'API请求执行'),
+        ('SCENARIO_CASE', '场景用例执行'),
     ]
 
     STATUS_CHOICES = [
@@ -510,6 +496,8 @@ class ScheduledTask(models.Model):
                                    verbose_name='测试套件')
     api_request = models.ForeignKey('ApiRequest', on_delete=models.CASCADE, null=True, blank=True,
                                     verbose_name='API请求')
+    scenario_case = models.ForeignKey('ScenarioCase', on_delete=models.CASCADE, null=True, blank=True,
+                                     verbose_name='场景用例')
     environment = models.ForeignKey('Environment', on_delete=models.SET_NULL, null=True, blank=True,
                                     verbose_name='执行环境')
 

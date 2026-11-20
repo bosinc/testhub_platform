@@ -17,6 +17,7 @@ import ApiAutomationTesting from '@/views/api-testing/AutomationTesting.vue'
 import ApiRequestHistory from '@/views/api-testing/RequestHistory.vue'
 import ApiEnvironmentManagement from '@/views/api-testing/EnvironmentManagement.vue'
 import ApiReportView from '@/views/api-testing/ReportView.vue'
+import ApiReportDetail from '@/views/api-testing/ReportDetail.vue'
 import ApiScheduledTasks from '@/views/api-testing/ScheduledTasks.vue'
 import ApiAIServiceConfig from '@/views/api-testing/AIServiceConfig.vue'
 import NotificationLogs from '@/views/notification/NotificationLogs.vue'
@@ -237,6 +238,11 @@ const routes = [
                 path: 'reports',
                 name: 'ApiReports',
                 component: ApiReportView
+            },
+            {
+                path: 'reports/:id',
+                name: 'ApiReportDetail',
+                component: ApiReportDetail
             },
             {
                 path: 'scheduled-tasks',

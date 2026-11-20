@@ -1,6 +1,7 @@
 import { normalizeAssertions, stripLegacyAssertionValue } from './assertions.js'
 
-export const BODY_TYPES = ['json', 'raw', 'form-data', 'x-www-form-urlencoded', 'binary']
+// `none` is the backend default (no body at all); the editor must round-trip it.
+export const BODY_TYPES = ['none', 'json', 'raw', 'form-data', 'x-www-form-urlencoded', 'binary']
 export const REQUEST_FIELDS = [
   'method', 'url', 'request_type', 'headers', 'params', 'path_params', 'body', 'auth',
   'pre_request_script', 'post_request_script', 'assertions', 'extractors', 'settings'
@@ -52,7 +53,10 @@ export function createRequestDraft(source = {}) {
     path_params: canonicalRows(source.path_params ?? []),
     body: cloneDraft(source.body?.type ? source.body : { type: 'raw', data: '' }),
     auth: toAuthDraft(source.auth),
-    pre_request_script: source.pre_request_script || '', post_request_script: source.post_request_script || '',
+    // Scenario steps store scripts in the DTO's `scripts` object; ApiRequest
+    // rows expose the same content as the two legacy columns.
+    pre_request_script: source.pre_request_script || source.scripts?.pre_request || '',
+    post_request_script: source.post_request_script || source.scripts?.post_request || '',
     assertions: cloneDraft(normalizeAssertions(source.assertions)), extractors: cloneDraft(source.extractors || []),
     settings: cloneDraft(source.settings || {})
   }
@@ -165,4 +169,12 @@ export function toCodegenModel(draft, fullUrl) {
       binary: type === 'binary' ? draft.body.data : undefined },
     timeout: (draft.settings.timeout || 30) * 1000
   }
+}
+
+// Scenario steps keep the whole request in `config.request`, which follows the
+// backend DTO: scripts live in a `scripts` object, not in the two legacy columns.
+export async function serializeStepRequest(source) {
+  const draft = await serializeRequestDraft(source)
+  const { pre_request_script: pre, post_request_script: post, ...rest } = draft
+  return { ...rest, scripts: { pre_request: pre || '', post_request: post || '' } }
 }
