@@ -623,9 +623,6 @@ def run_api_scenario_action(arguments: dict, user) -> dict:
     if not scenario_case:
         raise McpActionError(f'场景用例 {scenario_case_id} 不存在或无权限')
 
-    if not scenario_case.scenariocaserequest_set.filter(enabled=True).exists():
-        raise McpActionError(f'场景用例「{scenario_case.name}」未包含任何启用的请求，无法执行')
-
     environment = _resolve_environment(
         arguments.get('environment_id'), scenario_case.project_id)
     execution = start_scenario_execution(scenario_case, user, environment=environment)
@@ -965,7 +962,7 @@ def create_ui_case_action(arguments: dict, user) -> dict:
 def create_api_scenario_case_action(arguments: dict, user) -> dict:
     """新建接口测试场景用例，可同时关联到功能测试用例。
 
-    场景用例、请求编排与关联关系在同一事务内落库：任一步校验失败都不会留下孤立用例。
+    场景用例、步骤树与关联关系在同一事务内落库：任一步校验失败都不会留下孤立用例。
     """
     from django.db import transaction
     from apps.api_testing.models import ScenarioCase, ScenarioCaseFolder
@@ -988,16 +985,9 @@ def create_api_scenario_case_action(arguments: dict, user) -> dict:
     test_case_id = arguments.get('test_case_id')
     replace_link = bool(arguments.get('replace_link'))
 
-    # 空场景能建但永远跑不了：创建阶段就要求至少 1 个启用请求，
-    # 避免产出「已关联却无法执行」的场景用例。
-    requests_data = data.get('requests') or []
-    if not isinstance(requests_data, (list, tuple)):
-        raise McpActionError('data.requests 必须是数组')
-    if not any(isinstance(item, dict) and item.get('enabled', True)
-               for item in requests_data):
-        raise McpActionError(
-            'data.requests 不能为空，场景用例至少需要 1 个启用请求；'
-            '请先用 list_api_requests 选择接口，缺失时用 preview_create_api_request 新建')
+    steps = data.get('steps')
+    if not isinstance(steps, list):
+        raise McpActionError('data.steps 必须是步骤节点数组')
 
     with transaction.atomic():
         formal_case = None
@@ -1013,8 +1003,8 @@ def create_api_scenario_case_action(arguments: dict, user) -> dict:
             environment=environment,
             created_by=user,
         )
-        requests_created = _replace_scenario_requests(
-            scenario_case, requests_data, project.id)
+        from apps.api_testing.scenario_service import save_definition
+        save_definition(scenario_case, steps, user=user)
 
         result = {
             'scenario_case_id': scenario_case.id,
@@ -1022,59 +1012,12 @@ def create_api_scenario_case_action(arguments: dict, user) -> dict:
             'project_id': project.id,
             'folder_id': scenario_case.folder_id,
             'environment_id': scenario_case.environment_id,
-            'requests_created': requests_created,
+            'steps_created': len(steps),
         }
         if formal_case is not None:
             result['automation_link'] = _link_formal_case(
                 formal_case, 'api_scenario_case', scenario_case.id, user)
     return result
-
-
-def _replace_scenario_requests(scenario_case, requests, project_id):
-    """整体替换场景用例中的请求编排（顺序、断言、变量提取）。
-
-    先完成全部校验再落库，避免校验失败时把原有编排删掉。
-    """
-    from django.db import transaction
-    from apps.api_testing.models import ApiRequest, ScenarioCaseRequest
-
-    if not isinstance(requests, (list, tuple)):
-        raise McpActionError('data.requests 必须是数组')
-
-    prepared = []
-    seen_request_ids = set()
-    for index, item in enumerate(requests, 1):
-        if not isinstance(item, dict):
-            raise McpActionError(f'请求 {index} 必须是对象')
-        request_id = item.get('request_id') or item.get('id')
-        if not request_id:
-            raise McpActionError(f'请求 {index} 缺少 request_id')
-        api_request = ApiRequest.objects.filter(
-            id=request_id, collection__project_id=project_id).first()
-        if not api_request:
-            raise McpActionError(f'请求 {request_id} 不存在或不属于当前项目')
-        if api_request.id in seen_request_ids:
-            raise McpActionError(
-                f'请求 {index} 与前面的请求重复（request_id={api_request.id}），'
-                '同一场景用例内每个接口只能出现一次')
-        seen_request_ids.add(api_request.id)
-        prepared.append((api_request, item, index))
-
-    with transaction.atomic():
-        scenario_case.scenariocaserequest_set.all().delete()
-        for api_request, item, index in prepared:
-            ScenarioCaseRequest.objects.create(
-                scenario_case=scenario_case,
-                request=api_request,
-                order=item.get('order', index - 1),
-                enabled=bool(item.get('enabled', True)),
-                # 未显式提供时沿用接口自身的断言/提取配置
-                assertions=item.get('assertions') if item.get('assertions') is not None
-                else list(api_request.assertions or []),
-                extractors=item.get('extractors') if item.get('extractors') is not None
-                else list(api_request.extractors or []),
-            )
-    return len(prepared)
 
 
 def update_testcase_action(arguments: dict, user) -> dict:
@@ -1215,26 +1158,26 @@ def update_api_scenario_case_action(arguments: dict, user) -> dict:
             data.get('environment_id'), scenario_case.project_id)
         changed.append('environment')
 
-    # 主记录与请求编排同事务提交：编排校验失败时回滚字段更新。
+    steps = data.get('steps')
+    if steps is not None and not isinstance(steps, list):
+        raise McpActionError('data.steps 必须是步骤节点数组')
+
+    # 主记录与步骤树同事务提交：步骤校验失败时回滚字段更新。
     with transaction.atomic():
         scenario_case.save()
-        requests_replaced = 0
-        if 'requests' in data:
-            requests_replaced = _replace_scenario_requests(
-                scenario_case, data.get('requests') or [], scenario_case.project_id)
+        steps_replaced = 0
+        if steps is not None:
+            from apps.api_testing.scenario_service import save_definition
+            save_definition(scenario_case, steps, user=user)
+            steps_replaced = len(steps)
 
-    # 更新允许清空编排，但要明确告知结果不可执行（执行入口会拒绝空场景）。
-    runnable = scenario_case.scenariocaserequest_set.filter(enabled=True).exists()
     result = {
         'scenario_case_id': scenario_case.id,
         'name': scenario_case.name,
         'project_id': scenario_case.project_id,
         'updated_fields': changed,
-        'requests_replaced': requests_replaced,
-        'runnable': runnable,
+        'steps_replaced': steps_replaced,
     }
-    if not runnable:
-        result['warning'] = '该场景用例当前没有启用请求，执行时会被拒绝；请补充请求后再执行'
     return result
 
 
@@ -1621,27 +1564,22 @@ def build_preview(tool_name: str, arguments: dict, user) -> str:
             suite = TestSuite.objects.filter(id=arguments.get('suite_id')).first()
             count = TestSuiteItem.objects.filter(
                 test_suite=suite, enabled=True).count() if suite else 0
-            # 无启用请求的场景会被记为失败（不再算通过），提前在预览里点出来
-            empty_count = (TestSuiteItem.objects.filter(test_suite=suite, enabled=True)
-                           .exclude(scenario_case__scenariocaserequest__enabled=True)
-                           .distinct().count() if suite else 0)
             environment_id = arguments.get('environment_id')
             return (f'将执行 API 测试套件「{suite.name if suite else arguments.get("suite_id")}」'
                     f'（{count} 个场景用例'
                     + (f'，执行环境 {environment_id}' if environment_id else '')
-                    + (f'；其中 {empty_count} 个场景未包含启用的请求，将记为失败'
-                       if empty_count else '')
                     + '）')
         if tool_name == 'confirm_run_api_scenario':
             from apps.api_testing.models import Environment, ScenarioCase
             scenario_case = ScenarioCase.objects.filter(
                 id=arguments.get('scenario_case_id')).first()
-            requests_qs = (scenario_case.scenariocaserequest_set.filter(enabled=True)
-                           if scenario_case else None)
-            count = requests_qs.count() if requests_qs is not None else 0
-            write_count = (requests_qs.filter(
-                request__method__in=['POST', 'PUT', 'PATCH', 'DELETE']).count()
-                if requests_qs is not None else 0)
+            steps = (list(scenario_case.steps.filter(enabled=True, type='http'))
+                     if scenario_case else [])
+            count = len(steps)
+            write_count = sum(
+                step.config.get('request', {}).get('method') in {'POST', 'PUT', 'PATCH', 'DELETE'}
+                for step in steps
+            )
             environment_id = arguments.get('environment_id') or (
                 scenario_case.environment_id if scenario_case else None)
             environment = (Environment.objects.filter(id=environment_id).first()
@@ -1693,14 +1631,13 @@ def build_preview(tool_name: str, arguments: dict, user) -> str:
             from apps.api_testing.models import ApiProject
             data = arguments.get('data') or {}
             project = ApiProject.objects.filter(id=arguments.get('project_id')).first()
-            requests = data.get('requests') or []
+            steps = data.get('steps') or []
             link = arguments.get('test_case_id')
-            enabled = sum(1 for item in requests
+            enabled = sum(1 for item in steps
                           if isinstance(item, dict) and item.get('enabled', True))
             return (f'将在 API 项目「{project.name if project else arguments.get("project_id")}」'
-                    f'新建场景用例「{data.get("name", "未命名")}」（{len(requests)} 个请求，'
+                    f'新建场景用例「{data.get("name", "未命名")}」（{len(steps)} 个步骤，'
                     f'其中 {enabled} 个启用）'
-                    + ('' if enabled else '；无启用请求将被拒绝')
                     + _link_preview_note(link, 'api_scenario_case',
                                          bool(arguments.get('replace_link'))))
         if tool_name == 'confirm_update_ui_case':
@@ -1711,10 +1648,10 @@ def build_preview(tool_name: str, arguments: dict, user) -> str:
                     + (f'，并用 {len(steps)} 个步骤整体覆盖原步骤' if isinstance(steps, list) else ''))
         if tool_name == 'confirm_update_api_scenario_case':
             data = arguments.get('data') or {}
-            requests = data.get('requests')
+            steps = data.get('steps')
             return (f'将更新接口场景用例 {arguments.get("scenario_case_id")}：'
                     f'字段 {", ".join(sorted(data)) or "（空）"}'
-                    + (f'，并用 {len(requests)} 个请求整体覆盖原编排' if isinstance(requests, list) else ''))
+                    + (f'，并用 {len(steps)} 个步骤整体覆盖原步骤树' if isinstance(steps, list) else ''))
         if tool_name == 'confirm_update_ui_element':
             from apps.ui_automation.models import Element
             data = arguments.get('data') or {}

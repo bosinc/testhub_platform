@@ -523,25 +523,22 @@ _TOOLS = [
                     'data：{name, description?, folder_id? 或 folder_path?'
                     '（「父目录/子目录」路径，只知目录名时用它）, '
                     'create_missing?（末级目录不存在时是否自动创建，默认 false）, '
-                    'environment_id?, requests?: '
-                    '[{request_id, order?, enabled?, assertions?, extractors?}]}；'
-                    'requests 至少需要 1 个启用请求（enabled 默认 true），否则确认会被拒绝；'
-                    '未提供 assertions/extractors 时沿用接口自身配置；'
+                    'environment_id?, steps: 场景步骤树节点数组；'
                     'test_case_id 传入功能测试用例 ID 时创建后自动建立接口场景关联；'
                     '该功能用例已有同类型关联时确认会被拒绝，确需替换须显式传 replace_link=true。'
                     '本步骤不落库。',
         read_only=False, idempotent=False, paired_with='confirm_create_api_scenario_case',
         examples=({'project_id': 2, 'test_case_id': 101,
                    'data': {'name': '下单主流程', 'environment_id': 4,
-                            'requests': [{'request_id': 21}, {'request_id': 22}]}},),
+                            'steps': []}},),
     ),
     ToolMeta(
         name='confirm_create_api_scenario_case', title='确认新建关联接口场景',
         category=CATEGORY_CONFIRM,
         domain='api-testing',
         summary='确认新建接口场景用例并关联功能用例（危险操作第二步）',
-        description='危险操作第二步：校验令牌后创建接口场景用例（含请求编排）并按需建立与功能用例的关联，'
-                    '返回 scenario_case_id 与 automation_link；无启用请求时整体拒绝。'
+        description='危险操作第二步：校验令牌后创建接口场景用例（含步骤树）并按需建立与功能用例的关联，'
+                    '返回 scenario_case_id 与 automation_link。'
                     '功能用例已有同类型关联且未传 replace_link=true 时整体拒绝（不留孤儿场景）。'
                     '令牌一次性消费且 5 分钟内有效；'
                     '人工审批模式下需轮询 get_approval_status。',
@@ -658,20 +655,18 @@ _TOOLS = [
         summary='预览更新接口场景用例（危险操作第一步）',
         description='危险操作第一步：生成更新接口场景用例的影响预览并返回 confirm_token（5 分钟有效）。'
                     'data：{name?, description?, folder_id? 或 folder_path?'
-                    '（「父目录/子目录」）, create_missing?, environment_id?, requests?}；'
-                    'requests 传入时会整体覆盖原请求编排。本步骤不修改数据。',
+                    '（「父目录/子目录」）, create_missing?, environment_id?, steps?}；'
+                    'steps 传入时会整体覆盖步骤树。本步骤不修改数据。',
         read_only=False, idempotent=False, paired_with='confirm_update_api_scenario_case',
         examples=({'scenario_case_id': 8,
-                   'data': {'name': '下单主流程-v2', 'requests': [{'request_id': 21}]}},),
+                   'data': {'name': '下单主流程-v2', 'steps': []}},),
     ),
     ToolMeta(
         name='confirm_update_api_scenario_case', title='确认更新接口场景',
         category=CATEGORY_CONFIRM,
         domain='api-testing',
         summary='确认更新接口场景用例（危险操作第二步）',
-        description='危险操作第二步：校验令牌后更新接口场景用例，返回变更字段、覆盖的请求数'
-                    '与 runnable（是否还有启用的请求）；runnable=false 时附带 warning，'
-                    '该场景无法执行。'
+        description='危险操作第二步：校验令牌后更新接口场景用例，返回变更字段与覆盖的步骤数。'
                     '令牌一次性消费且 5 分钟内有效；人工审批模式下需轮询 get_approval_status。',
         read_only=False, idempotent=False, destructive=True,
         paired_with='preview_update_api_scenario_case',

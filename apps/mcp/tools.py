@@ -577,7 +577,7 @@ def get_api_request(ctx: Context, request_id: int) -> dict:
     referenced_by_scenarios 为已引用该请求的场景用例数，用于评估改动影响。
     """
     def run(user):
-        from apps.api_testing.models import ApiRequest, ScenarioCaseRequest
+        from apps.api_testing.models import ApiRequest, ScenarioStep
         request = (ApiRequest.objects.filter(
             id=request_id, collection__project__in=act.accessible_api_projects(user))
             .select_related('collection').first())
@@ -593,8 +593,9 @@ def get_api_request(ctx: Context, request_id: int) -> dict:
                 cursor = cursor.parent
             collection_path = '/'.join(reversed(names))
 
-        referenced = ScenarioCaseRequest.objects.filter(
-            request_id=request.id).values('scenario_case_id').distinct().count()
+        referenced = ScenarioStep.objects.filter(
+            source_type='api_request', source_id=str(request.id)
+        ).values('scenario_case_id').distinct().count()
         return {
             'id': request.id,
             'name': request.name,
@@ -778,7 +779,9 @@ def list_api_scenarios(ctx: Context, project_id: int, folder_id: int = 0,
 
         def build():
             qs = ScenarioCase.objects.filter(project_id=project_id).annotate(
-                request_count=Count('scenariocaserequest')).order_by('-created_at')
+                request_count=Count(
+                    'steps', filter=Q(steps__type='http', steps__enabled=True), distinct=True,
+                )).order_by('-created_at')
             if folder_id:
                 ids = (_folder_subtree_ids(ScenarioCaseFolder, project_id, folder_id)
                        if include_children else [folder_id])
@@ -1417,9 +1420,7 @@ def preview_create_api_scenario_case(ctx: Context, project_id: int, data: dict,
     生成影响预览并返回 confirm_token（5 分钟有效），本步骤不落库。
     data 结构：{name, description?, folder_id? 或 folder_path?（「父目录/子目录」）,
     create_missing?（末级目录不存在时是否自动创建，默认 false）, environment_id?,
-    requests?: [{request_id, order?, enabled?, assertions?, extractors?}]}；
-    requests 至少需要 1 个启用请求（enabled 默认 true），否则确认会被拒绝；
-    未提供 assertions/extractors 时沿用接口自身配置；
+    steps: 场景步骤树节点数组；
     test_case_id 传入功能测试用例 ID 时，创建后自动建立接口场景关联；
     该功能用例已存在同类型关联时确认会被拒绝，确需替换须显式传 replace_link=true。
     """
@@ -1533,8 +1534,8 @@ def preview_update_api_scenario_case(ctx: Context, scenario_case_id: int, data: 
 
     生成影响预览并返回 confirm_token（5 分钟有效），本步骤不修改数据。
     data：{name?, description?, folder_id? 或 folder_path?（「父目录/子目录」）,
-    create_missing?, environment_id?, requests?}；
-    requests 传入时会整体覆盖原请求编排。
+    create_missing?, environment_id?, steps?}；
+    steps 传入时会整体覆盖步骤树。
     """
     arguments = {'scenario_case_id': scenario_case_id, 'data': data or {}}
     return _run_tool(ctx, 'preview_update_api_scenario_case', arguments,

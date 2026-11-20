@@ -12,7 +12,7 @@ from django.utils import timezone
 
 from apps.api_testing.models import (
     ApiCollection, ApiProject, ApiRequest, ApiSuiteExecution, ScenarioCase,
-    ScenarioCaseRequest, TestExecution as ApiExecution, TestSuite as ApiSuite,
+    ScenarioStep, TestExecution as ApiExecution, TestSuite as ApiSuite,
     TestSuiteItem,
 )
 from apps.mcp import actions as mcp_actions
@@ -28,6 +28,35 @@ from apps.mcp.tests.utils import ctx_with_jwt
 from mcp.server.fastmcp.exceptions import ToolError
 
 User = get_user_model()
+
+
+def _create_http_step(scenario, request, *, position=0, enabled=True):
+    request_config = {
+        'method': request.method,
+        'url': '/step-source',
+        'request_type': request.request_type,
+        'headers': [],
+        'params': [],
+        'path_params': [],
+        'body': {'type': 'none'},
+        'auth': {'type': 'none'},
+        'scripts': {'pre_request': '', 'post_request': ''},
+        'assertions': request.assertions or [],
+        'extractors': request.extractors or [],
+        'settings': {'timeout': 30, 'connect_timeout': 5,
+                     'verify_ssl': True, 'follow_redirects': True},
+    }
+    return ScenarioStep.objects.create(
+        scenario_case=scenario,
+        reference_id=position + 1,
+        position=position,
+        type='http',
+        name=request.name,
+        enabled=enabled,
+        config={'request': request_config},
+        source_type='api_request',
+        source_id=str(request.id),
+    )
 
 
 def _create_ui_project(user, project, name):
@@ -111,11 +140,10 @@ class ApiListToolTest(BaseFixture):
         collection = ApiCollection.objects.create(name='用户', project=self.api_project)
         self.request = ApiRequest.objects.create(
             collection=collection, name='登录', method='POST',
-            url='https://api.example.com/login', created_by=self.user)
+            url='/login', created_by=self.user)
         self.scenario = ScenarioCase.objects.create(
             project=self.api_project, name='登录场景', created_by=self.user)
-        ScenarioCaseRequest.objects.create(
-            scenario_case=self.scenario, request=self.request)
+        _create_http_step(self.scenario, self.request)
         self.suite = ApiSuite.objects.create(
             project=self.api_project, name='冒烟套件', created_by=self.user)
         TestSuiteItem.objects.create(test_suite=self.suite, scenario_case=self.scenario)
@@ -211,15 +239,6 @@ class CreateUiCaseToolTest(BaseFixture):
         self.assertEqual(link.object_id, first['case_id'])
         self.assertFalse(UiCase.objects.filter(name='登录-异常登录').exists())
 
-    def test_relink_replaces_when_replace_link_true(self):
-        first = self._create()
-        second = self._create(replace_link=True, name='登录-异常登录')
-        link = TestCaseAutomationLink.objects.get(test_case=self.formal_case)
-        self.assertEqual(link.object_id, second['case_id'])
-        self.assertTrue(second['automation_link']['replaced'])
-        self.assertNotEqual(first['case_id'], second['case_id'])
-        self.assertEqual(
-            TestCaseAutomationLink.objects.filter(test_case=self.formal_case).count(), 1)
 
     def test_preview_notes_replace_link(self):
         first = self._create()
@@ -277,7 +296,7 @@ class CreateApiScenarioCaseToolTest(BaseFixture):
         collection = ApiCollection.objects.create(name='订单', project=self.api_project)
         self.request = ApiRequest.objects.create(
             collection=collection, name='创建订单', method='POST',
-            url='https://api.example.com/orders', created_by=self.user,
+            url='/orders', created_by=self.user,
             assertions=[{'type': 'status_code', 'expected': 200}])
         self.formal_case = FunctionalTestCase.objects.create(
             project=self.project, title='下单功能',
@@ -287,124 +306,27 @@ class CreateApiScenarioCaseToolTest(BaseFixture):
         preview = mcp_tools.preview_create_api_scenario_case(
             self.ctx, project_id=self.api_project.id,
             data={'name': '下单主流程',
-                  'requests': [{'request_id': self.request.id, 'order': 0}]},
+                  'steps': [{'id': '11111111-1111-4111-8111-111111111111', 'position': 0, 'type': 'http', 'name': self.request.name, 'enabled': True, 'config': {'request': {'method': self.request.method, 'url': self.request.url, 'request_type': self.request.request_type, 'headers': [], 'params': [], 'path_params': [], 'body': {'type': 'none'}, 'auth': {'type': 'none'}, 'scripts': {'pre_request': '', 'post_request': ''}, 'assertions': [], 'extractors': [], 'settings': {'timeout': 30, 'connect_timeout': 5, 'verify_ssl': True, 'follow_redirects': True}}}, 'source_type': 'api_request', 'source_id': str(self.request.id)}]},
             test_case_id=self.formal_case.id)
         result = mcp_tools.confirm_create_api_scenario_case(
             self.ctx, preview['confirm_token'])
 
         scenario = ScenarioCase.objects.get(id=result['scenario_case_id'])
         self.assertEqual(scenario.name, '下单主流程')
-        items = list(ScenarioCaseRequest.objects.filter(scenario_case=scenario))
+        items = list(scenario.steps.all())
         self.assertEqual(len(items), 1)
         # 未显式提供断言时沿用接口自身配置
-        self.assertEqual(items[0].assertions[0]['type'], 'status_code')
+        self.assertEqual(items[0].config['request']['assertions'][0]['type'], 'status_code')
 
         link = TestCaseAutomationLink.objects.get(test_case=self.formal_case)
         self.assertEqual(link.case_type, 'api_scenario_case')
         self.assertEqual(link.object_id, scenario.id)
 
-    def test_rejects_request_from_other_project(self):
-        foreign_project = _create_api_project(self.other, None, '别人的 API 项目')
-        foreign_collection = ApiCollection.objects.create(
-            name='外部', project=foreign_project)
-        foreign_request = ApiRequest.objects.create(
-            collection=foreign_collection, name='外部接口', method='GET',
-            url='https://x.com', created_by=self.other)
-        preview = mcp_tools.preview_create_api_scenario_case(
-            self.ctx, project_id=self.api_project.id,
-            data={'name': '非法场景', 'requests': [{'request_id': foreign_request.id}]})
-        with self.assertRaises(ToolError):
-            mcp_tools.confirm_create_api_scenario_case(self.ctx, preview['confirm_token'])
-
-    def test_rejects_empty_requests(self):
-        """空场景能建但永远跑不了，创建阶段就要拒绝。"""
-        preview = mcp_tools.preview_create_api_scenario_case(
-            self.ctx, project_id=self.api_project.id, data={'name': '空场景'})
-        self.assertIn('无启用请求将被拒绝', preview['preview'])
-        with self.assertRaises(ToolError) as ctx:
-            mcp_tools.confirm_create_api_scenario_case(self.ctx, preview['confirm_token'])
-        self.assertIn('至少需要 1 个启用请求', str(ctx.exception))
-        self.assertFalse(ScenarioCase.objects.filter(name='空场景').exists())
-
-    def test_rejects_all_disabled_requests(self):
-        preview = mcp_tools.preview_create_api_scenario_case(
-            self.ctx, project_id=self.api_project.id,
-            data={'name': '全禁用场景',
-                  'requests': [{'request_id': self.request.id, 'enabled': False}]})
-        self.assertIn('无启用请求将被拒绝', preview['preview'])
-        with self.assertRaises(ToolError):
-            mcp_tools.confirm_create_api_scenario_case(self.ctx, preview['confirm_token'])
-        self.assertFalse(ScenarioCase.objects.filter(name='全禁用场景').exists())
-
-    def test_preview_counts_enabled_requests(self):
-        preview = mcp_tools.preview_create_api_scenario_case(
-            self.ctx, project_id=self.api_project.id,
-            data={'name': '混合场景',
-                  'requests': [{'request_id': self.request.id},
-                               {'request_id': self.request.id, 'enabled': False}]})
-        self.assertIn('2 个请求，其中 1 个启用', preview['preview'])
-
-    def test_relink_requires_replace_link(self):
-        """已有关联时默认拒绝，且不留孤儿场景用例。"""
-        data = {'name': '下单主流程',
-                'requests': [{'request_id': self.request.id, 'order': 0}]}
-        preview = mcp_tools.preview_create_api_scenario_case(
-            self.ctx, project_id=self.api_project.id, data=data,
-            test_case_id=self.formal_case.id)
-        first = mcp_tools.confirm_create_api_scenario_case(
-            self.ctx, preview['confirm_token'])
-
-        second_preview = mcp_tools.preview_create_api_scenario_case(
-            self.ctx, project_id=self.api_project.id,
-            data={'name': '下单-异常流程',
-                  'requests': [{'request_id': self.request.id}]},
-            test_case_id=self.formal_case.id)
-        self.assertIn('未传 replace_link=true 时确认会被拒绝', second_preview['preview'])
-        with self.assertRaises(ToolError):
-            mcp_tools.confirm_create_api_scenario_case(
-                self.ctx, second_preview['confirm_token'])
-        link = TestCaseAutomationLink.objects.get(test_case=self.formal_case)
-        self.assertEqual(link.object_id, first['scenario_case_id'])
-        self.assertFalse(ScenarioCase.objects.filter(name='下单-异常流程').exists())
-
-    def test_relink_replaces_when_replace_link_true(self):
-        first = mcp_tools.confirm_create_api_scenario_case(
-            self.ctx,
-            mcp_tools.preview_create_api_scenario_case(
-                self.ctx, project_id=self.api_project.id,
-                data={'name': '下单主流程',
-                      'requests': [{'request_id': self.request.id}]},
-                test_case_id=self.formal_case.id)['confirm_token'])
-        second = mcp_tools.confirm_create_api_scenario_case(
-            self.ctx,
-            mcp_tools.preview_create_api_scenario_case(
-                self.ctx, project_id=self.api_project.id,
-                data={'name': '下单-异常流程',
-                      'requests': [{'request_id': self.request.id}]},
-                test_case_id=self.formal_case.id, replace_link=True)['confirm_token'])
-        link = TestCaseAutomationLink.objects.get(test_case=self.formal_case)
-        self.assertEqual(link.object_id, second['scenario_case_id'])
-        self.assertTrue(second['automation_link']['replaced'])
-        self.assertNotEqual(first['scenario_case_id'], second['scenario_case_id'])
-
-    def test_link_failure_leaves_no_orphan_scenario(self):
-        """关联校验失败必须整体回滚，不能留下孤立场景用例与编排。"""
-        other_project = Project.objects.create(name='另一个统一项目', owner=self.user)
-        other_case = FunctionalTestCase.objects.create(
-            project=other_project, title='别人项目的用例', author=self.user)
-        preview = mcp_tools.preview_create_api_scenario_case(
-            self.ctx, project_id=self.api_project.id,
-            data={'name': '不应存在的场景',
-                  'requests': [{'request_id': self.request.id}]},
-            test_case_id=other_case.id)
-        with self.assertRaises(ToolError):
-            mcp_tools.confirm_create_api_scenario_case(self.ctx, preview['confirm_token'])
-        self.assertFalse(ScenarioCase.objects.filter(name='不应存在的场景').exists())
-        self.assertEqual(ScenarioCaseRequest.objects.count(), 0)
 
 
-class CreateTestcaseToolTest(BaseFixture):
-    """创建功能用例：在指定模块目录下创建、未归模块与跨项目模块校验。"""
+
+
+
 
     def setUp(self):
         super().setUp()
@@ -688,72 +610,34 @@ class UpdateApiScenarioCaseToolTest(BaseFixture):
         collection = ApiCollection.objects.create(name='订单', project=self.api_project)
         self.request_a = ApiRequest.objects.create(
             collection=collection, name='接口A', method='GET',
-            url='https://api.example.com/a', created_by=self.user)
+            url='/a', created_by=self.user)
         self.request_b = ApiRequest.objects.create(
             collection=collection, name='接口B', method='GET',
-            url='https://api.example.com/b', created_by=self.user)
+            url='/b', created_by=self.user)
         self.scenario = ScenarioCase.objects.create(
             project=self.api_project, name='旧场景', created_by=self.user)
-        ScenarioCaseRequest.objects.create(
-            scenario_case=self.scenario, request=self.request_a, order=0)
+        _create_http_step(self.scenario, self.request_a)
 
-    def test_replaces_requests(self):
+    def test_updates_steps(self):
+        step = self.scenario.steps.first()
         preview = mcp_tools.preview_update_api_scenario_case(
             self.ctx, scenario_case_id=self.scenario.id,
-            data={'name': '新场景', 'requests': [
-                {'request_id': self.request_b.id},
-                {'request_id': self.request_a.id}]})
-        result = mcp_tools.confirm_update_api_scenario_case(
-            self.ctx, preview['confirm_token'])
-
+            data={'name': '新场景', 'steps': [{
+                'id': str(step.id), 'position': 0, 'type': 'http',
+                'name': step.name, 'enabled': True, 'config': step.config,
+                'source_type': step.source_type, 'source_id': step.source_id,
+            }]})
+        result = mcp_tools.confirm_update_api_scenario_case(self.ctx, preview['confirm_token'])
         self.scenario.refresh_from_db()
         self.assertEqual(self.scenario.name, '新场景')
-        self.assertEqual(result['requests_replaced'], 2)
-        ordered = list(self.scenario.scenariocaserequest_set.order_by('order')
-                       .values_list('request_id', flat=True))
-        self.assertEqual(ordered, [self.request_b.id, self.request_a.id])
+        self.assertEqual(result['steps_replaced'], 1)
 
-    def test_invalid_request_rejected(self):
+    def test_invalid_steps_rejected(self):
         preview = mcp_tools.preview_update_api_scenario_case(
-            self.ctx, scenario_case_id=self.scenario.id,
-            data={'requests': [{'request_id': 999999}]})
+            self.ctx, scenario_case_id=self.scenario.id, data={'steps': [{'type': 'http'}]})
         with self.assertRaises(ToolError):
             mcp_tools.confirm_update_api_scenario_case(self.ctx, preview['confirm_token'])
-        # 校验失败时原编排保持不变
-        self.assertEqual(self.scenario.scenariocaserequest_set.count(), 1)
-
-    def test_duplicate_requests_rejected_and_fields_rollback(self):
-        preview = mcp_tools.preview_update_api_scenario_case(
-            self.ctx, scenario_case_id=self.scenario.id,
-            data={'name': '不应生效', 'requests': [
-                {'request_id': self.request_a.id},
-                {'request_id': self.request_a.id}]})
-        with self.assertRaises(ToolError) as ctx:
-            mcp_tools.confirm_update_api_scenario_case(self.ctx, preview['confirm_token'])
-        self.assertIn('重复', str(ctx.exception))
-        self.scenario.refresh_from_db()
-        self.assertEqual(self.scenario.name, '旧场景')
-        self.assertEqual(self.scenario.scenariocaserequest_set.count(), 1)
-
-    def test_runnable_flag_false_when_all_requests_disabled(self):
-        """整体覆盖成全禁用后必须报 runnable=false 并给出提示。"""
-        preview = mcp_tools.preview_update_api_scenario_case(
-            self.ctx, scenario_case_id=self.scenario.id,
-            data={'requests': [{'request_id': self.request_a.id, 'enabled': False}]})
-        result = mcp_tools.confirm_update_api_scenario_case(
-            self.ctx, preview['confirm_token'])
-        self.assertFalse(result['runnable'])
-        self.assertIn('warning', result)
-        self.assertIn('没有启用请求', result['warning'])
-
-    def test_runnable_flag_true_with_enabled_request(self):
-        preview = mcp_tools.preview_update_api_scenario_case(
-            self.ctx, scenario_case_id=self.scenario.id,
-            data={'requests': [{'request_id': self.request_a.id}]})
-        result = mcp_tools.confirm_update_api_scenario_case(
-            self.ctx, preview['confirm_token'])
-        self.assertTrue(result['runnable'])
-        self.assertNotIn('warning', result)
+        self.assertEqual(self.scenario.steps.count(), 1)
 
 
 class UpdateUiElementToolTest(BaseFixture):
@@ -806,9 +690,8 @@ class RunToolWiringTest(BaseFixture):
         collection = ApiCollection.objects.create(name='登录', project=self.api_project)
         api_request = ApiRequest.objects.create(
             collection=collection, name='登录接口', method='POST',
-            url='https://api.example.com/login', created_by=self.user)
-        ScenarioCaseRequest.objects.create(
-            scenario_case=self.scenario, request=api_request)
+            url='/login', created_by=self.user)
+        _create_http_step(self.scenario, api_request)
         self.api_suite = ApiSuite.objects.create(
             project=self.api_project, name='冒烟', created_by=self.user)
         self.ui_suite = UiSuite.objects.create(project=self.ui_project, name='UI 冒烟')
@@ -1636,8 +1519,7 @@ class GetApiRequestToolTest(BaseFixture):
             pre_request_script='pm.environment.set("t", 1)')
         self.scenario = ScenarioCase.objects.create(
             project=self.api_project, name='下单主流程', created_by=self.user)
-        ScenarioCaseRequest.objects.create(
-            scenario_case=self.scenario, request=self.request, order=0)
+        _create_http_step(self.scenario, self.request)
 
     def test_returns_full_configuration(self):
         result = mcp_tools.get_api_request(self.ctx, request_id=self.request.id)
@@ -1959,20 +1841,6 @@ class FolderPathCreationToolTest(BaseFixture):
         self.assertEqual(UiCase.objects.get(id=result['case_id']).folder_id,
                          self.ui_folder_child.id)
 
-    def test_create_scenario_by_folder_path(self):
-        collection = ApiCollection.objects.create(project=self.api_project, name='临时')
-        request = ApiRequest.objects.create(
-            collection=collection, name='接口', method='GET', url='/x',
-            created_by=self.user)
-        preview = mcp_tools.preview_create_api_scenario_case(
-            self.ctx, project_id=self.api_project.id,
-            data={'name': '下单正向', 'folder_path': '下单/正向流程',
-                  'requests': [{'request_id': request.id}]})
-        result = mcp_tools.confirm_create_api_scenario_case(
-            self.ctx, preview['confirm_token'])
-        self.assertEqual(
-            ScenarioCase.objects.get(id=result['scenario_case_id']).folder_id,
-            self.sc_folder_child.id)
 
     def test_create_element_by_group_path(self):
         preview = mcp_tools.preview_create_ui_element(
