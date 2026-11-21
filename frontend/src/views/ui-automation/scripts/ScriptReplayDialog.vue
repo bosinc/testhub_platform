@@ -8,7 +8,12 @@
           <el-option label="Chromium" value="chromium" />
         </el-select>
         <el-select v-model="form.storage_state_id" size="small" clearable placeholder="无登录态" style="width: 170px">
-          <el-option v-for="state in storageStates" :key="state.id" :label="state.name" :value="state.id" />
+          <el-option v-for="state in storageStates" :key="state.id" :label="state.name" :value="state.id">
+            <template #default>
+              <span class="storage-state-option-name">{{ state.name }}</span>
+              <span class="storage-state-option-note">{{ state.note || '' }}</span>
+            </template>
+          </el-option>
         </el-select>
         <el-checkbox v-model="form.headless">{{ $t('uiAutomation.replay.headless') }}</el-checkbox>
         <el-button type="primary" size="small" :loading="running" :disabled="running" @click="run">
@@ -157,4 +162,6 @@ onBeforeUnmount(() => {
 .base-url { margin-bottom: 16px; }
 .log-title { display: flex; justify-content: space-between; align-items: center; padding: 9px 12px; color: #5a626e; border: 1px solid #e8eaee; border-bottom: 0; background: #f8fafb; }
 .log-panel { height: 300px; margin: 0 0 14px; padding: 15px; overflow: auto; border-radius: 0 0 6px 6px; background: var(--el-bg-color-page); color: var(--el-text-color-primary); border: 1px solid var(--el-border-color); font: 13px/1.65 Monaco, Consolas, monospace; white-space: pre-wrap; }
+.storage-state-option-name, .storage-state-option-note { display: inline-block; width: 50%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.storage-state-option-note { color: var(--el-text-color-secondary); font-size: 12px; text-align: right; }
 </style>

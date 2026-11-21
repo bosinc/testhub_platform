@@ -27,7 +27,8 @@
     </div>
     <div class="case-section">
       <h3>{{ $t('execution.testcaseNotes') }}</h3>
-      <p>{{ displayText(testCase.notes) }}</p>
+      <div v-if="safeNotes" class="notes-content" v-html="safeNotes"></div>
+      <p v-else>{{ $t('execution.noData') }}</p>
     </div>
     <div v-if="testCase.description" class="case-section">
       <h3>{{ $t('execution.testcaseDescription') }}</h3>
@@ -57,6 +58,36 @@ const priorityText = computed(() => priorityKeys[props.testCase.priority]
   ? t(`execution.${priorityKeys[props.testCase.priority]}`) : '-')
 const testTypeText = computed(() => testTypeKeys[props.testCase.test_type]
   ? t(`execution.${testTypeKeys[props.testCase.test_type]}`) : '-')
+
+// 备注支持富文本图片，先限制可渲染标签和图片来源，避免直接渲染任意 HTML。
+const safeNotes = computed(() => {
+  const parsed = new DOMParser().parseFromString(props.testCase.notes || '', 'text/html')
+  const allowedTags = new Set(['B', 'STRONG', 'I', 'EM', 'U', 'UL', 'OL', 'LI', 'P', 'H2', 'H3', 'BR', 'FONT', 'IMG'])
+  const cleanNode = node => {
+    for (const child of [...node.childNodes]) {
+      if (child.nodeType !== Node.ELEMENT_NODE) {
+        if (child.nodeType !== Node.TEXT_NODE) child.remove()
+        continue
+      }
+      if (!allowedTags.has(child.tagName)) {
+        cleanNode(child)
+        child.replaceWith(...child.childNodes)
+        continue
+      }
+      [...child.attributes].forEach(attribute => {
+        const isImageSource = child.tagName === 'IMG' && attribute.name === 'src' && (
+          /^data:image\/(png|jpeg|gif|webp);base64,/i.test(attribute.value) || /^\/media\//.test(attribute.value)
+        )
+        const isFontSize = child.tagName === 'FONT' && attribute.name === 'size' && /^[1-7]$/.test(attribute.value)
+        if (!isImageSource && !isFontSize) child.removeAttribute(attribute.name)
+      })
+      if (child.tagName === 'IMG' && !child.hasAttribute('src')) child.remove()
+      else cleanNode(child)
+    }
+  }
+  cleanNode(parsed.body)
+  return parsed.body.innerHTML
+})
 
 // 历史用例用 <br> 保存换行；转换为纯文本展示，避免直接渲染用例中的 HTML。
 const displayText = value => value ? String(value).replace(/<br\s*\/?>/gi, '\n') : t('execution.noData')
@@ -138,6 +169,21 @@ const displayText = value => value ? String(value).replace(/<br\s*\/?>/gi, '\n')
   line-height: 1.7;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+.notes-content {
+  color: var(--el-text-color-regular);
+  font-size: 13px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.notes-content :deep(img) {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 8px 0;
 }
 
 @media (max-width: 768px) {

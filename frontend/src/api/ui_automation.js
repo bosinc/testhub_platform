@@ -822,6 +822,24 @@ export function getTestCaseDetail(id) {
   })
 }
 
+// 获取当前 UI 用例所属统一项目下可关联的功能用例。
+export function getFunctionalTestCases(id, params) {
+  return request({
+    url: `/ui-automation/test-cases/${id}/functional-test-cases/`,
+    method: 'get',
+    params
+  })
+}
+
+// 从 UI 用例详情页直接创建功能用例关联。
+export function linkFunctionalTestCase(id, data) {
+  return request({
+    url: `/ui-automation/test-cases/${id}/link-functional-test-case/`,
+    method: 'post',
+    data
+  })
+}
+
 // 更新测试用例
 export function updateTestCase(id, data) {
   return request({

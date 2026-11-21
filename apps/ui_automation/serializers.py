@@ -210,7 +210,7 @@ class StorageStateSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = StorageState
-        fields = ('id', 'project', 'project_id', 'name', 'source_url', 'browser', 'file', 'content', 'file_size',
+        fields = ('id', 'project', 'project_id', 'name', 'note', 'source_url', 'browser', 'file', 'content', 'file_size',
                   'download_url', 'created_by', 'created_at', 'updated_at')
         read_only_fields = ('project', 'file_size', 'download_url', 'created_by', 'created_at', 'updated_at')
         extra_kwargs = {'file': {'required': False}}
@@ -956,6 +956,7 @@ class TestCaseStepSerializer(serializers.ModelSerializer):
 class TestCaseSerializer(serializers.ModelSerializer):
     """测试用例序列化器"""
     steps = TestCaseStepSerializer(many=True, read_only=True)
+    created_by = serializers.PrimaryKeyRelatedField(queryset=User.objects.all(), required=False)
     created_by_name = serializers.CharField(source='created_by.username', read_only=True)
     project_name = serializers.CharField(source='project.name', read_only=True)
 
@@ -965,7 +966,6 @@ class TestCaseSerializer(serializers.ModelSerializer):
             'id', 'name', 'description', 'folder', 'project', 'project_name', 'status', 'priority',
             'created_by', 'created_by_name', 'created_at', 'updated_at', 'steps'
         ]
-        read_only_fields = ['created_by']
 
     def validate_folder(self, folder):
         project = self.initial_data.get('project') or getattr(self.instance, 'project_id', None)
@@ -993,13 +993,14 @@ class TestCaseDetailSerializer(TestCaseSerializer):
     """详情额外返回可访问的正式测试用例，列表和写入接口不加载关联数据。"""
 
     linked_test_cases = serializers.SerializerMethodField()
+    workspace_project_id = serializers.IntegerField(source='project.workspace_project_id', read_only=True)
 
     class Meta(TestCaseSerializer.Meta):
-        fields = [*TestCaseSerializer.Meta.fields, 'linked_test_cases']
+        fields = [*TestCaseSerializer.Meta.fields, 'workspace_project_id', 'linked_test_cases']
 
     def get_linked_test_cases(self, obj):
         from apps.projects.models import Project
-        from apps.testcases.models import TestCase as FormalTestCase
+        from apps.testcases.models import TestCase as FormalTestCase, TestCaseAutomationLink
         from apps.testcases.serializers import TestCaseListSerializer
 
         workspace_id = obj.project.workspace_project_id
@@ -1017,7 +1018,15 @@ class TestCaseDetailSerializer(TestCaseSerializer):
         ).select_related('project', 'author', 'assignee', 'module').prefetch_related(
             'step_details', 'versions'
         ).order_by('id')
-        return TestCaseListSerializer(cases, many=True, context=self.context).data
+        serialized = TestCaseListSerializer(cases, many=True, context=self.context).data
+        link_ids = dict(TestCaseAutomationLink.objects.filter(
+            test_case_id__in=[case.id for case in cases],
+            case_type='ui_test_case',
+            object_id=obj.pk,
+        ).values_list('test_case_id', 'id'))
+        for item in serialized:
+            item['automation_link_id'] = link_ids.get(item['id'])
+        return serialized
 
 
 class TestCaseFolderSerializer(serializers.ModelSerializer):

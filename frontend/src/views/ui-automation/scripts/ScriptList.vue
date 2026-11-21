@@ -174,6 +174,21 @@
             <el-col :span="12"><el-form-item :label="$t('uiAutomation.script.convert.caseName')" required><el-input v-model="convertForm.name" maxlength="200" /></el-form-item></el-col>
             <el-col :span="12"><el-form-item :label="$t('uiAutomation.script.convert.startUrl')"><el-input v-model="convertForm.startUrl" /></el-form-item></el-col>
           </el-row>
+          <el-form-item :label="$t('uiAutomation.script.convert.folder')">
+            <el-tree-select
+              v-model="convertFolderKey"
+              :loading="convertCasesLoading"
+              :data="convertFolderTree"
+              :props="{ label: 'name', children: 'children' }"
+              node-key="key"
+              :render-after-expand="false"
+              default-expand-all
+              filterable
+              clearable
+              :placeholder="$t('uiAutomation.script.convert.folderPlaceholder')"
+              style="width: 100%"
+            />
+          </el-form-item>
           <el-form-item :label="$t('uiAutomation.script.convert.caseDescription')"><el-input v-model="convertForm.description" type="textarea" :rows="2" /></el-form-item>
         </template>
         <el-form-item v-else :label="$t('uiAutomation.script.convert.targetCase')" required>
@@ -299,6 +314,8 @@ const convertCaseTree = ref([])
 let convertCasesRequestId = 0
 // 树选择器绑定用例节点 key（case:<id>），提交时再换回用例对象。
 const convertTargetCaseId = ref('')
+// 新建用例时绑定目录节点 key（folder:<id>），提交时换回目录 ID。
+const convertFolderKey = ref('')
 let codeEditor = null
 let suppressCodeChange = false
 let generateTimer = null
@@ -697,7 +714,20 @@ const convertTargetCase = computed(() => (
     .find(testCase => testCase.key === convertTargetCaseId.value) || null
 ))
 
-// 覆盖模式才请求轻量用例树，避免分开读取目录和分页列表。
+// 从用例树中保留目录节点，避免新建用例时误选用例节点。
+const convertFolderTree = computed(() => {
+  const foldersOnly = nodes => (nodes || [])
+    .filter(node => node.type === 'folder')
+    .map(node => ({ ...node, children: foldersOnly(node.children) }))
+  return foldersOnly(convertCaseTree.value)
+})
+
+const convertFolderId = computed(() => {
+  const match = /^folder:(\d+)$/.exec(String(convertFolderKey.value || ''))
+  return match ? Number(match[1]) : null
+})
+
+// 读取轻量用例树，同时为新建和覆盖模式提供目录或用例选择。
 const loadConvertCases = async () => {
   const requestId = ++convertCasesRequestId
   const projectId = convertScript.value?.project?.id || convertScript.value?.project
@@ -725,6 +755,7 @@ const openConvertDialog = async script => {
   convertForm.value = { name: (script.name || '').replace(/\.py$/i, ''), startUrl: script.start_url || '', description: script.description || '' }
   convertMode.value = 'create'
   convertTargetCaseId.value = ''
+  convertFolderKey.value = ''
   // 用例树按脚本所属项目加载，切换脚本时先清空，避免残留上一个项目的用例。
   convertCasesRequestId += 1
   convertCasesLoading.value = false
@@ -736,6 +767,7 @@ const openConvertDialog = async script => {
       ElMessage.warning(t('uiAutomation.script.convert.messages.syncStepsFirst'))
       return
     }
+    await loadConvertCases()
     showConvertDialog.value = true
   } catch (error) {
     ElMessage.error(error.response?.data?.detail || t('uiAutomation.script.convert.messages.loadStepsFailed'))
@@ -818,7 +850,8 @@ const convertToTestCase = async () => {
         locale: locale.value,
         name: convertForm.value.name.trim(),
         description: convertForm.value.description,
-        start_url: convertForm.value.startUrl
+        start_url: convertForm.value.startUrl,
+        folder: convertFolderId.value
       })
     }
     ElMessage.success(t(overwrite ? 'uiAutomation.script.convert.messages.overwriteSuccess' : 'uiAutomation.script.convert.messages.createSuccess'))

@@ -11,7 +11,7 @@ from django.test import SimpleTestCase, TestCase
 from django.test.utils import override_settings
 from rest_framework.test import APIClient
 
-from apps.ui_automation.models import StorageState, TestCase as UiTestCase, TestExecution, TestScript, UiProject
+from apps.ui_automation.models import StorageState, TestCase as UiTestCase, TestCaseFolder, TestExecution, TestScript, UiProject
 from apps.ui_automation.serializers import TestCaseStepSerializer
 from apps.ui_automation.script_runner import execute_script, get_playwright_browsers_path
 from apps.ui_automation.script_security import MAX_SCRIPT_BYTES, ScriptSecurityError, analyze_script
@@ -479,13 +479,15 @@ with sync_playwright() as playwright:
         )
 
         self.assertEqual(response.status_code, 200, response.data)
+        folder = TestCaseFolder.objects.create(project=self.project, name='脚本转换目录')
         convert = self.client.post(
             f'/api/ui-automation/test-scripts/{script.id}/to-test-case/',
-            {'name': 'storage-state-case'},
+            {'name': 'storage-state-case', 'folder': folder.id},
             format='json',
         )
 
         self.assertEqual(convert.status_code, 201, convert.data)
+        self.assertEqual(convert.data['folder'], folder.id)
         self.assertEqual(convert.data['steps'][0]['action_type'], 'storageState')
         self.assertEqual(convert.data['steps'][0]['action_params'], params)
 

@@ -147,14 +147,17 @@ export function getTestCaseTreeNodes(tree, type) {
 }
 
 /** 只按用例名称过滤，保留目录层级和空目录，不修改原树或已加载的编辑详情。 */
-export function filterTestCaseTree(tree, keyword) {
+export function filterTestCaseTree(tree, keyword, predicate = null) {
   const query = keyword.trim().toLocaleLowerCase()
-  if (!query) return tree
+  if (!query && !predicate) return tree
   return tree.flatMap(node => {
     if (node.type === 'folder') {
-      return [{ ...node, children: filterTestCaseTree(node.children || [], query) }]
+      const children = filterTestCaseTree(node.children || [], query, predicate)
+      // 有筛选条件时隐藏没有命中用例的目录，避免目录仍全部显示造成筛选未生效的错觉。
+      return children.length ? [{ ...node, children }] : []
     }
-    return node.name.toLocaleLowerCase().includes(query) ? [node] : []
+    const matchesKeyword = node.name.toLocaleLowerCase().includes(query)
+    return matchesKeyword && (!predicate || predicate(node)) ? [node] : []
   })
 }
 

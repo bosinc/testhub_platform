@@ -63,6 +63,7 @@ class StorageState(models.Model):
     """项目级 Playwright storage_state 资源。"""
     project = models.ForeignKey(UiProject, on_delete=models.CASCADE, related_name='storage_states', verbose_name='所属项目')
     name = models.CharField(max_length=200, verbose_name='登录态名称')
+    note = models.TextField(blank=True, verbose_name='备注')
     source_url = models.URLField(blank=True, verbose_name='来源页面')
     browser = models.CharField(max_length=20, default='chromium', verbose_name='浏览器')
     file = models.FileField(upload_to=storage_state_upload_to, verbose_name='登录态文件')

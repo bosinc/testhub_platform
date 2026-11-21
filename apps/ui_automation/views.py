@@ -19,6 +19,7 @@ import random
 import time
 import shlex
 from urllib.parse import urlparse
+from apps.projects.models import Project
 
 from .models import (
     UiProject, StorageState, LocatorStrategy, Element, TestScript, TestSuite,
@@ -1114,6 +1115,13 @@ class TestScriptViewSet(viewsets.ModelViewSet):
         steps = list(script.steps.select_related('target_element').order_by('step_order'))
         if not steps:
             return Response({'error': '请先在编辑器中完成步骤同步并保存'}, status=status.HTTP_400_BAD_REQUEST)
+        folder_id = request.data.get('folder')
+        folder = None
+        if folder_id not in (None, ''):
+            try:
+                folder = TestCaseFolder.objects.get(pk=folder_id, project_id=script.project_id)
+            except (TestCaseFolder.DoesNotExist, TypeError, ValueError):
+                return Response({'folder': '文件夹不存在或不属于当前项目'}, status=status.HTTP_400_BAD_REQUEST)
         action_map = {'CLICK': 'click', 'INPUT': 'fill', 'PRESS': 'press', 'HOVER': 'hover', 'WAIT': 'wait', 'WAITFOR': 'waitFor', 'NAVIGATE': 'navigate', 'SCREENSHOT': 'screenshot', 'VERIFY': 'assert', 'GETTEXT': 'getText', 'SELECT': 'select', 'CHECK': 'check', 'UNCHECK': 'uncheck', 'SCROLL': 'scroll', 'SWITCH_TAB': 'switchTab', 'STORAGE_STATE': 'storageState', 'CUSTOM': None}
         unsupported = [step.step_order for step in steps if action_map.get(step.action_type) is None]
         if unsupported:
@@ -1123,6 +1131,7 @@ class TestScriptViewSet(viewsets.ModelViewSet):
                 project=script.project,
                 name=str(request.data.get('name') or script.name.removesuffix('.py'))[:200],
                 description=str(request.data.get('description') or script.description),
+                folder=folder,
                 priority=request.data.get('priority', 'medium'),
                 created_by=request.user,
             )
@@ -1831,7 +1840,7 @@ class TestCaseViewSet(viewsets.ModelViewSet):
                 )
             )
             if self.action == 'tree':
-                return queryset.only('id', 'name', 'folder_id', 'priority', 'status')
+                return queryset.only('id', 'name', 'folder_id', 'priority', 'status', 'created_by_id', 'created_by__username')
             return queryset.select_related('project', 'created_by').only(
                 'id', 'name', 'description', 'folder_id', 'project_id', 'project__name',
                 'status', 'priority', 'created_by_id', 'created_by__username', 'created_at', 'updated_at',
@@ -1882,8 +1891,19 @@ class TestCaseViewSet(viewsets.ModelViewSet):
             (parent['children'] if parent else roots).append(node)
 
         # 不复用详情序列化器，严格限制树字段，步骤表仅用于计数，不读取正文。
-        cases = self.get_queryset().filter(project_id=project_id).order_by('name', 'id').values(
+        cases = self.get_queryset().filter(project_id=project_id)
+        search = str(request.query_params.get('search') or '').strip()
+        if search:
+            cases = cases.filter(name__icontains=search)
+        priority = request.query_params.get('priority')
+        if priority in {value for value, _ in TestCase.PRIORITY_CHOICES}:
+            cases = cases.filter(priority=priority)
+        created_by = request.query_params.get('created_by')
+        if created_by and str(created_by).isdigit():
+            cases = cases.filter(created_by_id=int(created_by))
+        cases = cases.order_by('name', 'id').values(
             'id', 'name', 'folder_id', 'priority', 'status', 'steps_count',
+            'created_by_id', 'created_by__username',
         )
         for case in cases:
             parent = folder_nodes.get(case['folder_id'])
@@ -1891,9 +1911,64 @@ class TestCaseViewSet(viewsets.ModelViewSet):
                 'key': f"case:{case['id']}", 'id': case['id'], 'type': 'testCase',
                 'name': case['name'], 'folder': parent['id'] if parent else None,
                 'priority': case['priority'], 'status': case['status'], 'steps_count': case['steps_count'],
+                'created_by': case['created_by_id'], 'created_by_name': case['created_by__username'],
             }
             (parent['children'] if parent else roots).append(node)
         return Response(roots)
+
+    @action(detail=True, methods=['get'], url_path='functional-test-cases')
+    def functional_test_cases(self, request, pk=None):
+        """Return functional cases in the UI project's shared workspace."""
+        case = self.get_object()
+        from apps.testcases.models import TestCase as FormalTestCase
+        workspace_id = case.project.workspace_project_id
+        if not workspace_id:
+            return Response([])
+        queryset = FormalTestCase.objects.filter(
+            project_id=workspace_id,
+            project__in=Project.objects.filter(
+                models.Q(owner=request.user) | models.Q(members=request.user)
+            ).distinct(),
+        ).select_related('author').order_by('-updated_at', '-id')
+        search = str(request.query_params.get('search') or '').strip()
+        if search:
+            title_query = models.Q(title__icontains=search)
+            queryset = queryset.filter(
+                title_query | models.Q(id=int(search)) if search.isdigit() else title_query
+            )
+        return Response([
+            {'id': item.id, 'title': item.title, 'priority': item.priority,
+             'author': item.author.username if item.author else '',
+             'updated_at': item.updated_at}
+            for item in queryset[:200]
+        ])
+
+    @action(detail=True, methods=['post'], url_path='link-functional-test-case')
+    def link_functional_test_case(self, request, pk=None):
+        """Create the formal test case link from the UI case detail page."""
+        case = self.get_object()
+        formal_id = request.data.get('test_case_id')
+        try:
+            formal_id = int(formal_id)
+        except (TypeError, ValueError):
+            raise ValidationError({'test_case_id': '请选择有效的功能用例'})
+        from apps.testcases.models import TestCase as FormalTestCase, TestCaseAutomationLink
+        from apps.projects.models import Project
+        workspace_id = case.project.workspace_project_id
+        formal_case = FormalTestCase.objects.filter(
+            id=formal_id, project_id=workspace_id,
+            project__in=Project.objects.filter(models.Q(owner=request.user) | models.Q(members=request.user)).distinct(),
+        ).first()
+        if not formal_case:
+            raise ValidationError({'test_case_id': '功能用例不存在或无权访问'})
+        try:
+            link, _ = TestCaseAutomationLink.objects.update_or_create(
+                test_case=formal_case, case_type='ui_test_case',
+                defaults={'object_id': case.id, 'linked_by': request.user},
+            )
+        except Exception as exc:
+            raise ValidationError({'detail': str(exc)}) from exc
+        return Response({'id': link.id, 'test_case_id': formal_case.id, 'title': formal_case.title}, status=status.HTTP_201_CREATED)
 
     def _validate_steps(self, steps_data, project_id):
         """校验测试用例提交的步骤，并复用步骤序列化器的业务规则。"""

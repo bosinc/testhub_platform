@@ -262,7 +262,12 @@
         <!-- 套件运行使用同一个初始登录态，登录态步骤仍由用例自身控制。 -->
         <el-form-item v-if="runConfig.engine === 'playwright'" :label="$t('uiAutomation.storageState.label')">
           <el-select v-model="runConfig.storage_state_id" :placeholder="$t('uiAutomation.suite.noLoginState')" clearable>
-            <el-option v-for="state in storageStates" :key="state.id" :label="state.name" :value="state.id" />
+            <el-option v-for="state in storageStates" :key="state.id" :label="state.name" :value="state.id">
+              <template #default>
+                <span class="storage-state-option-name">{{ state.name }}</span>
+                <span class="storage-state-option-note">{{ state.note || '' }}</span>
+              </template>
+            </el-option>
           </el-select>
         </el-form-item>
         <el-form-item :label="$t('uiAutomation.suite.executionMode')">
@@ -1140,6 +1145,25 @@ const handleNewSuite = async () => {
     color: #909399;
     line-height: 1.5;
   }
+}
+
+.storage-state-option-note {
+  display: inline-block;
+  width: 50%;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.storage-state-option-name {
+  display: inline-block;
+  width: 50%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 </style>

@@ -38,16 +38,18 @@
               v-model="searchKeyword"
               :placeholder="t('uiAutomation.testCase.searchPlaceholder')"
               clearable
-              size="small"
               @click.stop
+              @clear="clearCaseSearch"
             >
               <template #prefix>
                 <el-icon><Search /></el-icon>
               </template>
             </el-input>
+            <el-button text class="case-filter-button" :title="t(showCaseFilters ? 'uiAutomation.testCase.hideFilters' : 'uiAutomation.testCase.showFilters')" @click.stop="showCaseFilters = !showCaseFilters">
+              <el-icon><Filter /></el-icon>
+            </el-button>
             <el-button
               text
-              size="small"
               class="tree-toggle-button"
               :disabled="!testCaseFolders.length"
               :aria-label="t(allFoldersExpanded ? 'uiAutomation.testCase.foldAll' : 'uiAutomation.testCase.expandAll')"
@@ -57,7 +59,6 @@
             </el-button>
             <el-button
               text
-              size="small"
               class="folder-create-button"
               :disabled="!projectId"
               :title="t('uiAutomation.testCase.folder.create')"
@@ -65,6 +66,17 @@
             >
               <el-icon><FolderAdd /></el-icon>
             </el-button>
+        </div>
+        <div v-if="showCaseFilters" class="case-filter-row">
+          <el-select v-model="caseFilters.created_by" clearable :placeholder="t('uiAutomation.testCase.createdBy')" @change="onCaseFilterChange">
+            <el-option v-for="user in projectMembers" :key="user.id" :label="user.username" :value="user.id" />
+          </el-select>
+          <el-select v-model="caseFilters.priority" clearable :placeholder="t('uiAutomation.testCase.priority')" @change="onCaseFilterChange">
+            <el-option :label="t('uiAutomation.testCase.priorityHigh')" value="high" />
+            <el-option :label="t('uiAutomation.testCase.priorityMedium')" value="medium" />
+            <el-option :label="t('uiAutomation.testCase.priorityLow')" value="low" />
+          </el-select>
+          <el-button @click="resetCaseFilters">{{ t('uiAutomation.common.reset') }}</el-button>
         </div>
 
         <div class="test-case-list" v-loading="testCaseTreeLoading">
@@ -125,40 +137,71 @@
         <div v-if="selectedTestCase" class="test-case-detail">
           <div class="detail-header">
             <div class="detail-title-row">
+              <span class="detail-id">ID {{ selectedTestCase.id }}</span>
               <el-input
                 v-model="selectedTestCase.name"
                 class="detail-title-input"
                 :placeholder="t('uiAutomation.testCase.caseNamePlaceholder')"
                 :aria-label="t('uiAutomation.testCase.caseName')"
               />
-              <el-select
-                v-model="selectedTestCase.priority"
-                class="detail-priority-select"
-                :placeholder="t('uiAutomation.testCase.priority')"
-                :aria-label="t('uiAutomation.testCase.priority')"
-              >
-                <el-option :label="t('uiAutomation.testCase.priorityHigh')" value="high" />
-                <el-option :label="t('uiAutomation.testCase.priorityMedium')" value="medium" />
-                <el-option :label="t('uiAutomation.testCase.priorityLow')" value="low" />
-              </el-select>
-              <el-button
-                v-if="linkedTestCases.length"
-                class="linked-test-case-button"
-                :icon="Link"
-                @click="openLinkedTestCases"
-              >
-                {{ t('testcase.title') }}
-              </el-button>
+              <div class="detail-title-actions">
+                <el-dropdown trigger="click" @command="updatePriority">
+                  <el-tag class="detail-priority-tag" :type="getPriorityTag(selectedTestCase.priority)" aria-label="优先级">
+                    {{ getPriorityText(selectedTestCase.priority) }}
+                    <el-icon><ArrowDown /></el-icon>
+                  </el-tag>
+                  <template #dropdown>
+                    <el-dropdown-menu>
+                      <el-dropdown-item v-for="option in priorityOptions" :key="option.value" :command="option.value">
+                        <el-tag :type="getPriorityTag(option.value)">{{ getPriorityText(option.value) }}</el-tag>
+                      </el-dropdown-item>
+                    </el-dropdown-menu>
+                  </template>
+                </el-dropdown>
+                <el-button
+                  v-if="linkedTestCases.length"
+                  class="linked-test-case-button"
+                  :icon="Link"
+                  @click="openLinkedTestCases"
+                >
+                  {{ t('testcase.title') }}
+                </el-button>
+                <el-button v-else :icon="Plus" @click="openFunctionalCaseSelector">
+                  {{ t('uiAutomation.testCase.linkCases') }}
+                </el-button>
+              </div>
             </div>
             <el-input
               v-model="selectedTestCase.description"
               class="detail-description-input"
               type="textarea"
-              :rows="2"
-              resize="vertical"
+              :autosize="{ minRows: 1, maxRows: 3 }"
               :placeholder="t('uiAutomation.testCase.caseDescPlaceholder')"
               :aria-label="t('uiAutomation.testCase.caseDescription')"
             />
+            <div class="detail-meta">
+              <span
+                v-if="!creatorEditing"
+                class="detail-creator-label"
+                @mouseenter="enterCreatorEditing"
+                @click.stop="enterCreatorEditing"
+              >{{ selectedTestCase.created_by_name || '-' }}</span>
+              <el-select
+                v-else
+                ref="creatorSelectRef"
+                v-model="selectedTestCase.created_by"
+                class="detail-creator-select"
+                size="small"
+                :aria-label="t('uiAutomation.testCase.createdBy')"
+                @change="onCreatorChange"
+                @blur="exitCreatorEditing"
+                @visible-change="onCreatorDropdownVisibleChange"
+              >
+                <el-option v-for="creator in projectMembers" :key="creator.id" :label="creator.username" :value="creator.id" />
+              </el-select>
+              <span v-if="selectedTestCase.updated_at">{{ t('uiAutomation.testCase.updatedAt', { time: formatTime(selectedTestCase.updated_at) }) }}</span>
+              <span v-if="selectedTestCase.created_at">{{ t('uiAutomation.testCase.createdAt', { time: formatTime(selectedTestCase.created_at) }) }}</span>
+            </div>
             <!-- 工具栏控件统一使用中等尺寸，与步骤编排区域保持一致。 -->
             <div class="detail-actions">
               <el-button size="default" @click="addStep">
@@ -181,7 +224,12 @@
               </el-select>
               <!-- 运行前选择可选的初始登录态，清空即使用干净上下文。 -->
               <el-select v-model="selectedStorageStateId" clearable :placeholder="t('uiAutomation.stepEditor.selectStorageState')" size="default" style="width: 160px; margin-right: 10px" :disabled="selectedEngine !== 'playwright'">
-                <el-option v-for="state in storageStates" :key="state.id" :label="state.name" :value="state.id" />
+                <el-option v-for="state in storageStates" :key="state.id" :label="state.name" :value="state.id">
+                  <template #default>
+                    <span class="storage-state-option-name">{{ state.name }}</span>
+                    <span class="storage-state-option-note">{{ state.note || '' }}</span>
+                  </template>
+                </el-option>
               </el-select>
               <el-button size="default" type="success" @click="runTestCase(selectedTestCase)" :loading="isRunning">
                 <el-icon v-if="!isRunning"><CaretRight /></el-icon>
@@ -407,6 +455,7 @@
       <div class="variables-dialog-body storage-state-dialog-body">
         <el-table :data="storageStates" size="small" v-loading="loadingStorageStates">
           <el-table-column prop="name" :label="t('uiAutomation.common.name')" width="160" show-overflow-tooltip />
+          <el-table-column prop="note" :label="t('uiAutomation.storageState.note')" min-width="180" show-overflow-tooltip />
           <el-table-column prop="source_url" :label="t('uiAutomation.storageState.sourcePage')" min-width="150" show-overflow-tooltip />
           <el-table-column :label="t('uiAutomation.storageState.size')" width="100"><template #default="scope">{{ formatStorageSize(scope.row.file_size) }}</template></el-table-column>
           <el-table-column :label="t('uiAutomation.common.createTime')" width="150"><template #default="scope">{{ formatStorageStateTime(scope.row.created_at) }}</template></el-table-column>
@@ -421,11 +470,22 @@
     <el-dialog v-model="showStorageStateEditor" :title="t(editingStorageState ? 'uiAutomation.storageState.edit' : 'uiAutomation.storageState.create')" width="720px">
       <el-form label-width="100px">
         <el-form-item :label="t('uiAutomation.common.name')"><el-input v-model="storageStateDraft.name" /></el-form-item>
+        <el-form-item :label="t('uiAutomation.storageState.note')"><el-input v-model="storageStateDraft.note" /></el-form-item>
         <el-form-item :label="t('uiAutomation.storageState.sourcePage')"><el-input v-model="storageStateDraft.source_url" /></el-form-item>
         <el-form-item label="JSON"><el-input v-model="storageStateDraft.content" type="textarea" :rows="16" /></el-form-item>
       </el-form>
       <template #footer><el-button @click="showStorageStateEditor = false">{{ t('uiAutomation.common.cancel') }}</el-button><el-button type="primary" @click="saveStorageStateEditor">{{ t('uiAutomation.common.save') }}</el-button></template>
     </el-dialog>
+
+    <!-- 复用正式测试用例的公共选择弹窗，保持项目树、筛选和已选回显一致。 -->
+    <TestCaseSelectorDialog
+      v-model="showFunctionalCaseSelector"
+      :projects="functionalCaseSelectorProjects"
+      :selected-ids="linkedFunctionalCaseIds"
+      :selected-cases="linkedTestCases"
+      :title="t('uiAutomation.testCase.linkCases')"
+      @confirm="onFunctionalCasesSelected"
+    />
 
     <!-- 新建/编辑测试用例对话框 -->
     <el-dialog
@@ -533,7 +593,7 @@
       append-to-body
       destroy-on-close
     >
-      <div v-if="linkedTestCases.length > 1" class="linked-test-case-toolbar">
+      <div v-if="linkedTestCases.length" class="linked-test-case-toolbar">
         <el-button
           class="linked-case-nav-button"
           :icon="ArrowUp"
@@ -551,6 +611,10 @@
           :disabled="activeLinkedTestCaseIndex >= linkedTestCases.length - 1"
           @click="navigateLinkedTestCase(1)"
         />
+        <el-button class="linked-case-action-button" :icon="Plus" :aria-label="t('uiAutomation.testCase.linkCases')" @click="openFunctionalCaseSelector" />
+        <el-button class="linked-case-action-button" type="danger" plain :icon="Close" :aria-label="t('uiAutomation.testCase.unlinkCase')" @click="unlinkActiveFunctionalCase">
+          {{ t('uiAutomation.testCase.unlinkCase') }}
+        </el-button>
       </div>
       <TestCaseDetailPanel v-if="activeLinkedTestCase" :test-case="activeLinkedTestCase" />
     </el-drawer>
@@ -565,6 +629,7 @@
 <script setup>
 import ResizableSplitPane from '@/components/ResizableSplitPane.vue'
 import TestCaseDetailPanel from '@/components/testcases/TestCaseDetailPanel.vue'
+import TestCaseSelectorDialog from '@/components/testcases/TestCaseSelectorDialog.vue'
 import StructuredStepEditor from '@/components/ui-automation/StructuredStepEditor.vue'
 import VariableEditor from '@/components/ui-automation/VariableEditor.vue'
 import ScreenshotPreviewDialog from '@/components/ui-automation/ScreenshotPreviewDialog.vue'
@@ -572,13 +637,13 @@ import { loadUiVariables, formatUiVariables, getUiActionLabel, closeReservedUiRe
 import { ref, reactive, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
-  Search, Plus, Edit, Delete, Check, CaretRight, Picture, Warning, View, ZoomIn, Refresh, WarningFilled, MagicStick, Setting, Upload, Folder, FolderAdd, Document, CopyDocument, Expand, Fold, Link, ArrowUp, ArrowDown
+  Search, Plus, Edit, Delete, Check, CaretRight, Picture, Warning, View, ZoomIn, Refresh, WarningFilled, MagicStick, Setting, Upload, Folder, FolderAdd, Document, CopyDocument, Expand, Fold, Link, ArrowUp, ArrowDown, Filter, Close
 } from '@element-plus/icons-vue'
 import DataFactorySelector from '@/components/DataFactorySelector.vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import api from '@/utils/api'
-import { createTestCaseAutomationLink } from '@/api/testcases'
+import { createTestCaseAutomationLink, deleteTestCaseAutomationLink } from '@/api/testcases'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -602,7 +667,7 @@ import {
   copyTestCase as copyTestCaseApi,
   getLocatorStrategies,
   getElementTree,
-  getStorageStates, createStorageState, createStorageStateFromContent, updateStorageState, deleteStorageState, downloadStorageState, updateStorageStateContent
+  getStorageStates, createStorageState, createStorageStateFromContent, updateStorageState, deleteStorageState, downloadStorageState, updateStorageStateContent, linkFunctionalTestCase
 } from '@/api/ui_automation'
 import { getVariableFunctions } from '@/api/data-factory'
 
@@ -623,6 +688,16 @@ const testCaseTreeRef = ref(null)
 const expandedFolderKeys = ref(new Set())
 const selectedTestCase = ref(null)
 const testCaseDetailLoading = ref(false)
+const priorityOptions = [
+  { value: 'high' },
+  { value: 'medium' },
+  { value: 'low' }
+]
+const getPriorityTag = priority => ({ high: 'danger', medium: 'warning', low: 'info' }[priority] || 'info')
+const getPriorityText = priority => t(`uiAutomation.priority.${priority || 'medium'}`)
+const updatePriority = priority => {
+  if (selectedTestCase.value) selectedTestCase.value.priority = priority
+}
 // 用例切换或项目切换后忽略过期详情，避免错误回显和覆盖当前编辑内容。
 let testCaseDetailRequestId = 0
 const showLinkedTestCases = ref(false)
@@ -644,6 +719,19 @@ const openLinkedTestCases = () => {
 const navigateLinkedTestCase = offset => {
   const nextCase = linkedTestCases.value[activeLinkedTestCaseIndex.value + offset]
   if (nextCase) activeLinkedTestCaseId.value = nextCase.id
+}
+
+const unlinkActiveFunctionalCase = async () => {
+  const linkId = activeLinkedTestCase.value?.automation_link_id
+  if (!selectedTestCase.value || !linkId) return
+  try {
+    await deleteTestCaseAutomationLink(activeLinkedTestCase.value.id, linkId)
+    const { data } = await getTestCaseDetail(selectedTestCase.value.id)
+    selectedTestCase.value = data
+    ElMessage.success(t('uiAutomation.testCase.unlinkCaseSuccess'))
+  } catch (error) {
+    ElMessage.error(error.response?.data?.detail || t('uiAutomation.testCase.unlinkCaseFailed'))
+  }
 }
 
 // 切换 UI 用例或关联被清空后关闭抽屉，避免展示上一个用例的数据。
@@ -668,7 +756,7 @@ const loadingStorageStates = ref(false)
 const showStorageStateDialog = ref(false)
 const showStorageStateEditor = ref(false)
 const editingStorageState = ref(null)
-const storageStateDraft = reactive({ name: '', source_url: '', content: '' })
+const storageStateDraft = reactive({ name: '', note: '', source_url: '', content: '' })
 const showVariablesDialog = ref(false)
 const variableDraft = ref([])
 const savingVariables = ref(false)
@@ -681,6 +769,17 @@ const elementSearchInFlight = new Set()
 const elementSearchTimers = new Map()
 const pages = ref([])
 const searchKeyword = ref('')
+const showCaseFilters = ref(false)
+const caseFilters = reactive({ created_by: '', priority: '' })
+const projectMembers = ref([])
+const creatorEditing = ref(false)
+const creatorSelectRef = ref(null)
+const showFunctionalCaseSelector = ref(false)
+const functionalCaseSelectorProjects = computed(() => {
+  const workspaceId = selectedTestCase.value?.workspace_project_id
+  return workspaceId ? [{ id: workspaceId, name: selectedTestCase.value?.project_name || '' }] : []
+})
+const linkedFunctionalCaseIds = computed(() => linkedTestCases.value.map(testCase => testCase.id))
 const showFolderContextMenu = ref(false)
 const folderContextMenuX = ref(0)
 const folderContextMenuY = ref(0)
@@ -741,8 +840,16 @@ const moveFolderOptions = computed(() => folderOptions.value.filter(
   folder => String(folder.id) !== String(contextTreeNode.value?.folder)
 ))
 
-// 目录层级由接口直接提供；本地检索仅匹配用例名称，保留空目录及祖先节点。
-const testCaseTree = computed(() => filterTestCaseTree(testCaseTreeData.value, searchKeyword.value))
+// 目录层级由接口直接提供；本地检索同步应用名称、维护人和优先级条件，保留目录层级。
+const testCaseTree = computed(() => filterTestCaseTree(
+  testCaseTreeData.value,
+  searchKeyword.value,
+  node => {
+    const creatorMatches = !caseFilters.created_by || String(node.created_by) === String(caseFilters.created_by)
+    const priorityMatches = !caseFilters.priority || node.priority === caseFilters.priority
+    return creatorMatches && priorityMatches
+  }
+))
 
 // 目录树的展开状态统一由 expandedFolderKeys 维护，默认全部折叠。
 const folderNodeKeys = computed(() => testCaseFolders.value.map(folder => `folder:${folder.id}`))
@@ -860,7 +967,7 @@ const loadTestCaseTree = async (project = projectId.value) => {
     return
   }
   try {
-    const { data } = await getTestCaseTree({ project })
+    const { data } = await getTestCaseTree({ project, search: searchKeyword.value || undefined, ...caseFilters })
     if (requestId !== testCaseTreeRequestId || String(projectId.value) !== String(project)) return
     testCaseTreeData.value = data
   } catch (error) {
@@ -869,6 +976,63 @@ const loadTestCaseTree = async (project = projectId.value) => {
     ElMessage.error(t('uiAutomation.suite.messages.loadCasesFailed'))
   } finally {
     if (requestId === testCaseTreeRequestId) testCaseTreeLoading.value = false
+  }
+}
+
+const resetCaseFilters = () => {
+  caseFilters.created_by = ''
+  caseFilters.priority = ''
+  loadTestCaseTree()
+}
+
+// 清空搜索词后仅重置本地筛选条件，避免重复请求用例树。
+const clearCaseSearch = () => {
+  searchKeyword.value = ''
+}
+
+// 统一处理筛选变更，避免将 Element Plus change 事件参数误当成项目 ID。
+const onCaseFilterChange = () => {
+  loadTestCaseTree()
+}
+
+const onCreatorChange = creatorId => {
+  const creator = projectMembers.value.find(item => String(item.id) === String(creatorId))
+  if (creator && selectedTestCase.value) selectedTestCase.value.created_by_name = creator.username
+}
+
+// 悬停进入编辑态后主动聚焦，否则 el-select 没有焦点，未改变选项时不会触发 blur。
+const enterCreatorEditing = () => {
+  creatorEditing.value = true
+  nextTick(() => creatorSelectRef.value?.focus?.())
+}
+
+const exitCreatorEditing = () => {
+  creatorEditing.value = false
+}
+
+// 点击下拉框外部时，Element Plus 会关闭下拉层但不一定触发组件 blur。
+const onCreatorDropdownVisibleChange = visible => {
+  if (!visible) nextTick(exitCreatorEditing)
+}
+
+const openFunctionalCaseSelector = () => {
+  if (!selectedTestCase.value) return
+  showFunctionalCaseSelector.value = true
+}
+
+const onFunctionalCasesSelected = async selectedIds => {
+  const functionalCaseIds = [...new Set((selectedIds || []).filter(Boolean))]
+  if (!selectedTestCase.value || !functionalCaseIds.length) return
+  try {
+    // 公共选择弹窗支持多选，逐条创建关联，避免只提交首个用例。
+    for (const functionalCaseId of functionalCaseIds) {
+      await linkFunctionalTestCase(selectedTestCase.value.id, { test_case_id: functionalCaseId })
+    }
+    const { data } = await getTestCaseDetail(selectedTestCase.value.id)
+    selectedTestCase.value = data
+    ElMessage.success(t('uiAutomation.testCase.functionalCaseLinked'))
+  } catch (error) {
+    ElMessage.error(error.response?.data?.detail || t('uiAutomation.testCase.functionalCaseLinkFailed'))
   }
 }
 
@@ -1106,6 +1270,9 @@ const onProjectChange = async () => {
       .then(response => {
         if (variablesRequestId === projectVariablesRequestId) {
           currentVariables.value = loadUiVariables(response.data.variables || [])
+          const members = response.data.members || []
+          const owner = response.data.owner ? [response.data.owner] : []
+          projectMembers.value = [...new Map([...owner, ...members].map(member => [String(member.id), member])).values()]
         }
       })
       .catch(error => console.error('获取项目变量失败:', error))
@@ -1160,7 +1327,7 @@ const uploadStorageState = async ({ file, onSuccess, onError }) => {
 // 打开新增或编辑表单；编辑已有资源时先读取其当前 JSON 内容。
 const openStorageStateEditor = async state => {
   editingStorageState.value = state || null
-  Object.assign(storageStateDraft, { name: state?.name || '', source_url: state?.source_url || '', content: '{\n  "cookies": [],\n  "origins": []\n}' })
+  Object.assign(storageStateDraft, { name: state?.name || '', note: state?.note || '', source_url: state?.source_url || '', content: '{\n  "cookies": [],\n  "origins": []\n}' })
   if (state) { const response = await downloadStorageState(state.id); storageStateDraft.content = await response.data.text() }
   showStorageStateEditor.value = true
 }
@@ -1171,12 +1338,13 @@ const saveStorageStateEditor = async () => {
   if (!Array.isArray(content.cookies || []) || !Array.isArray(content.origins || [])) { ElMessage.error(t('uiAutomation.storageState.invalidArrays')); return }
   try {
     if (editingStorageState.value) {
-      await updateStorageState(editingStorageState.value.id, { name: storageStateDraft.name, source_url: storageStateDraft.source_url })
+      await updateStorageState(editingStorageState.value.id, { name: storageStateDraft.name, note: storageStateDraft.note, source_url: storageStateDraft.source_url })
       await updateStorageStateContent(editingStorageState.value.id, content)
     } else {
       await createStorageStateFromContent({
         project: projectId.value,
         name: storageStateDraft.name,
+        note: storageStateDraft.note,
         source_url: storageStateDraft.source_url,
         content
       })
@@ -1787,7 +1955,9 @@ const getStatusText = (status) => {
 const formatTime = (timestamp) => {
   if (!timestamp) return ''
   const date = new Date(timestamp)
-  return date.toLocaleString()
+  if (Number.isNaN(date.getTime())) return String(timestamp)
+  const pad = value => String(value).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
 }
 
 // 获取操作类型文本（执行日志用），与步骤编辑器共用同一套文案键
@@ -1937,30 +2107,40 @@ onMounted(async () => {
   padding: 10px;
   border-bottom: 1px solid #e6e6e6;
   display: flex;
-  justify-content: space-between;
+  justify-content: flex-start;
   align-items: center;
+  gap: 2px;
 }
 
 .panel-header .case-search {
   flex: 1;
   min-width: 0;
-  margin-right: 8px;
+  margin-right: 4px;
+}
+
+.panel-header :deep(.el-button + .el-button) { padding: 0; }
+.case-filter-row { display: flex; gap: 8px; padding: 5px; border-bottom: 1px solid #e6e6e6; }
+.case-filter-row .el-select { flex: 1; min-width: 0; }
+
+.panel-header .case-filter-button {
+  flex: 0 0 auto;
+  padding: 0;
 }
 
 .panel-header .folder-create-button {
-  width: 32px;
-  height: 24px;
-  padding: 0;
+  flex: 0 0 auto;
 }
 
 .panel-header .tree-toggle-button {
-  width: 24px;
-  height: 24px;
-  padding: 0;
+  flex: 0 0 auto;
+}
+
+.panel-header .case-filter-button :deep(.el-icon) {
+  font-size: 18px;
 }
 
 .panel-header .tree-toggle-button :deep(.el-icon) {
-  font-size: 16px;
+  font-size: 18px;
 }
 
 .panel-header .folder-create-button :deep(.el-icon) {
@@ -2144,10 +2324,10 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  margin-bottom: 20px;
-  padding-bottom: 15px;
+  margin-bottom: 10px;
+  padding-bottom: 10px;
   border-bottom: 1px solid #e6e6e6;
-  gap: 8px;
+  gap: 2px;
 }
 
 .detail-title-row {
@@ -2156,14 +2336,51 @@ onMounted(async () => {
   gap: 10px;
 }
 
+.detail-title-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+
 .detail-title-input {
   flex: 1;
   min-width: 0;
 }
 
-.detail-priority-select {
-  width: 100px;
+.detail-title-input :deep(.el-input__wrapper) {
+  box-shadow: none;
+  padding: 0;
+}
+
+.detail-title-input :deep(.el-input__inner) {
+  color: var(--el-text-color-primary);
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.45;
+}
+
+.detail-id {
   flex: 0 0 auto;
+  color: #909399;
+  font-size: 18px;
+}
+
+.detail-priority-tag {
+  box-sizing: border-box;
+  height: 32px;
+  padding: 0 10px;
+  line-height: 30px;
+}
+
+.detail-priority-tag :deep(.el-tag__content) {
+  display: inline-flex;
+  align-items: center;
+  flex-direction: row;
+  font-size: 14px;
+  gap: 4px;
+  white-space: nowrap;
+  writing-mode: horizontal-tb;
 }
 
 .linked-test-case-button {
@@ -2179,13 +2396,17 @@ onMounted(async () => {
   align-items: center;
   justify-content: flex-end;
   gap: 8px;
-  margin-bottom: 20px;
 }
 
 .linked-case-nav-button {
   width: 32px;
   height: 32px;
   padding: 0;
+}
+
+.linked-case-action-button {
+  height: 32px;
+  padding: 0 10px;
 }
 
 .linked-case-count {
@@ -2197,6 +2418,39 @@ onMounted(async () => {
   width: 100%;
 }
 
+.detail-description-input :deep(.el-textarea__inner) {
+  box-shadow: none;
+  padding: 2px 0;
+  font-size: 14px;
+  line-height: 1.45;
+  resize: none;
+}
+
+.detail-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 8px;
+  margin-top: 4px;
+  color: #909399;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.detail-creator-select {
+  min-width: 90px;
+  flex: 0 0 90px;
+}
+
+.detail-creator-select :deep(.el-select__wrapper) {
+  min-height: 24px;
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
+  gap: 2px;
+  font-size: 13px;
+}
+
 .detail-actions {
   display: flex;
   justify-content: flex-end;
@@ -2206,6 +2460,25 @@ onMounted(async () => {
 }
 
 .detail-actions :deep(.el-button + .el-button) { margin-left: 0; }
+
+.storage-state-option-note {
+  display: inline-block;
+  width: 50%;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.storage-state-option-name {
+  display: inline-block;
+  width: 50%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 .steps-container {
   flex: 1;

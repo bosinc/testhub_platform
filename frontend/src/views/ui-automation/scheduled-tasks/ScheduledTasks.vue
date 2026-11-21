@@ -290,7 +290,12 @@
         <!-- 定时任务只在 Playwright 执行时允许选择初始登录态。 -->
         <el-form-item label="登录态">
           <el-select v-model="taskForm.storage_state" clearable placeholder="无登录态" :disabled="taskForm.engine !== 'playwright'" style="width: 260px">
-            <el-option v-for="state in storageStates" :key="state.id" :label="state.name" :value="state.id" />
+            <el-option v-for="state in storageStates" :key="state.id" :label="state.name" :value="state.id">
+              <template #default>
+                <span class="storage-state-option-name">{{ state.name }}</span>
+                <span class="storage-state-option-note">{{ state.note || '' }}</span>
+              </template>
+            </el-option>
           </el-select>
         </el-form-item>
 
@@ -946,6 +951,24 @@ const deleteTask = async (task) => {
 .unit {
   margin-left: 8px;
   color: #606266;
+}
+.storage-state-option-note {
+  display: inline-block;
+  width: 50%;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.storage-state-option-name {
+  display: inline-block;
+  width: 50%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 </style>
 

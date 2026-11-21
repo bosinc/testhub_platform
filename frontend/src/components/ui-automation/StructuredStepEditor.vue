@@ -76,12 +76,22 @@
                 <el-radio-button value="overwrite">{{ t('uiAutomation.stepEditor.overwrite') }}</el-radio-button><el-radio-button value="save_as">{{ t('uiAutomation.stepEditor.saveAs') }}</el-radio-button>
               </el-radio-group>
               <el-select v-if="element.action_params.mode === 'overwrite'" v-model="element.action_params.storage_state_id" size="default" :placeholder="t('uiAutomation.stepEditor.selectStorageState')" @change="onStorageStateSaveChange(element)">
-                <el-option v-for="state in storageStates" :key="state.id" :label="state.name" :value="state.id" />
+                <el-option v-for="state in storageStates" :key="state.id" :label="state.name" :value="state.id">
+                  <template #default>
+                    <span class="storage-state-option-name">{{ state.name }}</span>
+                    <span class="storage-state-option-note">{{ state.note || '' }}</span>
+                  </template>
+                </el-option>
               </el-select>
               <el-input v-else v-model="element.action_params.name" size="default" :placeholder="t('uiAutomation.stepEditor.storageStateName')" @input="emitSteps" />
             </div>
             <el-select v-else-if="element.action_params.operation === 'switch'" v-model="element.action_params.storage_state_id" size="default" :placeholder="t('uiAutomation.stepEditor.selectStorageState')" @change="emitSteps">
-              <el-option v-for="state in storageStates" :key="state.id" :label="state.name" :value="state.id" />
+              <el-option v-for="state in storageStates" :key="state.id" :label="state.name" :value="state.id">
+                <template #default>
+                  <span class="storage-state-option-name">{{ state.name }}</span>
+                  <span class="storage-state-option-note">{{ state.note || '' }}</span>
+                </template>
+              </el-option>
             </el-select>
           </div>
           <div v-else-if="element.action_type === 'getText'" class="step-field">
@@ -322,6 +332,8 @@ const onElementChange = step => {
 .step-header > .el-button { flex: 0 0 auto; margin: 0; }
 .drag-handle { cursor: grab; color: var(--el-text-color-secondary); }
 .step-number { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; flex: 0 0 24px; border-radius: 50%; background: #409eff; color: #fff; font-weight: 600; }
+.storage-state-option-name, .storage-state-option-note { display: inline-block; width: 50%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.storage-state-option-note { color: var(--el-text-color-secondary); font-size: 12px; text-align: right; }
 /* 以组件所在容器而非浏览器宽度响应，兼容侧栏拖动和脚本编辑器分栏。 */
 @container step-editor (max-width: 480px) {
   .action-row > .element-selector { flex-basis: 100%; }
