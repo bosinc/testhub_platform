@@ -158,6 +158,8 @@ class Environment(models.Model):
 class RequestHistory(models.Model):
     """请求历史模型"""
     request = models.ForeignKey(ApiRequest, on_delete=models.CASCADE, related_name='histories', verbose_name='关联请求')
+    scheduled_task = models.ForeignKey('ScheduledTask', on_delete=models.SET_NULL, null=True, blank=True,
+                                       related_name='request_histories', verbose_name='关联定时任务')
     environment = models.ForeignKey(Environment, on_delete=models.SET_NULL, null=True, blank=True,
                                     verbose_name='使用环境')
     request_data = models.JSONField(verbose_name='请求数据')
@@ -326,6 +328,8 @@ class TestExecution(models.Model):
 
     scenario_case = models.ForeignKey(ScenarioCase, on_delete=models.CASCADE, related_name='executions',
                                       verbose_name='场景用例')
+    scheduled_task = models.ForeignKey('ScheduledTask', on_delete=models.SET_NULL, null=True, blank=True,
+                                       related_name='scenario_executions', verbose_name='关联定时任务')
     status = models.CharField(max_length=20, choices=EXECUTION_STATUS_CHOICES, default='PENDING',
                               verbose_name='执行状态')
     # Lifecycle (status) and test verdict (conclusion) are separate: a run that
@@ -423,6 +427,8 @@ class ApiSuiteExecution(models.Model):
 
     test_suite = models.ForeignKey(TestSuite, on_delete=models.CASCADE,
                                    related_name='suite_executions', verbose_name='测试套件')
+    scheduled_task = models.ForeignKey('ScheduledTask', on_delete=models.SET_NULL, null=True, blank=True,
+                                       related_name='suite_executions_by_task', verbose_name='关联定时任务')
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='PENDING',
                               verbose_name='执行状态')
     start_time = models.DateTimeField(null=True, blank=True, verbose_name='开始时间')
@@ -494,10 +500,10 @@ class ScheduledTask(models.Model):
     # 任务配置
     test_suite = models.ForeignKey(TestSuite, on_delete=models.CASCADE, null=True, blank=True,
                                    verbose_name='测试套件')
-    api_request = models.ForeignKey('ApiRequest', on_delete=models.CASCADE, null=True, blank=True,
-                                    verbose_name='API请求')
-    scenario_case = models.ForeignKey('ScenarioCase', on_delete=models.CASCADE, null=True, blank=True,
-                                     verbose_name='场景用例')
+    api_requests = models.JSONField(default=list, blank=True, verbose_name='API请求列表',
+                                    help_text='API请求ID列表，用于API_REQUEST类型任务')
+    scenario_cases = models.JSONField(default=list, blank=True, verbose_name='场景用例列表',
+                                      help_text='场景用例ID列表，用于SCENARIO_CASE类型任务')
     environment = models.ForeignKey('Environment', on_delete=models.SET_NULL, null=True, blank=True,
                                     verbose_name='执行环境')
 

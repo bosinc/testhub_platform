@@ -1,7 +1,12 @@
 <template>
   <div class="page-container">
     <div class="page-header">
-      <h1 class="page-title">{{ $t('apiTesting.history.title') }}</h1>
+      <div class="title-group">
+        <h1 class="page-title">{{ $t('apiTesting.history.title') }}</h1>
+        <el-tag v-if="scheduledTaskId" closable class="task-filter-tag" @close="clearTaskFilter">
+          {{ $t('apiTesting.scheduledTask.relatedTask') }}: {{ route.query.task_name || `#${scheduledTaskId}` }}
+        </el-tag>
+      </div>
     </div>
 
     <div class="card-container">
@@ -124,11 +129,11 @@
                 <el-table-column prop="value" label="Value" />
               </el-table>
 
-              <h4 v-if="selectedHistory.request_data.params && Object.keys(selectedHistory.request_data.params).length > 0">
+              <h4 v-if="selectedHistory.request_data.params && selectedHistory.request_data.params.length > 0">
                 {{ $t('apiTesting.history.requestParams') }}
               </h4>
               <el-table
-                v-if="selectedHistory.request_data.params && Object.keys(selectedHistory.request_data.params).length > 0"
+                v-if="selectedHistory.request_data.params && selectedHistory.request_data.params.length > 0"
                 :data="formatHeaders(selectedHistory.request_data.params)"
                 style="width: 100%"
               >
@@ -156,7 +161,7 @@
                 <el-button size="small" @click="formatResponseBody">{{ $t('apiTesting.interface.format') }}</el-button>
                 <el-button size="small" @click="copyResponseBody">{{ $t('apiTesting.common.copy') }}</el-button>
               </div>
-              <pre class="json-content">{{ responseBodyText }}</pre>
+              <pre class="json-content response-body-content">{{ responseBodyText }}</pre>
             </div>
 
             <div v-else-if="selectedHistory.error_message" class="error-section">
@@ -190,12 +195,16 @@
 import { ref, onMounted, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useI18n } from 'vue-i18n'
+import { useRoute, useRouter } from 'vue-router'
 import api from '@/utils/api'
 import { deleteRequestHistory, batchDeleteRequestHistory } from '@/api/api-testing'
 import dayjs from 'dayjs'
 import HistoryTable from './components/HistoryTable.vue'
 
 const { t } = useI18n()
+const route = useRoute()
+const router = useRouter()
+const scheduledTaskId = computed(() => route.query.scheduled_task || '')
 const httpHistory = ref([])
 // 暂时隐藏 WebSocket 历史状态，保留原实现便于后续恢复。
 // const websocketHistory = ref([])
@@ -208,6 +217,15 @@ const showDetailDialog = ref(false)
 const selectedHistory = ref(null)
 const detailTab = ref('request')
 const selectedIds = ref([])
+const formattedResponseBody = ref('')
+
+const clearTaskFilter = async () => {
+  const query = { ...route.query }
+  delete query.scheduled_task
+  delete query.task_name
+  await router.replace({ query })
+  await loadHistory()
+}
 
 // 暂时隐藏请求类型 Tab 状态，默认只展示 HTTP 请求历史。
 // const activeTab = ref('HTTP')
@@ -217,6 +235,7 @@ const selectedIds = ref([])
 
 const responseBodyText = computed(() => {
   if (!selectedHistory.value?.response_data) return ''
+  if (formattedResponseBody.value) return formattedResponseBody.value
   
   try {
     if (selectedHistory.value.response_data.json) {
@@ -253,6 +272,12 @@ const formatDate = (dateString) => {
 }
 
 const formatHeaders = (headers) => {
+  if (Array.isArray(headers)) {
+    return headers.map(item => ({
+      key: item.key,
+      value: item.value
+    }))
+  }
   if (!headers || typeof headers !== 'object') return []
   return Object.keys(headers).map(key => ({
     key,
@@ -268,6 +293,10 @@ const loadHistory = async () => {
       page_size: pageSize.value,
       // 暂时固定查询 HTTP 历史，恢复 Tab 后改回 activeTab.value。
       request__request_type: 'HTTP'
+    }
+
+    if (route.query.scheduled_task) {
+      params.scheduled_task = route.query.scheduled_task
     }
 
     if (searchText.value) {
@@ -318,6 +347,7 @@ const handleCurrentChange = (page) => {
 
 const viewDetail = (history) => {
   selectedHistory.value = history
+  formattedResponseBody.value = ''
   detailTab.value = 'request'
   showDetailDialog.value = true
 }
@@ -401,8 +431,15 @@ const handleBatchDelete = () => {
 }
 
 const formatResponseBody = () => {
-  if (selectedHistory.value?.response_data?.json) {
-    // 已经格式化了
+  const responseData = selectedHistory.value?.response_data
+  if (!responseData) return
+
+  try {
+    const value = responseData.json ?? JSON.parse(responseData.body || '')
+    formattedResponseBody.value = JSON.stringify(value, null, 2)
+    ElMessage.success(t('apiTesting.messages.success.formatSuccess'))
+  } catch {
+    ElMessage.warning(t('apiTesting.messages.error.formatFailed'))
   }
 }
 
@@ -432,6 +469,12 @@ onMounted(() => {
   background: #fff;
   padding: 10px 20px;
   border-radius: 4px;
+}
+
+.title-group {
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 
 .page-container .page-header .page-title {
@@ -503,12 +546,17 @@ onMounted(() => {
   padding: 15px;
   border-radius: 4px;
   font-family: 'Courier New', monospace;
-  font-size: 12px;
+  font-size: 16px;
+  line-height: 1.6;
   max-height: 400px;
   overflow: auto;
   white-space: pre-wrap;
   word-break: break-all;
   border: 1px solid #e4e7ed;
+}
+
+.response-body-content {
+  min-height: 220px;
 }
 
 .response-actions {

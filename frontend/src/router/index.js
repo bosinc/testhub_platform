@@ -19,6 +19,7 @@ import ApiEnvironmentManagement from '@/views/api-testing/EnvironmentManagement.
 import ApiReportView from '@/views/api-testing/ReportView.vue'
 import ApiReportDetail from '@/views/api-testing/ReportDetail.vue'
 import ApiScheduledTasks from '@/views/api-testing/ScheduledTasks.vue'
+import ApiScenarioExecutions from '@/views/api-testing/ScenarioExecutionList.vue'
 import ApiAIServiceConfig from '@/views/api-testing/AIServiceConfig.vue'
 import NotificationLogs from '@/views/notification/NotificationLogs.vue'
 import UiDashboard from '@/views/ui-automation/dashboard/Dashboard.vue'
@@ -248,6 +249,11 @@ const routes = [
                 path: 'scheduled-tasks',
                 name: 'ApiScheduledTasks',
                 component: ApiScheduledTasks
+            },
+            {
+                path: 'scenario-executions',
+                name: 'ApiScenarioExecutions',
+                component: ApiScenarioExecutions
             },
             {
                 path: 'ai-service-config',

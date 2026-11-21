@@ -248,12 +248,14 @@ class RequestHistorySerializer(serializers.ModelSerializer):
     request = ApiRequestSerializer(read_only=True)
     environment = EnvironmentSerializer(read_only=True)
     executed_by = UserSerializer(read_only=True)
+    scheduled_task_name = serializers.CharField(source='scheduled_task.name', read_only=True, allow_null=True)
 
     class Meta:
         model = RequestHistory
         fields = [
             'id', 'request', 'environment', 'request_data', 'response_data',
             'status_code', 'response_time', 'error_message', 'assertions_results',
+            'scheduled_task', 'scheduled_task_name',
             'executed_by', 'executed_at'
         ]
 
@@ -361,11 +363,12 @@ class TestExecutionSerializer(serializers.ModelSerializer):
 
     scenario_case = ScenarioCaseSerializer(read_only=True)
     executed_by = UserSerializer(read_only=True)
+    scheduled_task_name = serializers.CharField(source='scheduled_task.name', read_only=True, allow_null=True)
 
     class Meta:
         model = TestExecution
         fields = [
-            'id', 'scenario_case', 'status', 'conclusion', 'start_time', 'end_time',
+            'id', 'scenario_case', 'scheduled_task', 'scheduled_task_name', 'status', 'conclusion', 'start_time', 'end_time',
             'heartbeat_at', 'cancel_requested', 'environment_snapshot',
             'total_requests', 'passed_requests', 'failed_requests', 'skipped_steps',
             'results', 'executed_by', 'created_at'
@@ -390,11 +393,12 @@ class ApiSuiteExecutionSerializer(serializers.ModelSerializer):
     executed_by_name = serializers.CharField(source='executed_by.username', read_only=True)
     duration = serializers.ReadOnlyField()
     scenario_results = serializers.SerializerMethodField()
+    scheduled_task_name = serializers.CharField(source='scheduled_task.name', read_only=True, allow_null=True)
 
     class Meta:
         model = ApiSuiteExecution
         fields = [
-            'id', 'test_suite', 'test_suite_name', 'test_suite_description',
+            'id', 'test_suite', 'scheduled_task', 'scheduled_task_name', 'test_suite_name', 'test_suite_description',
             'environment_name', 'project_name', 'status',
             'start_time', 'end_time', 'duration', 'total_scenarios',
             'passed_scenarios', 'failed_scenarios', 'results', 'error_message',
@@ -449,9 +453,10 @@ class ScheduledTaskSerializer(serializers.ModelSerializer):
     created_by = UserSerializer(read_only=True)
     test_suite = serializers.PrimaryKeyRelatedField(queryset=TestSuite.objects.all(), required=False)
     test_suite_name = serializers.CharField(source='test_suite.name', read_only=True)
-    api_request_name = serializers.CharField(source='api_request.name', read_only=True)
-    scenario_case = serializers.PrimaryKeyRelatedField(queryset=ScenarioCase.objects.all(), required=False)
-    scenario_case_name = serializers.CharField(source='scenario_case.name', read_only=True)
+    api_requests = serializers.ListField(child=serializers.IntegerField(), required=False)
+    api_request_names = serializers.SerializerMethodField()
+    scenario_cases = serializers.ListField(child=serializers.IntegerField(), required=False)
+    scenario_case_names = serializers.SerializerMethodField()
     environment_name = serializers.CharField(source='environment.name', read_only=True)
     created_by_name = serializers.CharField(source='created_by.username', read_only=True)
     notification_type = serializers.SerializerMethodField(read_only=True)
@@ -463,8 +468,8 @@ class ScheduledTaskSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'name', 'description', 'task_type', 'trigger_type',
             'cron_expression', 'interval_seconds', 'execute_at',
-            'test_suite', 'test_suite_name', 'api_request', 'api_request_name',
-            'scenario_case', 'scenario_case_name',
+            'test_suite', 'test_suite_name', 'api_requests', 'api_request_names',
+            'scenario_cases', 'scenario_case_names',
             'environment', 'environment_name', 'status', 'last_run_time',
             'next_run_time', 'total_runs', 'successful_runs', 'failed_runs',
             'last_result', 'error_message', 'notify_on_success', 'notify_on_failure',
@@ -480,7 +485,12 @@ class ScheduledTaskSerializer(serializers.ModelSerializer):
         """获取通知类型显示"""
         try:
             notification_setting = obj.notification_settings.first()
-            if notification_setting:
+            # 未开启成功/失败通知时，通知类型只是表单默认值，不应在列表中展示。
+            if (
+                notification_setting
+                and notification_setting.is_enabled
+                and (obj.notify_on_success or obj.notify_on_failure)
+            ):
                 return notification_setting.get_notification_type_display()
         except:
             pass
@@ -490,11 +500,16 @@ class ScheduledTaskSerializer(serializers.ModelSerializer):
         """获取通知类型原始值"""
         try:
             notification_setting = obj.notification_settings.first()
-            if notification_setting:
+            # 只有实际启用通知时才返回类型，避免禁用通知的历史设置污染列表展示。
+            if (
+                notification_setting
+                and notification_setting.is_enabled
+                and (obj.notify_on_success or obj.notify_on_failure)
+            ):
                 return notification_setting.notification_type
         except:
             pass
-        return "email"  # 默认值
+        return None
 
     def validate(self, attrs):
         """验证定时任务配置"""
@@ -527,14 +542,42 @@ class ScheduledTaskSerializer(serializers.ModelSerializer):
         if task_type == 'TEST_SUITE' and not attrs.get('test_suite'):
             if not getattr(self.instance, 'test_suite_id', None):
                 raise serializers.ValidationError({'test_suite': '测试套件不能为空'})
-        elif task_type == 'API_REQUEST' and not attrs.get('api_request'):
-            if not getattr(self.instance, 'api_request_id', None):
-                raise serializers.ValidationError({'api_request': 'API请求不能为空'})
-        elif task_type == 'SCENARIO_CASE' and not attrs.get('scenario_case'):
-            if not getattr(self.instance, 'scenario_case_id', None):
-                raise serializers.ValidationError({'scenario_case': '场景用例不能为空'})
+        elif task_type == 'API_REQUEST':
+            api_requests = attrs.get('api_requests', getattr(self.instance, 'api_requests', []))
+            api_requests = list(dict.fromkeys(api_requests or []))
+            if not api_requests:
+                raise serializers.ValidationError({'api_requests': '至少选择一个API请求'})
+            requests = ApiRequest.objects.filter(id__in=api_requests)
+            if requests.count() != len(api_requests):
+                raise serializers.ValidationError({'api_requests': '存在无效的API请求'})
+            attrs['api_requests'] = api_requests
+        elif task_type == 'SCENARIO_CASE':
+            scenario_cases = attrs.get('scenario_cases', getattr(self.instance, 'scenario_cases', []))
+            scenario_cases = list(dict.fromkeys(scenario_cases or []))
+            if not scenario_cases:
+                raise serializers.ValidationError({'scenario_cases': '至少选择一个场景用例'})
+            scenarios = ScenarioCase.objects.filter(id__in=scenario_cases)
+            if scenarios.count() != len(scenario_cases):
+                raise serializers.ValidationError({'scenario_cases': '存在无效的场景用例'})
+            project_ids = set(scenarios.values_list('project_id', flat=True))
+            if len(project_ids) != 1:
+                raise serializers.ValidationError({'scenario_cases': '场景用例必须属于同一个项目'})
+            environment = attrs.get('environment', getattr(self.instance, 'environment', None))
+            if environment and environment.scope == 'LOCAL' and environment.project_id not in project_ids:
+                raise serializers.ValidationError({'environment': '局部环境必须属于场景用例项目'})
+            attrs['scenario_cases'] = scenario_cases
 
         return attrs
+
+    def get_scenario_case_names(self, obj):
+        ids = obj.scenario_cases or []
+        names = {item.id: item.name for item in ScenarioCase.objects.filter(id__in=ids)}
+        return [names[item_id] for item_id in ids if item_id in names]
+
+    def get_api_request_names(self, obj):
+        ids = list(obj.api_requests or [])
+        names = {item.id: item.name for item in ApiRequest.objects.filter(id__in=ids)}
+        return [names[item_id] for item_id in ids if item_id in names]
 
     def create(self, validated_data):
         """创建定时任务"""
@@ -686,12 +729,14 @@ class ScheduledTaskSerializer(serializers.ModelSerializer):
         task_type = validated_data.get('task_type', current_task_type)
         target_fields = {
             'TEST_SUITE': 'test_suite',
-            'API_REQUEST': 'api_request',
-            'SCENARIO_CASE': 'scenario_case',
+            'API_REQUEST': 'api_requests',
+            'SCENARIO_CASE': 'scenario_cases',
         }
         for field_name in target_fields.values():
             if field_name != target_fields.get(task_type):
-                validated_data[field_name] = None
+                validated_data[field_name] = (
+                    [] if field_name in {'api_requests', 'scenario_cases'} else None
+                )
 
 
 class TaskExecutionLogSerializer(serializers.ModelSerializer):

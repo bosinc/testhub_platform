@@ -1,7 +1,12 @@
 <template>
   <div class="page-container">
     <div class="page-header">
-      <h1 class="page-title">{{ $t('apiTesting.report.title') }}</h1>
+      <div class="title-group">
+        <h1 class="page-title">{{ $t('apiTesting.report.title') }}</h1>
+        <el-tag v-if="scheduledTaskId" closable class="task-filter-tag" @close="clearTaskFilter">
+          {{ $t('apiTesting.scheduledTask.relatedTask') }}: {{ route.query.task_name || `#${scheduledTaskId}` }}
+        </el-tag>
+      </div>
       <div class="actions">
         <el-button
           type="danger"
@@ -25,6 +30,9 @@
         <el-table-column type="selection" width="40" align="center" />
         <el-table-column prop="id" label="ID" width="60" />
         <el-table-column prop="test_suite_name" :label="$t('apiTesting.report.testSuite')" min-width="200" />
+        <el-table-column :label="$t('apiTesting.scheduledTask.relatedTask')" min-width="140" show-overflow-tooltip>
+          <template #default="{ row }">{{ row.scheduled_task_name || '-' }}</template>
+        </el-table-column>
         <el-table-column prop="status" :label="$t('apiTesting.common.status')" width="100">
           <template #default="scope">
             <el-tag :type="getStatusType(scope.row.status)">
@@ -101,7 +109,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useI18n } from 'vue-i18n'
 import {
@@ -111,9 +119,12 @@ import {
 } from '@/api/api-testing'
 import dayjs from 'dayjs'
 import { useRouter } from 'vue-router'
+import { useRoute } from 'vue-router'
 
 const { t } = useI18n()
 const router = useRouter()
+const route = useRoute()
+const scheduledTaskId = computed(() => route.query.scheduled_task || '')
 const reports = ref([])
 const loading = ref(false)
 const selectedIds = ref([])
@@ -121,13 +132,21 @@ const currentPage = ref(1)
 const pageSize = ref(20)
 const total = ref(0)
 
+const clearTaskFilter = () => {
+  const query = { ...route.query }
+  delete query.scheduled_task
+  delete query.task_name
+  router.replace({ query }).then(loadReports)
+}
+
 const loadReports = async () => {
   loading.value = true
   selectedIds.value = []
   try {
     const response = await getApiSuiteExecutions({
       page: currentPage.value,
-      page_size: pageSize.value
+      page_size: pageSize.value,
+      ...(route.query.scheduled_task ? { scheduled_task: route.query.scheduled_task } : {})
     })
     reports.value = response.data.results || response.data
     total.value = response.data.count ?? reports.value.length
@@ -287,6 +306,12 @@ onMounted(() => {
   background: #fff;
   padding: 10px 20px;
   border-radius: 4px;
+}
+
+.title-group {
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 
 .page-container .page-header .page-title {

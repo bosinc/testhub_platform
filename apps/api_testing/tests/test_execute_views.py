@@ -8,6 +8,7 @@
 运行: python manage.py test apps.api_testing.test_execute_views
 """
 from unittest.mock import patch
+from types import SimpleNamespace
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase
@@ -15,8 +16,10 @@ from django.utils import timezone
 from rest_framework.test import APIClient
 
 from ..models import (
-    ApiProject, Environment, ScenarioCase, TestExecution, TestSuite, TestSuiteItem,
+    ApiProject, ApiCollection, ApiRequest, Environment, RequestHistory,
+    ApiSuiteExecution, ScheduledTask, ScenarioCase, TestExecution, TestSuite, TestSuiteItem,
 )
+from ..serializers import ScheduledTaskSerializer
 
 User = get_user_model()
 
@@ -106,3 +109,93 @@ class TestSuiteExecuteViewTest(ExecuteViewFixture):
         self.assertEqual(response.status_code, 200)
         self.assertFalse(response.data['success'])
         self.assertEqual(response.data['results'], [])
+
+    def test_scheduled_scenario_task_uses_scenario_handler(self):
+        """场景用例定时任务必须进入场景执行分支并返回其结果。"""
+        from ..views import ScheduledTaskViewSet
+
+        view = ScheduledTaskViewSet()
+        task = SimpleNamespace(task_type='SCENARIO_CASE')
+        expected = {'success': True, 'execution_ids': [1]}
+        with patch.object(view, '_execute_scenario_case', return_value=expected) as handler:
+            result = view._execute_task(task)
+
+        self.assertEqual(result, expected)
+        handler.assert_called_once_with(task)
+
+
+class ScheduledExecutionAssociationTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(username='scheduled-user')
+        self.project = ApiProject.objects.create(
+            name='项目', project_type='HTTP', status='IN_PROGRESS', owner=self.user)
+        self.collection = ApiCollection.objects.create(name='集合', project=self.project)
+        self.request = ApiRequest.objects.create(
+            collection=self.collection, name='请求', method='GET', url='/health',
+            request_type='HTTP',
+            headers=[], params=[{'key': 'check', 'value': 'true', 'enabled': True}],
+            created_by=self.user)
+        self.environment = Environment.objects.create(
+            name='环境', scope='LOCAL', project=self.project,
+            base_url='https://example.com', created_by=self.user)
+
+    def test_scheduled_task_target_cleanup_uses_null_for_foreign_keys(self):
+        validated_data = {
+            'task_type': 'API_REQUEST',
+            'test_suite': object(),
+            'api_requests': [self.request.id],
+            'scenario_cases': [1],
+        }
+
+        ScheduledTaskSerializer._clear_unused_targets(validated_data)
+
+        self.assertIsNone(validated_data['test_suite'])
+        self.assertEqual(validated_data['api_requests'], [self.request.id])
+        self.assertEqual(validated_data['scenario_cases'], [])
+
+    @patch('apps.api_testing.utils.send_api_request')
+    def test_scheduled_request_supports_key_value_rows_and_saves_history(self, send):
+        from ..utils import execute_api_request
+
+        response = SimpleNamespace(
+            status_code=200, headers={'content-type': 'application/json'},
+            text='{}', json=lambda: {})
+        send.return_value = response
+        task = ScheduledTask.objects.create(
+            name='请求任务', task_type='API_REQUEST', trigger_type='CRON',
+            cron_expression='0 * * * *', api_requests=[self.request.id],
+            environment=self.environment, created_by=self.user)
+
+        result = execute_api_request(self.request, self.environment, self.user, scheduled_task=task)
+
+        self.assertTrue(result['success'])
+        self.assertEqual(RequestHistory.objects.get(pk=result['history_id']).scheduled_task_id, task.id)
+        self.assertEqual(send.call_args.kwargs['url'], 'https://example.com/health')
+        self.assertEqual(send.call_args.kwargs['params'], [('check', 'true')])
+
+    @patch('apps.api_testing.utils.execute_scenario_case')
+    def test_scheduled_suite_associates_suite_and_scenario_records(self, execute):
+        from ..utils import execute_test_suite
+
+        scenario = ScenarioCase.objects.create(
+            project=self.project, name='场景', created_by=self.user)
+        suite = TestSuite.objects.create(
+            project=self.project, name='套件', environment=self.environment,
+            created_by=self.user)
+        TestSuiteItem.objects.create(test_suite=suite, scenario_case=scenario)
+        task = ScheduledTask.objects.create(
+            name='套件任务', task_type='TEST_SUITE', trigger_type='CRON',
+            cron_expression='0 * * * *', test_suite=suite,
+            environment=self.environment, created_by=self.user)
+        execute.return_value = {
+            'success': True, 'execution_id': 1, 'passed_count': 1,
+            'failed_count': 0, 'total_count': 1,
+        }
+
+        result = execute_test_suite(suite, self.environment, self.user, scheduled_task=task)
+
+        self.assertTrue(result['success'])
+        self.assertEqual(result['suite_execution_id'],
+                         ApiSuiteExecution.objects.get(scheduled_task=task).id)
+        execute.assert_called_once()
+        self.assertEqual(execute.call_args.kwargs['scheduled_task'], task)

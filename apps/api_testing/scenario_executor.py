@@ -824,7 +824,8 @@ def cancel_requested(execution_id):
         pk=execution_id, cancel_requested=True).exists()
 
 
-def execute_scenario_tree(scenario, environment, user, execution=None, cancel_check=None):
+def execute_scenario_tree(scenario, environment, user, execution=None, cancel_check=None,
+                          scheduled_task=None):
     """Run a scenario tree and persist a ``TestExecution`` record.
 
     Returns the same shape as ``utils.execute_scenario_case`` so suite, task and
@@ -835,7 +836,8 @@ def execute_scenario_tree(scenario, environment, user, execution=None, cancel_ch
     if execution is None:
         execution = TestExecution.objects.create(
             scenario_case=scenario, status='RUNNING',
-            start_time=timezone.now(), executed_by=user)
+            start_time=timezone.now(), executed_by=user,
+            scheduled_task=scheduled_task)
     else:
         execution.status = 'RUNNING'
         execution.start_time = execution.start_time or timezone.now()

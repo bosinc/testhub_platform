@@ -9,7 +9,7 @@ from urllib3.util.retry import Retry
 from django.utils import timezone
 from .models import RequestHistory
 from .variable_resolver import VariableResolver
-from .path_params import resolve_path_parameters
+from .environment_resolver import build_request_url
 
 logger = logging.getLogger(__name__)
 
@@ -398,14 +398,17 @@ def execute_assertions(response, assertions):
 
 
 
-def execute_scenario_case(scenario_case, environment, executed_by, execution=None):
+def execute_scenario_case(scenario_case, environment, executed_by, execution=None,
+                          scheduled_task=None):
     """执行单个步骤树场景用例并返回结果。"""
     from .scenario_executor import execute_scenario_tree
 
     return execute_scenario_tree(
-        scenario_case, environment, executed_by, execution=execution)
+        scenario_case, environment, executed_by, execution=execution,
+        scheduled_task=scheduled_task)
 
-def execute_test_suite(test_suite, environment, executed_by, suite_execution=None):
+def execute_test_suite(test_suite, environment, executed_by, suite_execution=None,
+                       scheduled_task=None):
     """依次运行测试套件中的场景用例，并落套件维度执行记录。
 
     未传入 ``suite_execution`` 时创建执行记录；MCP 异步执行器传入预建记录复用。
@@ -432,6 +435,7 @@ def execute_test_suite(test_suite, environment, executed_by, suite_execution=Non
             start_time=timezone.now(),
             total_scenarios=len(items),
             executed_by=executed_by,
+            scheduled_task=scheduled_task,
         )
     else:
         # 复用调用方预建的记录：重置为运行态，保证轮询方看到一致的初始状态。
@@ -455,6 +459,7 @@ def execute_test_suite(test_suite, environment, executed_by, suite_execution=Non
                 scenario_case,
                 execution_environment or scenario_case.environment,
                 executed_by,
+                scheduled_task=scheduled_task,
             )
             failed_count = result.get('failed_count', 0)
             succeeded = bool(result.get('success')) and failed_count == 0
@@ -505,7 +510,7 @@ def execute_test_suite(test_suite, environment, executed_by, suite_execution=Non
     }
 
 
-def execute_api_request(api_request, environment, executed_by):
+def execute_api_request(api_request, environment, executed_by, scheduled_task=None):
     """执行单个API请求并返回结果"""
     
     try:
@@ -518,31 +523,30 @@ def execute_api_request(api_request, environment, executed_by):
             variables.update(environment.variables)
         
         # 替换URL中的变量（先解析动态函数，再替换环境变量）
-        url = _replace_variables(api_request.url, variables)
-        url = resolver.resolve(url)
+        path_params = _resolve_variables_in_dict(
+            _replace_variables_in_dict(api_request.path_params or [], variables), resolver)
+        url = build_request_url(
+            environment.base_url if environment else '',
+            api_request.url,
+            path_params,
+            request_type=api_request.request_type,
+        )
         
         # 准备请求头
         headers = {}
-        if isinstance(api_request.headers, list):
-            for header_item in api_request.headers:
-                if header_item.get('enabled', True) and header_item.get('key'):
-                    key = header_item['key']
-                    value = _replace_variables(str(header_item.get('value', '')), variables)
-                    value = resolver.resolve(value)
-                    headers[key] = value
-        else:
-            headers = api_request.headers.copy()
-            for key, value in headers.items():
-                headers[key] = _replace_variables(str(value), variables)
-                headers[key] = resolver.resolve(headers[key])
+        for header_item in api_request.headers or []:
+            if header_item.get('enabled', True) and header_item.get('key'):
+                key = header_item['key']
+                value = _replace_variables(str(header_item.get('value', '')), variables)
+                value = resolver.resolve(value)
+                headers[key] = value
         
         # 准备请求参数
-        params = api_request.params.copy() if api_request.params else {}
-        for key, value in params.items():
-            params[key] = _replace_variables(str(value), variables)
-            params[key] = resolver.resolve(params[key])
-        url, params = resolve_path_parameters(url, params)
-        
+        params = []
+        for param_item in api_request.params or []:
+            if param_item.get('enabled', True) and param_item.get('key'):
+                value = _replace_variables(str(param_item.get('value', '')), variables)
+                params.append((param_item['key'], resolver.resolve(value)))
         # 准备请求体
         body_type, body_data = prepare_request_body(
             api_request.body, api_request.method, variables, resolver
@@ -590,7 +594,8 @@ def execute_api_request(api_request, environment, executed_by):
             status_code=response.status_code,
             response_time=response_time,
             assertions_results=assertions_results,
-            executed_by=executed_by
+            executed_by=executed_by,
+            scheduled_task=scheduled_task,
         )
         
         return {

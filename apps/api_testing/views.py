@@ -1039,7 +1039,7 @@ class RequestHistoryViewSet(viewsets.ModelViewSet):
     serializer_class = RequestHistorySerializer
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
-    filterset_fields = ['request__request_type', 'status_code']
+    filterset_fields = ['request__request_type', 'status_code', 'scheduled_task']
     ordering = ['-executed_at']
     pagination_class = StandardPagination
     
@@ -1488,7 +1488,7 @@ class TestExecutionViewSet(mixins.DestroyModelMixin, viewsets.ReadOnlyModelViewS
     serializer_class = TestExecutionSerializer
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
-    filterset_fields = ['status']
+    filterset_fields = ['status', 'scenario_case', 'scheduled_task']
     ordering = ['-created_at']
     pagination_class = StandardPagination
     
@@ -1502,6 +1502,9 @@ class TestExecutionViewSet(mixins.DestroyModelMixin, viewsets.ReadOnlyModelViewS
         scenario_case_id = self.request.query_params.get('scenario_case')
         if scenario_case_id:
             queryset = queryset.filter(scenario_case_id=scenario_case_id)
+        scheduled_task_id = self.request.query_params.get('scheduled_task')
+        if scheduled_task_id:
+            queryset = queryset.filter(scheduled_task_id=scheduled_task_id)
         return queryset
 
     def perform_destroy(self, instance):
@@ -2133,7 +2136,7 @@ class ApiSuiteExecutionViewSet(mixins.DestroyModelMixin, viewsets.ReadOnlyModelV
     serializer_class = ApiSuiteExecutionSerializer
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
-    filterset_fields = ['status', 'test_suite']
+    filterset_fields = ['status', 'test_suite', 'scheduled_task']
     ordering = ['-created_at']
     pagination_class = StandardPagination
 
@@ -2315,15 +2318,8 @@ class ScheduledTaskViewSet(viewsets.ModelViewSet):
                 execution_log.start_time = timezone.now()
                 execution_log.save()
                 
-                # 执行任务
-                if task.task_type == 'TEST_SUITE':
-                    result = self._execute_test_suite(task)
-                elif task.task_type == 'API_REQUEST':
-                    result = self._execute_api_request(task)
-                elif task.task_type == 'SCENARIO_CASE':
-                    result = self._execute_scenario_case(task)
-                else:
-                    raise ValueError(f"未知的任务类型: {task.task_type}")
+                # 统一通过任务类型分发，确保调度器和立即执行共用同一入口。
+                result = self._execute_task(task)
                 
                 # 更新执行结果：任务是否成功以执行结论为准，不能只看"没抛异常"。
                 succeeded = bool(isinstance(result, dict) and result.get('success'))
@@ -2422,6 +2418,19 @@ class ScheduledTaskViewSet(viewsets.ModelViewSet):
         thread = threading.Thread(target=execute)
         thread.daemon = True
         thread.start()
+
+    def _execute_task(self, task):
+        """按任务类型执行目标，供定时调度和手动执行共用。"""
+        handlers = {
+            'TEST_SUITE': self._execute_test_suite,
+            'API_REQUEST': self._execute_api_request,
+            'SCENARIO_CASE': self._execute_scenario_case,
+        }
+        try:
+            handler = handlers[task.task_type]
+        except KeyError as exc:
+            raise ValueError(f"未知的任务类型: {task.task_type}") from exc
+        return handler(task)
     
     def _execute_test_suite(self, task):
         """执行测试套件"""
@@ -2430,28 +2439,57 @@ class ScheduledTaskViewSet(viewsets.ModelViewSet):
         result = execute_test_suite(
             task.test_suite,
             task.environment, 
-            task.created_by
+            task.created_by,
+            scheduled_task=task,
         )
         return result
     
     def _execute_api_request(self, task):
         """执行API请求"""
         from .utils import execute_api_request
-        
-        result = execute_api_request(
-            task.api_request, 
-            task.environment, 
-            task.created_by
-        )
-        return result
+        request_ids = list(dict.fromkeys(task.api_requests or []))
+        requests = list(ApiRequest.objects.filter(id__in=request_ids))
+        request_map = {item.id: item for item in requests}
+        if len(request_map) != len(request_ids):
+            raise ValueError('配置的API请求不存在')
+        results = [
+            execute_api_request(request_map[request_id], task.environment, task.created_by,
+                                scheduled_task=task)
+            for request_id in request_ids
+        ]
+        return {
+            'success': bool(results) and all(item.get('success') for item in results),
+            'request_count': len(results),
+            'passed_count': sum(1 for item in results if item.get('success')),
+            'failed_count': sum(1 for item in results if not item.get('success')),
+            'history_ids': [item.get('history_id') for item in results if item.get('history_id')],
+            'results': results,
+        }
 
     def _execute_scenario_case(self, task):
-        """执行定时任务绑定的场景用例，并复用统一场景执行器。"""
-        return execute_scenario_case(
-            task.scenario_case,
-            task.environment,
-            task.created_by,
-        )
+        """按配置顺序执行定时任务绑定的多个场景用例。"""
+        scenario_ids = list(dict.fromkeys(task.scenario_cases or []))
+        scenarios = list(ScenarioCase.objects.filter(id__in=scenario_ids))
+        scenario_map = {scenario.id: scenario for scenario in scenarios}
+        if len(scenario_map) != len(scenario_ids):
+            raise ValueError('配置的场景用例不存在')
+
+        results = []
+        for scenario_id in scenario_ids:
+            result = execute_scenario_case(
+                scenario_map[scenario_id], task.environment, task.created_by,
+                scheduled_task=task,
+            )
+            results.append(result)
+
+        return {
+            'success': bool(results) and all(item.get('success') for item in results),
+            'scenario_count': len(results),
+            'passed_count': sum(1 for item in results if item.get('success')),
+            'failed_count': sum(1 for item in results if not item.get('success')),
+            'execution_ids': [item.get('execution_id') for item in results if item.get('execution_id')],
+            'results': results,
+        }
     
     def _send_notification(self, task, execution_log, success=True):
         """发送通知邮件"""
@@ -2915,10 +2953,6 @@ class NotificationLogViewSet(viewsets.ReadOnlyModelViewSet):
                     models.Q(owner=user) | models.Q(members=user)
                 )
             ) | models.Q(
-                task__api_request__collection__project__in=ApiProject.objects.filter(
-                    models.Q(owner=user) | models.Q(members=user)
-                )
-            ) | models.Q(
                 task__created_by=user
             )
         ).distinct()
@@ -2945,10 +2979,6 @@ class TaskNotificationSettingViewSet(viewsets.ModelViewSet):
         return TaskNotificationSetting.objects.filter(
             models.Q(
                 task__test_suite__project__in=ApiProject.objects.filter(
-                    models.Q(owner=user) | models.Q(members=user)
-                )
-            ) | models.Q(
-                task__api_request__collection__project__in=ApiProject.objects.filter(
                     models.Q(owner=user) | models.Q(members=user)
                 )
             ) | models.Q(

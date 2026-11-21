@@ -51,7 +51,7 @@ class ScenarioCaseAdmin(admin.ModelAdmin):
 
 @admin.register(TestExecution)
 class TestExecutionAdmin(admin.ModelAdmin):
-    list_display = ['scenario_case', 'status', 'total_requests', 'passed_requests', 'failed_requests', 'executed_by', 'created_at']
+    list_display = ['scenario_case', 'scheduled_task', 'status', 'total_requests', 'passed_requests', 'failed_requests', 'executed_by', 'created_at']
     list_filter = ['status', 'created_at']
     search_fields = ['scenario_case__name']
 

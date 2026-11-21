@@ -44,7 +44,7 @@
         <el-table-column prop="updated_at" :label="$t('apiTesting.testSuiteManagement.updatedAt')" width="160">
           <template #default="{ row }">{{ formatDate(row.updated_at) }}</template>
         </el-table-column>
-        <el-table-column :label="$t('apiTesting.testSuiteManagement.operation')" width="150" fixed="right">
+        <el-table-column :label="$t('apiTesting.testSuiteManagement.operation')" width="110" fixed="right">
           <template #default="{ row }">
             <div class="row-actions">
               <el-button size="small" text type="primary" @click="editSuite(row)">

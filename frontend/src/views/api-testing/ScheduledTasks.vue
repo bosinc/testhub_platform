@@ -52,6 +52,18 @@
             </el-tag>
           </template>
         </el-table-column>
+        <el-table-column prop="notification_type" :label="$t('apiTesting.scheduledTask.notificationType')" width="120">
+          <template #default="scope">
+            <el-tag
+              v-if="scope.row.notification_type"
+              :type="getNotificationTypeTag(scope.row.notification_type)"
+              size="small"
+            >
+              {{ getNotificationTypeText(scope.row.notification_type) }}
+            </el-tag>
+            <span v-else>-</span>
+          </template>
+        </el-table-column>
         <el-table-column prop="trigger_type" :label="$t('apiTesting.scheduledTask.triggerType')" width="120">
           <template #default="scope">
             <el-tag>
@@ -66,16 +78,6 @@
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="notification_type" :label="$t('apiTesting.scheduledTask.notificationType')" width="120">
-          <template #default="scope">
-            <el-tag
-              :type="getNotificationTypeTag(scope.row.notification_type)"
-              size="small"
-            >
-              {{ getNotificationTypeText(scope.row.notification_type) }}
-            </el-tag>
-          </template>
-        </el-table-column>
         <el-table-column prop="next_run_time" :label="$t('apiTesting.scheduledTask.nextRunTime')" width="180">
           <template #default="scope">
             {{ formatDateTime(scope.row.next_run_time) }}
@@ -86,7 +88,7 @@
             {{ formatDateTime(scope.row.last_run_time) }}
           </template>
         </el-table-column>
-        <el-table-column :label="$t('apiTesting.common.operation')" width="320" fixed="right" align="center" class-name="action-col">
+        <el-table-column :label="$t('apiTesting.common.operation')" width="250" fixed="right" align="center" class-name="action-col">
           <template #default="scope">
             <div class="row-actions">
               <el-button size="small" text @click="editTask(scope.row)">
@@ -97,7 +99,7 @@
                 <el-icon><VideoPlay /></el-icon>
                 {{ $t('apiTesting.scheduledTask.runNow') }}
               </el-button>
-              <el-button size="small" text type="primary" @click="viewTaskLogs(scope.row)">
+              <el-button size="small" text type="primary" @click="viewTaskExecutions(scope.row)">
                 <el-icon><Clock /></el-icon>
                 {{ $t('apiTesting.scheduledTask.executionHistory') }}
               </el-button>
@@ -149,19 +151,19 @@
           <el-input v-model="taskForm.description" type="textarea" :placeholder="$t('apiTesting.scheduledTask.inputTaskDesc')" />
         </el-form-item>
 
-        <el-form-item :label="$t('apiTesting.scheduledTask.taskType')" required>
+        <el-form-item :label="$t('apiTesting.scheduledTask.taskType')" :for="null" required>
           <el-radio-group v-model="taskForm.task_type">
-            <el-radio label="TEST_SUITE">{{ $t('apiTesting.scheduledTask.taskTypes.testSuite') }}</el-radio>
-            <el-radio label="API_REQUEST">{{ $t('apiTesting.scheduledTask.taskTypes.apiRequest') }}</el-radio>
-            <el-radio label="SCENARIO_CASE">{{ $t('apiTesting.scheduledTask.taskTypes.scenarioCase') }}</el-radio>
+            <el-radio value="TEST_SUITE">{{ $t('apiTesting.scheduledTask.taskTypes.testSuite') }}</el-radio>
+            <el-radio value="API_REQUEST">{{ $t('apiTesting.scheduledTask.taskTypes.apiRequest') }}</el-radio>
+            <el-radio value="SCENARIO_CASE">{{ $t('apiTesting.scheduledTask.taskTypes.scenarioCase') }}</el-radio>
           </el-radio-group>
         </el-form-item>
 
-        <el-form-item :label="$t('apiTesting.scheduledTask.triggerType')" required>
+        <el-form-item :label="$t('apiTesting.scheduledTask.triggerType')" :for="null" required>
           <el-radio-group v-model="taskForm.trigger_type">
-            <el-radio label="CRON">{{ $t('apiTesting.scheduledTask.triggerTypes.cron') }}</el-radio>
-            <el-radio label="INTERVAL">{{ $t('apiTesting.scheduledTask.triggerTypes.interval') }}</el-radio>
-            <el-radio label="ONCE">{{ $t('apiTesting.scheduledTask.triggerTypes.once') }}</el-radio>
+            <el-radio value="CRON">{{ $t('apiTesting.scheduledTask.triggerTypes.cron') }}</el-radio>
+            <el-radio value="INTERVAL">{{ $t('apiTesting.scheduledTask.triggerTypes.interval') }}</el-radio>
+            <el-radio value="ONCE">{{ $t('apiTesting.scheduledTask.triggerTypes.once') }}</el-radio>
           </el-radio-group>
         </el-form-item>
 
@@ -218,26 +220,12 @@
           </el-select>
         </el-form-item>
 
-        <el-form-item v-if="taskForm.task_type === 'API_REQUEST'" :label="$t('apiTesting.scheduledTask.apiRequest')" required>
-          <el-select v-model="taskForm.api_request" :placeholder="$t('apiTesting.scheduledTask.selectApiRequest')">
-            <el-option
-              v-for="request in apiRequests"
-              :key="request.id"
-              :label="request.name"
-              :value="request.id"
-            />
-          </el-select>
+        <el-form-item v-if="taskForm.task_type === 'API_REQUEST'" :label="$t('apiTesting.scheduledTask.apiRequest')" for="scheduled-api-requests" required>
+          <el-tree-select id="scheduled-api-requests" v-model="selectedApiRequestKeys" :data="apiRequestTree" :props="treeProps" node-key="key" multiple show-checkbox filterable clearable collapse-tags collapse-tags-tooltip :placeholder="$t('apiTesting.scheduledTask.selectApiRequest')" style="width: 100%" />
         </el-form-item>
 
-        <el-form-item v-if="taskForm.task_type === 'SCENARIO_CASE'" :label="$t('apiTesting.scheduledTask.scenarioCase')" required>
-          <el-select v-model="taskForm.scenario_case" filterable :placeholder="$t('apiTesting.scheduledTask.selectScenarioCase')">
-            <el-option
-              v-for="scenario in scenarioCases"
-              :key="scenario.id"
-              :label="scenario.name"
-              :value="scenario.id"
-            />
-          </el-select>
+        <el-form-item v-if="taskForm.task_type === 'SCENARIO_CASE'" :label="$t('apiTesting.scheduledTask.scenarioCase')" for="scheduled-scenario-cases" required>
+          <el-tree-select id="scheduled-scenario-cases" v-model="selectedScenarioCaseKeys" :data="scenarioCaseTree" :props="treeProps" node-key="key" multiple show-checkbox filterable clearable collapse-tags collapse-tags-tooltip :placeholder="$t('apiTesting.scheduledTask.selectScenarioCase')" style="width: 100%" />
         </el-form-item>
 
         <el-form-item :label="$t('apiTesting.scheduledTask.executeEnvironment')" required>
@@ -316,9 +304,10 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useI18n } from 'vue-i18n'
+import { useRouter } from 'vue-router'
 import { Plus, Edit, VideoPlay, Clock, VideoPause, CaretRight, Delete } from '@element-plus/icons-vue'
 import {
   getScheduledTasks,
@@ -330,13 +319,16 @@ import {
   activateScheduledTask,
   getExecutionLogs,
   getTestSuites,
-  getApiRequests,
+  getAllApiCollections,
+  getAllApiRequests,
   getEnvironments,
+  getScenarioCaseFolders,
   getAllScenarioCases,
   getUsers
 } from '@/api/api-testing.js'
 
 const { t, locale } = useI18n()
+const router = useRouter()
 
 // 获取状态文本
 const getStatusText = (status) => {
@@ -368,12 +360,25 @@ const getTaskTypeText = (type) => {
   return typeKey ? t(`apiTesting.scheduledTask.taskTypes.${typeKey}`) : type
 }
 
+const viewTaskExecutions = (task) => {
+  const query = { scheduled_task: task.id, task_name: task.name }
+  if (task.task_type === 'API_REQUEST') {
+    router.push({ name: 'ApiHistory', query })
+  } else if (task.task_type === 'SCENARIO_CASE') {
+    router.push({ name: 'ApiScenarioExecutions', query })
+  } else {
+    router.push({ name: 'ApiReports', query })
+  }
+}
+
 // 数据状态
 const tasks = ref([])
 const executionLogs = ref([])
 const testSuites = ref([])
 const apiRequests = ref([])
+const apiCollections = ref([])
 const scenarioCases = ref([])
+const scenarioCaseFolders = ref([])
 const environments = ref([])
 const users = ref([]) // 添加用户列表
 const loading = ref(false)
@@ -382,6 +387,69 @@ const submitting = ref(false)
 const showCreateDialog = ref(false)
 const showLogsDialog = ref(false)
 const editingTask = ref(null)
+
+const treeProps = { label: 'name', children: 'children' }
+const apiRequestTree = computed(() => {
+  const roots = []
+  const nodes = new Map()
+  apiCollections.value.forEach(item => nodes.set(item.id, {
+    key: `collection:${item.id}`, name: item.name, children: []
+  }))
+  apiCollections.value.forEach(item => {
+    const node = nodes.get(item.id)
+    const parent = item.parent ? nodes.get(item.parent) : null
+    ;(parent ? parent.children : roots).push(node)
+  })
+  apiRequests.value.forEach(item => {
+    const node = { key: `request:${item.id}`, name: item.name, id: item.id }
+    const parent = nodes.get(item.collection)
+    ;(parent ? parent.children : roots).push(node)
+  })
+  return roots
+})
+const scenarioCaseTree = computed(() => {
+  const roots = []
+  const nodes = new Map()
+  scenarioCaseFolders.value.forEach(item => nodes.set(item.id, {
+    key: `folder:${item.id}`, name: item.name, children: []
+  }))
+  scenarioCaseFolders.value.forEach(item => {
+    const node = nodes.get(item.id)
+    const parent = item.parent ? nodes.get(item.parent) : null
+    ;(parent ? parent.children : roots).push(node)
+  })
+  scenarioCases.value.forEach(item => {
+    const node = { key: `scenario:${item.id}`, name: item.name, id: item.id }
+    const parent = nodes.get(item.folder)
+    ;(parent ? parent.children : roots).push(node)
+  })
+  return roots
+})
+const collectLeafIds = (tree, selectedKeys, leafPrefix) => {
+  const selected = new Set(selectedKeys)
+  const ids = new Set()
+  const collectLeaves = node => {
+    if (node.key.startsWith(leafPrefix)) ids.add(node.id)
+    ;(node.children || []).forEach(collectLeaves)
+  }
+  const visit = node => {
+    if (selected.has(node.key) && node.children?.length) node.children.forEach(collectLeaves)
+    else if (selected.has(node.key) && node.key.startsWith(leafPrefix)) ids.add(node.id)
+    ;(node.children || []).forEach(child => {
+      if (!selected.has(node.key)) visit(child)
+    })
+  }
+  tree.forEach(visit)
+  return [...ids]
+}
+const selectedApiRequestKeys = computed({
+  get: () => taskForm.api_requests.map(id => `request:${id}`),
+  set: keys => { taskForm.api_requests = collectLeafIds(apiRequestTree.value, keys, 'request:') }
+})
+const selectedScenarioCaseKeys = computed({
+  get: () => taskForm.scenario_cases.map(id => `scenario:${id}`),
+  set: keys => { taskForm.scenario_cases = collectLeafIds(scenarioCaseTree.value, keys, 'scenario:') }
+})
 
 // 筛选条件
 const filters = reactive({
@@ -407,8 +475,8 @@ const taskForm = reactive({
   interval_seconds: 3600,
   execute_at: '',
   test_suite: '',
-  api_request: '',
-  scenario_case: '',
+  api_requests: [],
+  scenario_cases: [],
   environment: '',
   notify_on_success: false,
   notify_on_failure: false,
@@ -419,8 +487,8 @@ const taskForm = reactive({
 onMounted(() => {
   loadTasks()
   loadTestSuites()
-  loadApiRequests()
-  loadScenarioCases()
+  loadApiRequestTree()
+  loadScenarioCaseTree()
   loadEnvironments()
   loadUsers() // 加载用户列表
 })
@@ -455,21 +523,24 @@ const loadTestSuites = async () => {
 }
 
 // 加载API请求
-const loadApiRequests = async () => {
+const loadApiRequestTree = async () => {
   try {
-    const response = await getApiRequests()
-    apiRequests.value = response.data.results
+    const [collections, requests] = await Promise.all([getAllApiCollections(), getAllApiRequests()])
+    apiCollections.value = collections
+    apiRequests.value = requests
   } catch (error) {
-    console.error('加载API请求失败:', error)
+    console.error('加载API请求树失败:', error)
   }
 }
 
 // 加载场景用例，供场景用例类型的定时任务选择。
-const loadScenarioCases = async () => {
+const loadScenarioCaseTree = async () => {
   try {
-    scenarioCases.value = await getAllScenarioCases()
+    const [folders, scenarios] = await Promise.all([getScenarioCaseFolders(), getAllScenarioCases()])
+    scenarioCaseFolders.value = folders
+    scenarioCases.value = scenarios
   } catch (error) {
-    console.error('加载场景用例失败:', error)
+    console.error('加载场景用例树失败:', error)
   }
 }
 
@@ -500,7 +571,6 @@ const loadUsers = async () => {
 
 // 新建按钮点击
 const handleCreateClick = () => {
-  console.log('新建按钮点击')
   editingTask.value = null
   resetTaskForm()
   showCreateDialog.value = true
@@ -517,8 +587,8 @@ const resetTaskForm = () => {
     interval_seconds: 3600,
     execute_at: '',
     test_suite: '',
-    api_request: '',
-    scenario_case: '',
+    api_requests: [],
+    scenario_cases: [],
     environment: '',
     notify_on_success: false,
     notify_on_failure: false,
@@ -575,9 +645,9 @@ const submitTaskForm = async () => {
     if (taskForm.task_type === 'TEST_SUITE') {
       submitData.test_suite = taskForm.test_suite
     } else if (taskForm.task_type === 'API_REQUEST') {
-      submitData.api_request = taskForm.api_request
+      submitData.api_requests = taskForm.api_requests
     } else if (taskForm.task_type === 'SCENARIO_CASE') {
-      submitData.scenario_case = taskForm.scenario_case
+      submitData.scenario_cases = taskForm.scenario_cases
     }
 
     if (editingTask.value) {
@@ -676,19 +746,13 @@ const editTask = (task) => {
     interval_seconds: task.interval_seconds,
     execute_at: task.execute_at,
     test_suite: task.test_suite || null,
-    api_request: task.api_request || null,
-    scenario_case: task.scenario_case || null,
+    api_requests: task.api_requests || [],
+    scenario_cases: task.scenario_cases || [],
     environment: task.environment || null,
     notify_on_success: task.notify_on_success,
     notify_on_failure: task.notify_on_failure,
     notification_type: task.notification_type || 'email',
     notify_emails: task.notify_emails || []
-  })
-  console.log('编辑任务数据回显:', {
-    test_suite: task.test_suite,
-    environment: task.environment,
-    taskForm_test_suite: taskForm.test_suite,
-    taskForm_environment: taskForm.environment
   })
   showCreateDialog.value = true
 }
@@ -763,6 +827,7 @@ const deleteTask = async (task) => {
   color: #303133;
 }
 
+
 /* 与 UI 自动化对应页面保持一致的响应式标题字号。 */
 @media screen and (max-width: 1920px) {
   .page-container .page-header .page-title { font-size: 22px; }
@@ -813,13 +878,13 @@ const deleteTask = async (task) => {
   align-items: center;
   justify-content: center;
   flex-wrap: nowrap;
-  gap: 2px;
+  gap: 0;
   white-space: nowrap;
 }
 
 .row-actions :deep(.el-button) {
   margin: 0;
-  padding: 0 4px;
+  padding: 0 3px;
 }
 
 .cron-help {

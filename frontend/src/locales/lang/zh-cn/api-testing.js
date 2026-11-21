@@ -628,7 +628,7 @@ export default {
     },
     nextRunTime: '下次执行时间',
     lastRunTime: '上次执行时间',
-    runNow: '立即执行',
+    runNow: '执行',
     pause: '暂停',
     activate: '激活',
     executionLogs: '执行日志',
@@ -669,6 +669,7 @@ export default {
     errorMessage: '错误信息',
     confirmDeleteTask: '确定要删除这个定时任务吗？',
     executionHistory: '历史',
+    relatedTask: '关联定时任务',
     actions: {
       edit: '编辑',
       pause: '暂停',
@@ -679,6 +680,18 @@ export default {
       nameRequired: '请输入任务名称',
       environmentRequired: '请选择执行环境'
     }
+  },
+
+  scenarioExecutions: {
+    title: '场景用例执行记录',
+    associatedScheduledTask: '关联定时任务',
+    scenarioCase: '场景用例',
+    conclusion: '测试结论',
+    totalRequests: '请求总数',
+    passedRequests: '通过数',
+    failedRequests: '失败数',
+    executionTime: '执行时间',
+    detail: '执行详情'
   },
 
   // 请求历史
@@ -1096,6 +1109,7 @@ export default {
       webhookAdded: 'Webhook添加成功',
       webhookDeleted: 'Webhook删除成功',
       copiedToClipboard: '已复制到剪贴板',
+      formatSuccess: '响应体格式化成功',
       taskStarted: '任务已开始执行',
       requestSent: '请求发送成功',
       requestRetried: '请求重新发送成功',

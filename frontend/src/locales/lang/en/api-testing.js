@@ -617,7 +617,7 @@ export default {
     },
     nextRunTime: 'Next Run Time',
     lastRunTime: 'Last Run Time',
-    runNow: 'Run Now',
+    runNow: 'Run',
     pause: 'Pause',
     activate: 'Activate',
     executionLogs: 'Execution Logs',
@@ -658,6 +658,7 @@ export default {
     errorMessage: 'Error Message',
     confirmDeleteTask: 'Are you sure to delete this scheduled task?',
     executionHistory: 'History',
+    relatedTask: 'Scheduled Task',
     actions: {
       edit: 'Edit',
       pause: 'Pause',
@@ -668,6 +669,18 @@ export default {
       nameRequired: 'Enter a task name',
       environmentRequired: 'Select an execution environment'
     }
+  },
+
+  scenarioExecutions: {
+    title: 'Scenario Execution Records',
+    associatedScheduledTask: 'Associated Scheduled Task',
+    scenarioCase: 'Scenario Case',
+    conclusion: 'Conclusion',
+    totalRequests: 'Total Requests',
+    passedRequests: 'Passed',
+    failedRequests: 'Failed',
+    executionTime: 'Execution Time',
+    detail: 'Execution Details'
   },
 
   // Request History
@@ -1085,6 +1098,7 @@ export default {
       webhookAdded: 'Webhook added successfully',
       webhookDeleted: 'Webhook deleted successfully',
       copiedToClipboard: 'Copied to clipboard',
+      formatSuccess: 'Response formatted successfully',
       taskStarted: 'Task execution started',
       requestSent: 'Request sent successfully',
       requestRetried: 'Request retry successful',

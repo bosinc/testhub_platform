@@ -6,9 +6,12 @@
       style="width: 100%"
       @selection-change="$emit('selection-change', $event)"
     >
-      <el-table-column type="selection" width="40" align="center" />
-      <el-table-column prop="id" label="ID" width="60" align="center" />
+      <el-table-column type="selection" width="30" align="center" />
+      <el-table-column prop="id" label="ID" width="50" align="center" />
       <el-table-column prop="request.name" :label="$t('apiTesting.component.historyTable.requestName')" min-width="200" />
+      <el-table-column :label="$t('apiTesting.scheduledTask.relatedTask')" min-width="140" show-overflow-tooltip>
+        <template #default="{ row }">{{ row.scheduled_task_name || '-' }}</template>
+      </el-table-column>
       <el-table-column prop="request.method" :label="$t('apiTesting.component.historyTable.method')" width="80">
         <template #default="scope">
           <el-tag :type="getMethodType(scope.row.request.method)" size="small">
@@ -34,13 +37,13 @@
           {{ scope.row.response_time?.toFixed(0) || 0 }}ms
         </template>
       </el-table-column>
-      <el-table-column prop="environment.name" :label="$t('apiTesting.component.historyTable.environment')" width="120">
+      <el-table-column prop="environment.name" :label="$t('apiTesting.component.historyTable.environment')" width="100">
         <template #default="scope">
           {{ scope.row.environment?.name || $t('apiTesting.component.historyTable.noEnvironment') }}
         </template>
       </el-table-column>
       <el-table-column prop="executed_by.username" :label="$t('apiTesting.component.historyTable.executor')" width="120" />
-      <el-table-column prop="executed_at" :label="$t('apiTesting.component.historyTable.executionTime')" width="160">
+      <el-table-column prop="executed_at" :label="$t('apiTesting.component.historyTable.executionTime')" width="180">
         <template #default="scope">
           {{ formatDate(scope.row.executed_at) }}
         </template>
