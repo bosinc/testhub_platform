@@ -67,11 +67,7 @@
     <el-dialog v-model="showAddMemberDialog" :title="$t('project.addMember')" width="420px" destroy-on-close>
       <el-form label-width="80px">
         <el-form-item :label="$t('project.username')">
-          <el-select v-model="selectedUserId" filterable clearable style="width: 100%" :placeholder="$t('project.selectMember')">
-            <el-option v-for="user in availableUsers" :key="user.id" :label="user.username" :value="user.id">
-              <span>{{ user.username }}</span><span class="user-email">{{ user.email }}</span>
-            </el-option>
-          </el-select>
+          <UserSelect v-model="selectedUserId" :options="availableUsers" clearable style="width: 100%" :placeholder="$t('project.selectMember')" />
         </el-form-item>
       </el-form>
       <template #footer>
@@ -90,6 +86,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import api from '@/utils/api'
 import dayjs from 'dayjs'
 import { addProjectMember, removeProjectMember } from '@/api/projects'
+import UserSelect from '@/components/UserSelect.vue'
 
 const route = useRoute()
 const { t } = useI18n()

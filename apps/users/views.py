@@ -177,6 +177,8 @@ class UserListView(generics.ListCreateAPIView):
     queryset = User.objects.all().order_by('username')
     serializer_class = UserSerializer
     permission_classes = [IsAdminOrReadOnly]
+    # 用户选择器需要一次拿到完整候选集，避免分页导致下拉选项缺失。
+    pagination_class = None
 
 class UserDetailView(generics.RetrieveUpdateDestroyAPIView):
     queryset = User.objects.all().order_by('username')

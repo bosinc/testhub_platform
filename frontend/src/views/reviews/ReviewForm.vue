@@ -117,19 +117,13 @@
         </el-form-item>
 
         <el-form-item :label="$t('reviewForm.reviewers')" prop="reviewers">
-          <el-select
+          <UserSelect
             v-model="form.reviewers"
             multiple
+            :options="projectUsers"
             :placeholder="$t('reviewForm.selectReviewers')"
             @change="onReviewersChange"
-          >
-            <el-option
-              v-for="user in projectUsers"
-              :key="user.id"
-              :label="user.username"
-              :value="user.id"
-            />
-          </el-select>
+          />
         </el-form-item>
 
         <el-form-item :label="$t('reviewForm.reviewTemplate')">
@@ -162,6 +156,7 @@ import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 import TestCaseSelectorDialog from '@/components/testcases/TestCaseSelectorDialog.vue'
 import api from '@/utils/api'
+import UserSelect from '@/components/UserSelect.vue'
 
 const route = useRoute()
 const router = useRouter()

@@ -32,14 +32,7 @@
           </el-select>
         </el-form-item>
         <el-form-item :label="$t('reviewList.reviewer')">
-          <el-select v-model="filters.reviewer" :placeholder="$t('reviewList.selectReviewer')" clearable @change="fetchReviews">
-            <el-option
-              v-for="user in users"
-              :key="user.id"
-              :label="user.username"
-              :value="user.id"
-            />
-          </el-select>
+          <UserSelect v-model="filters.reviewer" :options="users" :placeholder="$t('reviewList.selectReviewer')" clearable @change="fetchReviews" />
         </el-form-item>
       </el-form>
     </div>
@@ -181,6 +174,7 @@ import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
 import api from '@/utils/api'
+import UserSelect from '@/components/UserSelect.vue'
 import dayjs from 'dayjs'
 import { useUserStore } from '@/stores/user'
 

@@ -68,9 +68,7 @@
             </el-button>
         </div>
         <div v-if="showCaseFilters" class="case-filter-row">
-          <el-select v-model="caseFilters.created_by" clearable :placeholder="t('uiAutomation.testCase.createdBy')" @change="onCaseFilterChange">
-            <el-option v-for="user in projectMembers" :key="user.id" :label="user.username" :value="user.id" />
-          </el-select>
+          <UserSelect v-model="caseFilters.created_by" :options="projectMembers" clearable :placeholder="t('uiAutomation.testCase.createdBy')" @change="onCaseFilterChange" />
           <el-select v-model="caseFilters.priority" clearable :placeholder="t('uiAutomation.testCase.priority')" @change="onCaseFilterChange">
             <el-option :label="t('uiAutomation.testCase.priorityHigh')" value="high" />
             <el-option :label="t('uiAutomation.testCase.priorityMedium')" value="medium" />
@@ -186,19 +184,18 @@
                 @mouseenter="enterCreatorEditing"
                 @click.stop="enterCreatorEditing"
               >{{ selectedTestCase.created_by_name || '-' }}</span>
-              <el-select
+              <UserSelect
                 v-else
                 ref="creatorSelectRef"
                 v-model="selectedTestCase.created_by"
+                :options="projectMembers"
                 class="detail-creator-select"
                 size="small"
                 :aria-label="t('uiAutomation.testCase.createdBy')"
                 @change="onCreatorChange"
                 @blur="exitCreatorEditing"
                 @visible-change="onCreatorDropdownVisibleChange"
-              >
-                <el-option v-for="creator in projectMembers" :key="creator.id" :label="creator.username" :value="creator.id" />
-              </el-select>
+              />
               <span v-if="selectedTestCase.updated_at">{{ t('uiAutomation.testCase.updatedAt', { time: formatTime(selectedTestCase.updated_at) }) }}</span>
               <span v-if="selectedTestCase.created_at">{{ t('uiAutomation.testCase.createdAt', { time: formatTime(selectedTestCase.created_at) }) }}</span>
             </div>
@@ -643,6 +640,7 @@ import DataFactorySelector from '@/components/DataFactorySelector.vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import api from '@/utils/api'
+import UserSelect from '@/components/UserSelect.vue'
 import { createTestCaseAutomationLink, deleteTestCaseAutomationLink } from '@/api/testcases'
 
 const { t } = useI18n()

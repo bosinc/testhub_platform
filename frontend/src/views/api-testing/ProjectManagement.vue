@@ -143,30 +143,16 @@
         </el-form-item>
 
         <el-form-item :label="$t('apiTesting.project.owner')" prop="owner">
-          <el-select v-model="form.owner" :placeholder="$t('apiTesting.project.selectOwner')" filterable>
-            <el-option
-              v-for="user in users"
-              :key="user.id"
-              :label="user.username"
-              :value="user.id"
-            />
-          </el-select>
+          <UserSelect v-model="form.owner" :options="users" :placeholder="$t('apiTesting.project.selectOwner')" />
         </el-form-item>
 
         <el-form-item :label="$t('apiTesting.project.teamMembers')" prop="member_ids">
-          <el-select
+          <UserSelect
             v-model="form.member_ids"
             multiple
+            :options="users"
             :placeholder="$t('apiTesting.project.selectMembers')"
-            filterable
-          >
-            <el-option
-              v-for="user in users"
-              :key="user.id"
-              :label="user.username"
-              :value="user.id"
-            />
-          </el-select>
+          />
         </el-form-item>
 
         <el-form-item :label="$t('apiTesting.project.startDate')" prop="start_date">
@@ -249,6 +235,7 @@ import { ElMessage, ElMessageBox, ElDescriptions, ElDescriptionsItem } from 'ele
 import { useI18n } from 'vue-i18n'
 import { Delete, Edit, Plus, Search, View } from '@element-plus/icons-vue'
 import api from '@/utils/api'
+import UserSelect from '@/components/UserSelect.vue'
 import dayjs from 'dayjs'
 
 const { t } = useI18n()

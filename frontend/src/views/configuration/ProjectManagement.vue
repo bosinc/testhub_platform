@@ -77,7 +77,7 @@
             </el-select>
           </el-form-item>
           <el-form-item :label="$t('configuration.projectCenter.dialog.projectMembers')">
-            <el-select v-model="form.member_ids" multiple filterable collapse-tags :placeholder="$t('configuration.projectCenter.dialog.membersPlaceholder')" style="width: 100%"><el-option v-for="user in users" :key="user.id" :label="user.username" :value="user.id" /></el-select>
+            <UserSelect v-model="form.member_ids" multiple :options="users" collapse-tags :placeholder="$t('configuration.projectCenter.dialog.membersPlaceholder')" style="width: 100%" />
           </el-form-item>
         </div>
         <div class="form-section module-section">
@@ -114,11 +114,7 @@
     </el-dialog>
 
     <el-dialog v-model="memberAddVisible" :title="$t('configuration.projectCenter.memberDialog.addTitle')" width="420px" append-to-body>
-      <el-select v-model="selectedMemberId" filterable clearable style="width: 100%" :placeholder="$t('project.selectMember')">
-        <el-option v-for="user in availableMembers" :key="user.id" :label="user.username" :value="user.id">
-          <span>{{ user.username }}</span><span class="user-email">{{ user.email }}</span>
-        </el-option>
-      </el-select>
+      <UserSelect v-model="selectedMemberId" :options="availableMembers" clearable style="width: 100%" :placeholder="$t('project.selectMember')" />
       <template #footer>
         <el-button @click="memberAddVisible = false">{{ $t('common.cancel') }}</el-button>
         <el-button type="primary" :loading="memberSubmitting" :disabled="!selectedMemberId" @click="submitMember">{{ $t('configuration.projectCenter.memberDialog.confirm') }}</el-button>
@@ -135,6 +131,7 @@ import { Cellphone, Connection, Document, Folder, Link, MagicStick, Monitor, Plu
 import dayjs from 'dayjs'
 import api from '@/utils/api'
 import { addProjectMember, createProjectCenter, deleteProjectCenter, getProjectCenter, getProjectMembers, removeProjectMember, updateProjectCenter } from '@/api/projects'
+import UserSelect from '@/components/UserSelect.vue'
 
 const { t, te, locale } = useI18n()
 

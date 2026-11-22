@@ -164,9 +164,7 @@
     <el-dialog v-model="actionDialogVisible" :title="actionTitle" width="520px">
       <el-form label-width="90px">
         <el-form-item v-if="currentAction === 'assign'" label="处理人">
-          <el-select v-model="actionForm.assignee_id" filterable clearable placeholder="请选择处理人" class="full-width">
-            <el-option v-for="user in users" :key="user.id" :label="user.username || user.name" :value="user.id" />
-          </el-select>
+          <UserSelect v-model="actionForm.assignee_id" :options="users" clearable placeholder="请选择处理人" class="full-width" />
         </el-form-item>
         <el-form-item label="备注">
           <el-input v-model="actionForm.comment" type="textarea" :rows="4" placeholder="请输入流转备注" />
@@ -187,6 +185,7 @@ import { ElMessage } from 'element-plus'
 import { Back, Edit, Upload } from '@element-plus/icons-vue'
 import dayjs from 'dayjs'
 import api from '@/utils/api'
+import UserSelect from '@/components/UserSelect.vue'
 import {
   addDefectComment,
   assignDefect,

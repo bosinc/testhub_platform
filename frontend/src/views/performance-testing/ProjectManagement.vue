@@ -70,9 +70,7 @@
           </el-select>
         </el-form-item>
         <el-form-item :label="t('performanceTesting.project.members')">
-          <el-select v-model="form.member_ids" multiple filterable style="width: 100%" :placeholder="t('performanceTesting.common.selectProject')">
-            <el-option v-for="u in users" :key="u.id" :label="u.username" :value="u.id" />
-          </el-select>
+          <UserSelect v-model="form.member_ids" multiple :options="users" style="width: 100%" :placeholder="t('performanceTesting.common.selectProject')" />
         </el-form-item>
       </el-form>
       <template #footer>
@@ -90,6 +88,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Search } from '@element-plus/icons-vue'
 import { getPerfProjects, createPerfProject, updatePerfProject, deletePerfProject } from '@/api/performance-testing'
 import { getUsers } from '@/api/api-testing'
+import UserSelect from '@/components/UserSelect.vue'
 import { formatTime } from './shared'
 
 const { t } = useI18n()

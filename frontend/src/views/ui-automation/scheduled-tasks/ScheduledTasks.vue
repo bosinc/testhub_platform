@@ -313,19 +313,7 @@
         </el-form-item>
 
         <el-form-item v-if="(taskForm.notify_on_success || taskForm.notify_on_failure) && (taskForm.notification_type === 'email' || taskForm.notification_type === 'both')" :label="$t('uiAutomation.scheduledTask.notifyEmails')">
-          <el-select
-            v-model="taskForm.notify_emails"
-            multiple
-            filterable
-            :placeholder="$t('uiAutomation.scheduledTask.selectNotifyEmails')"
-          >
-            <el-option
-              v-for="user in users"
-              :key="user.id"
-              :label="user.display_name"
-              :value="user.email"
-            />
-          </el-select>
+          <UserSelect v-model="taskForm.notify_emails" multiple :options="users" value-key="email" label-key="display_name" :placeholder="$t('uiAutomation.scheduledTask.selectNotifyEmails')" />
         </el-form-item>
       </el-form>
 
@@ -343,6 +331,7 @@
 import { ref, reactive, computed, onMounted, onBeforeUnmount } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Edit, VideoPlay, Clock, VideoPause, CaretRight, Delete } from '@element-plus/icons-vue'
+import UserSelect from '@/components/UserSelect.vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { fetchAllPages } from '@/utils/api'

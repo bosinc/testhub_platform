@@ -85,9 +85,7 @@
           </el-col>
           <el-col :xs="24" :md="8">
             <el-form-item label="处理人">
-              <el-select v-model="form.assignee_id" filterable clearable placeholder="请选择处理人" class="full-width">
-                <el-option v-for="user in users" :key="user.id" :label="user.username || user.name" :value="user.id" />
-              </el-select>
+              <UserSelect v-model="form.assignee_id" :options="users" clearable placeholder="请选择处理人" class="full-width" />
             </el-form-item>
           </el-col>
         </el-row>
@@ -175,6 +173,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Back, Upload } from '@element-plus/icons-vue'
 import api from '@/utils/api'
+import UserSelect from '@/components/UserSelect.vue'
 import { createDefect, getDefect, updateDefect, uploadDefectAttachment } from '@/api/defects'
 import {
   defectTypeOptions,

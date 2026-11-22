@@ -176,9 +176,7 @@
           </div>
         </el-form-item>
         <el-form-item :label="$t('execution.assignees')">
-          <el-select v-model="newPlanForm.assignees" multiple :placeholder="$t('execution.selectAssignees')" style="width: 100%">
-            <el-option v-for="item in users" :key="item.id" :label="item.username" :value="item.id"></el-option>
-          </el-select>
+          <UserSelect v-model="newPlanForm.assignees" multiple :options="users" :placeholder="$t('execution.selectAssignees')" style="width: 100%" />
         </el-form-item>
       </el-form>
       <template #footer>
@@ -241,9 +239,7 @@
           </div>
         </el-form-item>
         <el-form-item :label="$t('execution.assignees')">
-          <el-select v-model="editPlanForm.assignees" multiple :placeholder="$t('execution.selectAssignees')" style="width: 100%">
-            <el-option v-for="item in users" :key="item.id" :label="item.username" :value="item.id"></el-option>
-          </el-select>
+          <UserSelect v-model="editPlanForm.assignees" multiple :options="users" :placeholder="$t('execution.selectAssignees')" style="width: 100%" />
         </el-form-item>
         <el-form-item :label="$t('execution.status')">
           <el-switch
@@ -277,6 +273,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Delete } from '@element-plus/icons-vue'
 import TestCaseSelectorDialog from '@/components/testcases/TestCaseSelectorDialog.vue'
 import api from '@/utils/api'
+import UserSelect from '@/components/UserSelect.vue'
 
 const { t } = useI18n()
 

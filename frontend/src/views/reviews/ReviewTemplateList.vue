@@ -174,18 +174,12 @@
         </el-form-item>
 
         <el-form-item :label="$t('reviewTemplate.defaultReviewers')">
-          <el-select
+          <UserSelect
             v-model="templateForm.default_reviewers"
             multiple
+            :options="projectUsers"
             :placeholder="$t('reviewTemplate.selectDefaultReviewers')"
-          >
-            <el-option
-              v-for="user in projectUsers"
-              :key="user.id"
-              :label="user.username"
-              :value="user.id"
-            />
-          </el-select>
+          />
         </el-form-item>
       </el-form>
 
@@ -204,6 +198,7 @@ import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 import { Plus, Delete } from '@element-plus/icons-vue'
 import api from '@/utils/api'
+import UserSelect from '@/components/UserSelect.vue'
 import dayjs from 'dayjs'
 
 const router = useRouter()

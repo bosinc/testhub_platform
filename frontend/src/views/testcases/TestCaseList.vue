@@ -140,21 +140,14 @@
             <el-option :label="$t('common.yes')" value="true" />
             <el-option :label="$t('common.no')" value="false" />
           </el-select>
-          <el-select
+          <UserSelect
             v-model="maintainerFilter"
+            :options="maintainers"
             class="filter-select"
             :placeholder="$t('testcase.maintainerFilter')"
             clearable
-            filterable
             @change="handleFilter"
-          >
-            <el-option
-              v-for="maintainer in maintainers"
-              :key="maintainer.id"
-              :label="maintainer.email ? `${maintainer.username} (${maintainer.email})` : maintainer.username"
-              :value="maintainer.id"
-            />
-          </el-select>
+          />
           <el-tooltip :content="$t('testcase.dateRangeTip')" placement="top" :show-after="400">
             <!-- Tooltip 需要原生单根节点，避免直接包裹 ElDatePicker 时的运行时指令警告。 -->
             <span class="filter-date-wrapper">
@@ -394,6 +387,7 @@ import ResizableSplitPane from '@/components/ResizableSplitPane.vue'
 import AutomationCaseLinks from '@/components/testcases/AutomationCaseLinks.vue'
 import TestCaseFormDialog from '@/components/testcases/TestCaseFormDialog.vue'
 import api from '@/utils/api'
+import UserSelect from '@/components/UserSelect.vue'
 import { deleteTestCase as deleteTestCaseApi, bulkDeleteTestCases as bulkDeleteTestCasesApi, deleteTestCaseModule as deleteTestCaseModuleApi } from '@/api/testcases'
 import dayjs from 'dayjs'
 import * as XLSX from 'xlsx'

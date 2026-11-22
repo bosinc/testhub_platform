@@ -324,19 +324,13 @@
         <p class="batch-dialog-hint">
           {{ $t('execution.batchSelectedHint', { count: batchSelection.length }) }}
         </p>
-        <el-select
+        <UserSelect
           v-model="assignUserId"
-          filterable
           clearable
+          :options="memberOptions"
           :loading="membersLoading"
           :placeholder="$t('execution.selectExecutor')"
-          style="width: 100%">
-          <el-option
-            v-for="member in memberOptions"
-            :key="member.id"
-            :label="member.username"
-            :value="member.id" />
-        </el-select>
+          style="width: 100%" />
       </div>
       <template #footer>
         <el-button @click="assignDialogVisible = false">{{ $t('common.cancel') }}</el-button>
@@ -501,6 +495,7 @@ import TestCaseSelectorDialog from '@/components/testcases/TestCaseSelectorDialo
 import TestCaseFormDialog from '@/components/testcases/TestCaseFormDialog.vue'
 import { useUserStore } from '@/stores/user'
 import api from '@/utils/api'
+import UserSelect from '@/components/UserSelect.vue'
 
 const { t } = useI18n()
 const userStore = useUserStore()

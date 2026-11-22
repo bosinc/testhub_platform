@@ -26,19 +26,12 @@
           <el-row :gutter="20" class="tc-identity">
             <el-col :span="12">
               <el-form-item :label="$t('testcase.maintainer')" prop="maintainer_id">
-                <el-select
+                <UserSelect
                   v-model="form.maintainer_id"
-                  filterable
                   clearable
+                  :options="projectMembers"
                   :placeholder="$t('testcase.maintainer')"
-                >
-                  <el-option
-                    v-for="member in projectMembers"
-                    :key="member.id"
-                    :label="member.email ? `${member.username} (${member.email})` : member.username"
-                    :value="member.id"
-                  />
-                </el-select>
+                />
               </el-form-item>
             </el-col>
             <el-col :span="12">
@@ -197,6 +190,7 @@ import api from '@/utils/api'
 import RichTextEditor from '@/components/RichTextEditor.vue'
 import TestCaseStepEditor from '@/components/testcases/TestCaseStepEditor.vue'
 import AutomationCaseLinks from '@/components/testcases/AutomationCaseLinks.vue'
+import UserSelect from '@/components/UserSelect.vue'
 import { getPreferredProjectId, rememberSelectedProject } from '@/utils/projectSelection'
 import { normalizeSteps } from '@/utils/testcaseSteps'
 import { useUserStore } from '@/stores/user'

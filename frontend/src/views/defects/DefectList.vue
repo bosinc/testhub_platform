@@ -59,9 +59,7 @@
             </el-select>
           </el-col>
           <el-col :xs="12" :sm="6" :md="4">
-            <el-select v-model="filters.assignee" placeholder="处理人" filterable clearable>
-              <el-option v-for="user in users" :key="user.id" :label="user.username || user.name" :value="user.id" />
-            </el-select>
+            <UserSelect v-model="filters.assignee" :options="users" placeholder="处理人" clearable />
           </el-col>
           <el-col :xs="12" :sm="6" :md="4">
             <el-button type="primary" class="full-width" @click="handleSearch">查询</el-button>
@@ -78,17 +76,15 @@
           <el-option label="批量关闭" value="close" />
           <el-option label="重新打开" value="reopen" />
         </el-select>
-        <el-select
+        <UserSelect
           v-if="batchAction === 'assign'"
           v-model="batchPayload.assignee_id"
           size="small"
-          filterable
           clearable
+          :options="users"
           placeholder="处理人"
           class="batch-input"
-        >
-          <el-option v-for="user in users" :key="user.id" :label="user.username || user.name" :value="user.id" />
-        </el-select>
+        />
         <el-select
           v-if="batchAction === 'set_priority'"
           v-model="batchPayload.priority"
@@ -176,6 +172,7 @@ import { ElMessage } from 'element-plus'
 import { Download, Plus, Search } from '@element-plus/icons-vue'
 import dayjs from 'dayjs'
 import api from '@/utils/api'
+import UserSelect from '@/components/UserSelect.vue'
 import { bulkActionDefects, exportDefects, getDefects } from '@/api/defects'
 import {
   getOptionLabel,
