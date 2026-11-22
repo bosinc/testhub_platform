@@ -74,9 +74,9 @@ class TestRun(models.Model):
             'passed': counts.get('passed', 0),
             'failed': counts.get('failed', 0),
             'blocked': counts.get('blocked', 0),
-            'retest': counts.get('retest', 0),
+            'skipped': counts.get('skipped', 0),
         }
-        stats['tested'] = stats['passed'] + stats['failed'] + stats['blocked'] + stats['retest']
+        stats['tested'] = stats['passed'] + stats['failed'] + stats['blocked'] + stats['skipped']
         stats['progress'] = round((stats['tested'] / total) * 100, 1) if total > 0 else 0
         return stats
 
@@ -87,7 +87,7 @@ class TestRunCase(models.Model):
         ('passed', '通过'),
         ('failed', '失败'),
         ('blocked', '阻塞'),
-        ('retest', '重测'),
+        ('skipped', '跳过'),
     ]
     
     PRIORITY_CHOICES = [

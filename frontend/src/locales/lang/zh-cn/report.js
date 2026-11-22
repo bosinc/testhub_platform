@@ -34,7 +34,7 @@ export default {
   passed: '通过',
   failed: '失败',
   blocked: '阻塞',
-  retest: '重测',
+  skipped: '跳过',
   untested: '未测',
   executionStatus: '执行状态',
 

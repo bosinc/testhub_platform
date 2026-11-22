@@ -61,8 +61,8 @@
               <span class="legend legend--passed">{{ $t('execution.passed') }} {{ run.progress.passed }}</span>
               <span class="legend legend--failed">{{ $t('execution.failed') }} {{ run.progress.failed }}</span>
               <span class="legend legend--blocked">{{ $t('execution.blocked') }} {{ run.progress.blocked }}</span>
-              <span v-if="run.progress.retest" class="legend legend--retest">
-                {{ $t('execution.retest') }} {{ run.progress.retest }}
+              <span v-if="run.progress.skipped" class="legend legend--skipped">
+                {{ $t('execution.skipped') }} {{ run.progress.skipped }}
               </span>
               <span class="legend legend--untested">{{ $t('execution.untested') }} {{ run.progress.untested }}</span>
             </div>
@@ -89,7 +89,19 @@
             <template #first>
               <aside class="module-sidebar">
                 <div class="sidebar-header">
-                  <span class="sidebar-title">{{ $t('execution.moduleTree') }}</span>
+                  <div class="sidebar-title-row">
+                    <span class="sidebar-title">{{ $t('execution.moduleTree') }}</span>
+                    <div class="automation-summary">
+                      <span class="automation-summary-item">
+                        <el-icon class="automation-summary-icon-ui"><Monitor /></el-icon>
+                        {{ $t('testcase.uiAutomationSummary', { linked: automationSummary(run).ui_linked, total: automationSummary(run).automatable_total, rate: automationSummary(run).ui_rate }) }}
+                      </span>
+                      <span class="automation-summary-item">
+                        <el-icon class="automation-summary-icon-api"><Link /></el-icon>
+                        {{ $t('testcase.apiAutomationSummary', { linked: automationSummary(run).api_linked, total: automationSummary(run).automatable_total, rate: automationSummary(run).api_rate }) }}
+                      </span>
+                    </div>
+                  </div>
                   <el-input
                     v-model="ensureUi(run).moduleSearch"
                     size="small"
@@ -197,17 +209,17 @@
                       <el-option :label="$t('execution.passed')" value="passed" />
                       <el-option :label="$t('execution.failed')" value="failed" />
                       <el-option :label="$t('execution.blocked')" value="blocked" />
-                      <el-option :label="$t('execution.retest')" value="retest" />
+                      <el-option :label="$t('execution.skipped')" value="skipped" />
                       <el-option :label="$t('execution.untested')" value="untested" />
                     </el-select>
                     <el-select
-                      v-model="ensureUi(run).sort"
-                      class="tool-select tool-select--sort"
-                      size="small">
-                      <el-option :label="$t('execution.sortId')" value="id" />
-                      <el-option :label="$t('execution.sortPriority')" value="priority" />
-                      <el-option :label="$t('execution.sortStatus')" value="status" />
-                      <el-option :label="$t('execution.sortExecutedAt')" value="executed_at" />
+                      v-model="ensureUi(run).automatability"
+                      class="tool-select"
+                      size="small"
+                      clearable
+                      :placeholder="$t('execution.filterAutomatability')">
+                      <el-option :label="$t('common.yes')" value="true" />
+                      <el-option :label="$t('common.no')" value="false" />
                     </el-select>
                   </div>
                 </div>
@@ -221,13 +233,14 @@
                     class="execution-table"
                     :row-class-name="rowClassName"
                     @selection-change="selection => handleSelectionChange(run, selection)"
+                    @sort-change="sort => handleTableSort(run, sort)"
                     @row-click="(row, column, event) => openCaseExecution(run, row, column, event)"
                     :row-key="(row) => row.id">
                     <el-table-column type="selection" width="30" />
-                    <el-table-column :label="$t('execution.testcaseId')" width="60">
+                    <el-table-column prop="testcase_id" :label="$t('execution.testcaseId')" width="60" sortable="custom">
                       <template #default="scope">{{ scope.row.testcase?.id ?? '-' }}</template>
                     </el-table-column>
-                    <el-table-column :label="$t('execution.testcaseTitle')" min-width="180" show-overflow-tooltip>
+                    <el-table-column :label="$t('execution.testcaseTitle')" min-width="200" show-overflow-tooltip>
                       <template #default="scope">
                         {{ scope.row.testcase?.title || scope.row.testcase || '-' }}
                       </template>
@@ -235,27 +248,45 @@
                     <el-table-column :label="$t('execution.maintainer')" width="100">
                       <template #default="scope">{{ scope.row.testcase?.author?.username || '-' }}</template>
                     </el-table-column>
-                    <el-table-column :label="$t('execution.testcasePriority')" width="85">
+                    <el-table-column prop="testcase_priority" :label="$t('execution.testcasePriority')" width="80" sortable="custom">
                       <template #default="scope">
                         <span class="priority-tag" :class="'priority-tag--' + (scope.row.testcase?.priority || 'medium')">
                           {{ getPriorityText(scope.row.testcase?.priority) }}
                         </span>
                       </template>
                     </el-table-column>
-                    <el-table-column :label="$t('execution.testcaseType')" width="90">
-                      <template #default="scope">{{ getTestTypeText(scope.row.testcase?.test_type) }}</template>
+                    <el-table-column :label="$t('execution.automatability')" width="90">
+                      <template #default="scope">
+                        <el-tag :type="scope.row.testcase?.automatability ? 'success' : 'info'" size="small">
+                          {{ scope.row.testcase?.automatability ? $t('common.yes') : $t('common.no') }}
+                        </el-tag>
+                      </template>
+                    </el-table-column>
+                    <el-table-column :label="$t('execution.automation')" width="80">
+                      <template #default="scope">
+                        <span v-if="scope.row.testcase?.automatability" class="execution-automation-links">
+                          <el-icon
+                            v-for="link in (scope.row.testcase?.automation_links || [])"
+                            :key="link.id"
+                            :class="link.type === 'ui_test_case' ? 'automation-type-icon-ui' : 'automation-type-icon-api'">
+                            <Monitor v-if="link.type === 'ui_test_case'" />
+                            <Link v-else />
+                          </el-icon>
+                        </span>
+                        <span v-else class="automation-disabled-mark" aria-label="不可自动化">×</span>
+                      </template>
                     </el-table-column>
                     <el-table-column :label="$t('execution.executedBy')" width="100">
                       <template #default="scope">{{ scope.row.executed_by?.username || '-' }}</template>
                     </el-table-column>
-                    <el-table-column :label="$t('execution.executionResult')" width="90">
+                    <el-table-column prop="status" :label="$t('execution.executionResult')" width="90" sortable="custom">
                       <template #default="scope">
                         <span class="case-status" :class="'case-status--' + scope.row.status">
                           <span class="case-status__dot"></span>{{ getStatusText(scope.row.status) }}
                         </span>
                       </template>
                     </el-table-column>
-                    <el-table-column :label="$t('execution.lastExecutedAt')" width="140">
+                    <el-table-column prop="executed_at" :label="$t('execution.lastExecutedAt')" width="140" sortable="custom">
                       <template #default="scope">{{ formatDate(scope.row.executed_at) }}</template>
                     </el-table-column>
                     <template #empty>
@@ -379,9 +410,6 @@
         <div class="case-dialog-header">
           <div class="case-dialog-heading">
             <span class="case-dialog-title">{{ $t('execution.caseExecutionDetail') }}</span>
-            <span v-if="currentCase" class="case-dialog-current-title">
-              {{ currentCase.testcase?.title || currentCase.testcase }}
-            </span>
           </div>
           <div v-if="currentCase" class="case-dialog-toolbar">
             <el-button
@@ -432,7 +460,7 @@
             <el-radio-button value="passed" class="result-option--passed">{{ $t('execution.passed') }}</el-radio-button>
             <el-radio-button value="failed" class="result-option--failed">{{ $t('execution.failed') }}</el-radio-button>
             <el-radio-button value="blocked" class="result-option--blocked">{{ $t('execution.blocked') }}</el-radio-button>
-            <el-radio-button value="retest" class="result-option--retest">{{ $t('execution.retest') }}</el-radio-button>
+            <el-radio-button value="skipped" class="result-option--skipped">{{ $t('execution.skipped') }}</el-radio-button>
           </el-radio-group>
           <div class="result-field">
             <label>{{ $t('execution.actualResult') }}</label>
@@ -465,7 +493,7 @@ import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
-  Clock, Stamp, Folder, Files, FolderOpened, Search, Link, ArrowUp, ArrowDown, EditPen
+  Clock, Stamp, Folder, Files, FolderOpened, Search, Link, Monitor, ArrowUp, ArrowDown, EditPen
 } from '@element-plus/icons-vue'
 import ResizableSplitPane from '@/components/ResizableSplitPane.vue'
 import TestCaseDetailPanel from '@/components/testcases/TestCaseDetailPanel.vue'
@@ -490,7 +518,7 @@ const isDeleting = ref(false)
 const loaded = ref(false)
 const sidebarWidth = ref(260)
 
-// 每个 run 独立的模块树 UI 状态：{ module, moduleSearch, search, status, sort }
+// 每个 run 独立的模块树 UI 状态：{ module, moduleSearch, search, status, executor, automatability, sort }
 const uiState = reactive({})
 // 每个 run 的表格选中项：runId -> runCase[]
 const selectionByRun = reactive({})
@@ -512,7 +540,7 @@ const statusOptions = computed(() => [
   { value: 'passed', label: t('execution.passed') },
   { value: 'failed', label: t('execution.failed') },
   { value: 'blocked', label: t('execution.blocked') },
-  { value: 'retest', label: t('execution.retest') },
+  { value: 'skipped', label: t('execution.skipped') },
   { value: 'untested', label: t('execution.untested') }
 ])
 const batchSelection = computed(() => (batchRun.value ? (selectionByRun[batchRun.value.id] || []) : []))
@@ -551,17 +579,17 @@ const currentRun = computed(() => dialogCases.value[currentCaseIndex.value]?.run
 
 // 页面头部的整体状态：聚合所有 run 的进度
 const overallProgress = computed(() => {
-  const agg = { total: 0, passed: 0, failed: 0, blocked: 0, retest: 0, untested: 0, tested: 0, progress: 0 }
+  const agg = { total: 0, passed: 0, failed: 0, blocked: 0, skipped: 0, untested: 0, tested: 0, progress: 0 }
   for (const run of testPlan.value.test_runs || []) {
     const p = run.progress || {}
     agg.total += p.total || 0
     agg.passed += p.passed || 0
     agg.failed += p.failed || 0
     agg.blocked += p.blocked || 0
-    agg.retest += p.retest || 0
+    agg.skipped += p.skipped || 0
     agg.untested += p.untested || 0
   }
-  agg.tested = agg.passed + agg.failed + agg.blocked + agg.retest
+  agg.tested = agg.passed + agg.failed + agg.blocked + agg.skipped
   agg.progress = agg.total > 0 ? Math.round((agg.tested / agg.total) * 1000) / 10 : 0
   return agg
 })
@@ -569,17 +597,17 @@ const overallProgress = computed(() => {
 // 通过率：已执行用例中通过的比例
 const passRate = (progress) => {
   const tested = (progress?.passed || 0) + (progress?.failed || 0) +
-    (progress?.blocked || 0) + (progress?.retest || 0)
+    (progress?.blocked || 0) + (progress?.skipped || 0)
   if (!tested) return 0
   return Math.round(((progress.passed || 0) / tested) * 1000) / 10
 }
 
-// 进度条分段：按执行结果占比着色（通过/失败/阻塞/重测/未测试）
+// 进度条分段：按执行结果占比着色（通过/失败/阻塞/跳过/未测试）
 const PROGRESS_SEGMENTS = [
   { key: 'passed', class: 'seg--passed' },
   { key: 'failed', class: 'seg--failed' },
   { key: 'blocked', class: 'seg--blocked' },
-  { key: 'retest', class: 'seg--retest' },
+  { key: 'skipped', class: 'seg--skipped' },
   { key: 'untested', class: 'seg--untested' }
 ]
 
@@ -602,14 +630,14 @@ const progressTooltip = (progress) => {
 const initRunUi = () => {
   for (const run of testPlan.value.test_runs || []) {
     if (!uiState[run.id]) {
-      uiState[run.id] = { module: '', moduleSearch: '', search: '', status: '', executor: '', sort: 'id' }
+      uiState[run.id] = { module: '', moduleSearch: '', search: '', status: '', executor: '', automatability: '', sort: 'id', sortOrder: 'ascending' }
     }
   }
 }
 
 const ensureUi = (run) => {
   if (!uiState[run.id]) {
-    uiState[run.id] = { module: '', moduleSearch: '', search: '', status: '', executor: '', sort: 'id' }
+    uiState[run.id] = { module: '', moduleSearch: '', search: '', status: '', executor: '', automatability: '', sort: 'id', sortOrder: 'ascending' }
   }
   return uiState[run.id]
 }
@@ -729,29 +757,42 @@ const confirmLinkCases = async (testcaseIds) => {
 }
 
 const PRIORITY_WEIGHT = { critical: 0, high: 1, medium: 2, low: 3 }
-const STATUS_WEIGHT = { failed: 0, blocked: 1, retest: 2, untested: 3, passed: 4 }
+const STATUS_WEIGHT = { failed: 0, blocked: 1, skipped: 2, untested: 3, passed: 4 }
 
-const sortRunCases = (list, sort) => {
+const sortRunCases = (list, sort, sortOrder = 'ascending') => {
   const sorted = [...list]
+  const direction = sortOrder === 'descending' ? -1 : 1
   if (sort === 'priority') {
     sorted.sort((left, right) =>
-      (PRIORITY_WEIGHT[left.testcase?.priority] ?? 9) - (PRIORITY_WEIGHT[right.testcase?.priority] ?? 9) ||
+      direction * ((PRIORITY_WEIGHT[left.testcase?.priority] ?? 9) - (PRIORITY_WEIGHT[right.testcase?.priority] ?? 9)) ||
       (left.testcase?.id || 0) - (right.testcase?.id || 0)
     )
   } else if (sort === 'status') {
     sorted.sort((left, right) =>
-      (STATUS_WEIGHT[left.status] ?? 9) - (STATUS_WEIGHT[right.status] ?? 9) ||
+      direction * ((STATUS_WEIGHT[left.status] ?? 9) - (STATUS_WEIGHT[right.status] ?? 9)) ||
       (left.testcase?.id || 0) - (right.testcase?.id || 0)
     )
   } else if (sort === 'executed_at') {
     sorted.sort((left, right) =>
-      new Date(right.executed_at || 0) - new Date(left.executed_at || 0) ||
+      direction * (new Date(left.executed_at || 0) - new Date(right.executed_at || 0)) ||
       (left.testcase?.id || 0) - (right.testcase?.id || 0)
     )
   } else {
-    sorted.sort((left, right) => (left.testcase?.id || 0) - (right.testcase?.id || 0))
+    sorted.sort((left, right) => direction * ((left.testcase?.id || 0) - (right.testcase?.id || 0)))
   }
   return sorted
+}
+
+const handleTableSort = (run, { prop, order }) => {
+  const sortMap = {
+    testcase_id: 'id',
+    testcase_priority: 'priority',
+    status: 'status',
+    executed_at: 'executed_at'
+  }
+  const ui = ensureUi(run)
+  ui.sort = sortMap[prop] || 'id'
+  ui.sortOrder = order || 'ascending'
 }
 
 // 模块 + 搜索 + 执行结果 / 执行人筛选 + 排序后的表格数据
@@ -767,7 +808,11 @@ const computeVisibleCases = (run) => {
   }
   if (ui.status) list = list.filter(runCase => runCase.status === ui.status)
   if (ui.executor) list = list.filter(runCase => runCase.executed_by?.username === ui.executor)
-  return sortRunCases(list, ui.sort)
+  if (ui.automatability) {
+    const automatability = ui.automatability === 'true'
+    list = list.filter(runCase => Boolean(runCase.testcase?.automatability) === automatability)
+  }
+  return sortRunCases(list, ui.sort, ui.sortOrder)
 }
 
 // 执行人筛选选项：取当前 run 内出现过的执行人
@@ -788,10 +833,29 @@ const visibleCasesMap = computed(() => {
   return map
 })
 
-// 当前 run 是否处于筛选状态（模块 / 关键字 / 执行结果 / 执行人）
+// 当前运行及筛选结果中的自动化统计，分母排除不可自动化用例。
+const automationSummary = (run) => {
+  const cases = visibleCasesMap.value[run.id] || []
+  const automatableTotal = cases.filter(runCase => runCase.testcase?.automatability).length
+  const linkedCount = type => cases.filter(runCase =>
+    (runCase.testcase?.automation_links || []).some(link => link.type === type)
+  ).length
+  const uiLinked = linkedCount('ui_test_case')
+  const apiLinked = linkedCount('api_scenario_case')
+  const rate = linked => automatableTotal ? Math.round(linked / automatableTotal * 1000) / 10 : 0
+  return {
+    automatable_total: automatableTotal,
+    ui_linked: uiLinked,
+    api_linked: apiLinked,
+    ui_rate: rate(uiLinked),
+    api_rate: rate(apiLinked)
+  }
+}
+
+// 当前 run 是否处于筛选状态（模块 / 关键字 / 执行结果 / 执行人 / 可自动化）
 const hasActiveListFilter = (run) => {
   const ui = ensureUi(run)
-  return Boolean(ui.module || (ui.search || '').trim() || ui.status || ui.executor)
+  return Boolean(ui.module || (ui.search || '').trim() || ui.status || ui.executor || ui.automatability)
 }
 
 // 弹窗导航的数据源：有筛选时只在该 run 筛选后的用例里前后切换，否则保持全计划用例
@@ -887,11 +951,11 @@ const recomputeProgress = (run) => {
   p.passed = 0
   p.failed = 0
   p.blocked = 0
-  p.retest = 0
+  p.skipped = 0
   for (const c of cases) {
     if (c.status && p[c.status] !== undefined) p[c.status]++
   }
-  p.tested = p.passed + p.failed + p.blocked + p.retest
+  p.tested = p.passed + p.failed + p.blocked + p.skipped
   p.progress = p.total > 0 ? Math.round((p.tested / p.total) * 100 * 10) / 10 : 0
 }
 
@@ -1246,7 +1310,7 @@ const getStatusType = (status) => {
     'passed': 'success',
     'failed': 'danger',
     'blocked': 'warning',
-    'retest': 'primary'
+    'skipped': 'info'
   }
   return typeMap[status] || 'info'
 }
@@ -1257,7 +1321,7 @@ const getStatusText = (status) => {
     'passed': t('execution.passed'),
     'failed': t('execution.failed'),
     'blocked': t('execution.blocked'),
-    'retest': t('execution.retest')
+    'skipped': t('execution.skipped')
   }
   return textMap[status] || status
 }
@@ -1270,18 +1334,6 @@ const getPriorityText = (priority) => {
     critical: t('execution.priorityCritical')
   }
   return textMap[priority] || '-'
-}
-
-const getTestTypeText = (type) => {
-  const textMap = {
-    functional: t('execution.typeFunctional'),
-    integration: t('execution.typeIntegration'),
-    api: t('execution.typeApi'),
-    ui: t('execution.typeUi'),
-    performance: t('execution.typePerformance'),
-    security: t('execution.typeSecurity')
-  }
-  return textMap[type] || '-'
 }
 
 onMounted(() => {
@@ -1481,7 +1533,7 @@ onMounted(() => {
 .run-metrics__segment.seg--passed { background: var(--el-color-success); }
 .run-metrics__segment.seg--failed { background: var(--el-color-danger); }
 .run-metrics__segment.seg--blocked { background: var(--el-color-warning); }
-.run-metrics__segment.seg--retest { background: var(--el-color-primary); }
+.run-metrics__segment.seg--skipped { background: var(--el-text-color-disabled); }
 .run-metrics__segment.seg--untested { background: var(--el-text-color-disabled); }
 
 .run-metrics__legend {
@@ -1510,7 +1562,7 @@ onMounted(() => {
 .legend--passed::before { background: var(--el-color-success); }
 .legend--failed::before { background: var(--el-color-danger); }
 .legend--blocked::before { background: var(--el-color-warning); }
-.legend--retest::before { background: var(--el-color-primary); }
+.legend--skipped::before { background: var(--el-text-color-disabled); }
 .legend--untested::before { background: var(--el-text-color-disabled); }
 
 .run-metrics__action {
@@ -1694,9 +1746,36 @@ onMounted(() => {
   gap: 8px;
 }
 
+.automation-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #606266;
+}
+
+.sidebar-title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.automation-summary-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.automation-summary-icon-ui {
+  color: #e6a23c;
+}
+
+.automation-summary-icon-api {
+  color: #67c23a;
+}
+
 .tool-search { width: 168px; }
-.tool-select { width: 108px; }
-.tool-select--sort { width: 124px; }
+.tool-select { width: 100px; }
 
 .run-main__table {
   flex: 1;
@@ -1738,6 +1817,11 @@ onMounted(() => {
   background: var(--el-bg-color) !important;
 }
 
+/* 缩窄排序箭头占位，避免 Element Plus 默认 24px 宽度挤压表头文字。 */
+:deep(.execution-table .el-table__header .caret-wrapper) {
+  width: 14px;
+}
+
 :deep(.execution-table .el-table__body td) {
   font-size: 13px;
   color: var(--el-text-color-primary);
@@ -1768,6 +1852,26 @@ onMounted(() => {
   border-radius: 3px;
   background: var(--el-color-info-light-9);
   color: var(--el-text-color-secondary);
+}
+
+.execution-automation-links {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.automation-type-icon-ui {
+  color: #e6a23c;
+}
+
+.automation-type-icon-api {
+  color: #67c23a;
+}
+
+.automation-disabled-mark {
+  color: var(--el-text-color-secondary);
+  font-size: 18px;
+  line-height: 1;
 }
 
 .priority-tag--critical,
@@ -1808,8 +1912,8 @@ onMounted(() => {
 .case-status--failed .case-status__dot { background: var(--el-color-danger); }
 .case-status--blocked { color: var(--el-color-warning); }
 .case-status--blocked .case-status__dot { background: var(--el-color-warning); }
-.case-status--retest { color: var(--el-color-primary); }
-.case-status--retest .case-status__dot { background: var(--el-color-primary); }
+.case-status--skipped { color: var(--el-text-color-disabled); }
+.case-status--skipped .case-status__dot { background: var(--el-text-color-disabled); }
 
 /* —— 空态 —— */
 .empty-state {
@@ -1852,16 +1956,8 @@ onMounted(() => {
 
 .case-dialog-title {
   flex: 0 0 auto;
+  font-size: 18px;
   font-weight: 600;
-}
-
-.case-dialog-current-title {
-  max-width: min(34vw, 460px);
-  overflow: hidden;
-  color: var(--el-text-color-secondary);
-  font-size: 13px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .case-dialog-toolbar {
@@ -1993,15 +2089,15 @@ onMounted(() => {
   border-color: var(--el-color-warning);
 }
 
-:deep(.result-option--retest .el-radio-button__inner) {
-  color: var(--el-color-primary);
-  border-color: var(--el-color-primary);
+:deep(.result-option--skipped .el-radio-button__inner) {
+  color: var(--el-text-color-disabled);
+  border-color: var(--el-text-color-disabled);
 }
 
-:deep(.result-option--retest .el-radio-button__original-radio:checked + .el-radio-button__inner) {
+:deep(.result-option--skipped .el-radio-button__original-radio:checked + .el-radio-button__inner) {
   color: var(--el-color-white);
-  background: var(--el-color-primary);
-  border-color: var(--el-color-primary);
+  background: var(--el-text-color-disabled);
+  border-color: var(--el-text-color-disabled);
 }
 
 .result-field {
@@ -2079,10 +2175,6 @@ onMounted(() => {
 
   .case-dialog-header {
     gap: 12px;
-  }
-
-  .case-dialog-current-title {
-    max-width: 80vw;
   }
 
   .case-dialog-toolbar {

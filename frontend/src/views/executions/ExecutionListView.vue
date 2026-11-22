@@ -31,6 +31,13 @@
             <el-option :label="$t('execution.closed')" :value="false"></el-option>
           </el-select>
         </el-form-item>
+        <el-form-item :label="$t('execution.executionStatus')">
+          <el-select v-model="filters.execution_status" :placeholder="$t('execution.selectExecutionStatus')" clearable style="width: 140px">
+            <el-option :label="$t('execution.notStarted')" value="not_started"></el-option>
+            <el-option :label="$t('execution.inProgress')" value="in_progress"></el-option>
+            <el-option :label="$t('execution.completed')" value="completed"></el-option>
+          </el-select>
+        </el-form-item>
         <el-form-item>
           <el-button type="primary" @click="applyFilters">{{ $t('common.search') }}</el-button>
           <el-button @click="resetFilters">{{ $t('common.reset') }}</el-button>
@@ -43,12 +50,8 @@
       style="width: 100%"
       v-loading="loading"
       @selection-change="handleSelectionChange">
-      <el-table-column type="selection" width="55" />
-      <el-table-column
-        type="index"
-        :label="$t('execution.serialNumber')"
-        width="80"
-        :index="getSerialNumber" />
+      <el-table-column type="selection" width="30" />
+      <el-table-column prop="id" :label="$t('execution.id')" width="70" />
       <el-table-column prop="name" :label="$t('execution.planName')" min-width="200">
         <template #default="scope">
           <el-link type="primary" @click="viewPlan(scope.row.id)">
@@ -56,7 +59,7 @@
           </el-link>
         </template>
       </el-table-column>
-      <el-table-column prop="projects" :label="$t('execution.projects')" width="200">
+      <el-table-column prop="projects" :label="$t('execution.projects')" width="150">
         <template #default="scope">
           <span v-if="scope.row.projects && scope.row.projects.length > 0">
             {{ scope.row.projects.join(', ') }}
@@ -64,12 +67,19 @@
           <span v-else>{{ $t('execution.noData') }}</span>
         </template>
       </el-table-column>
-      <el-table-column prop="version" :label="$t('execution.version')" width="120"></el-table-column>
-      <el-table-column prop="creator.username" :label="$t('execution.creator')" width="120"></el-table-column>
+      <el-table-column prop="version" :label="$t('execution.version')" width="80"></el-table-column>
+      <el-table-column prop="creator.username" :label="$t('execution.creator')" width="100"></el-table-column>
       <el-table-column :label="$t('execution.status')" width="100">
         <template #default="scope">
           <el-tag :type="scope.row.is_active ? 'success' : 'info'">
             {{ scope.row.is_active ? $t('execution.active') : $t('execution.closed') }}
+          </el-tag>
+        </template>
+      </el-table-column>
+      <el-table-column :label="$t('execution.executionStatus')" width="110">
+        <template #default="scope">
+          <el-tag :type="getExecutionStatusType(scope.row.execution_status)">
+            {{ getExecutionStatusText(scope.row.execution_status) }}
           </el-tag>
         </template>
       </el-table-column>
@@ -78,7 +88,7 @@
           {{ formatDate(scope.row.created_at) }}
         </template>
       </el-table-column>
-      <el-table-column :label="$t('execution.actions')" width="220" fixed="right" class-name="action-col">
+      <el-table-column :label="$t('execution.actions')" width="200" fixed="right" class-name="action-col">
         <template #default="scope">
           <el-button size="small" type="primary" @click="viewPlan(scope.row.id)">
             {{ $t('execution.viewExecution') }}
@@ -293,7 +303,8 @@ const total = ref(0)
 // 筛选
 const filters = reactive({
   project: null,
-  is_active: null
+  is_active: null,
+  execution_status: null
 })
 
 // 表单
@@ -578,7 +589,8 @@ const applyFilters = () => {
 const resetFilters = () => {
   Object.assign(filters, {
     project: null,
-    is_active: null
+    is_active: null,
+    execution_status: null
   })
   currentPage.value = 1
   fetchTestPlans()
@@ -605,10 +617,17 @@ const handleSelectionChange = (selection) => {
   selectedPlans.value = selection
 }
 
-// 获取序号
-const getSerialNumber = (index) => {
-  return (currentPage.value - 1) * pageSize.value + index + 1
-}
+const getExecutionStatusType = (status) => ({
+  not_started: 'info',
+  in_progress: 'primary',
+  completed: 'success'
+}[status] || 'info')
+
+const getExecutionStatusText = (status) => ({
+  not_started: t('execution.notStarted'),
+  in_progress: t('execution.inProgress'),
+  completed: t('execution.completed')
+}[status] || t('execution.noData'))
 
 // 批量删除
 const batchDeletePlans = async () => {

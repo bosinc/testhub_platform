@@ -160,7 +160,7 @@ class TestReportViewSet(viewsets.ModelViewSet):
         
         qs = TestRunCase.objects.filter(
             executed_at__gte=start_datetime,
-            status__in=['passed', 'failed', 'blocked', 'retest']
+            status__in=['passed', 'failed', 'blocked', 'skipped']
         )
         
         if project_id:
@@ -239,7 +239,7 @@ class TestReportViewSet(viewsets.ModelViewSet):
         project_id = request.query_params.get('project')
         
         qs = TestRunCase.objects.filter(
-            status__in=['passed', 'failed', 'blocked', 'retest'],
+            status__in=['passed', 'failed', 'blocked', 'skipped'],
             executed_by__isnull=False
         )
         

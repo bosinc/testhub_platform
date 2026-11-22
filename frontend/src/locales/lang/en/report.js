@@ -34,7 +34,7 @@ export default {
   passed: 'Passed',
   failed: 'Failed',
   blocked: 'Blocked',
-  retest: 'Retest',
+  skipped: 'Skipped',
   untested: 'Untested',
   executionStatus: 'Execution Status',
 

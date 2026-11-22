@@ -230,7 +230,7 @@ const loadChartsData = async () => {
       { value: res.data.passed, name: t('report.passed'), itemStyle: { color: '#67C23A' } },
       { value: res.data.failed, name: t('report.failed'), itemStyle: { color: '#F56C6C' } },
       { value: res.data.blocked, name: t('report.blocked'), itemStyle: { color: '#E6A23C' } },
-      { value: res.data.retest, name: t('report.retest'), itemStyle: { color: '#409EFF' } },
+      { value: res.data.skipped, name: t('report.skipped'), itemStyle: { color: '#909399' } },
       { value: res.data.untested, name: t('report.untested'), itemStyle: { color: '#909399' } }
     ]
 

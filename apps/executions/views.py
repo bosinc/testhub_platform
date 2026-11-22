@@ -2,7 +2,7 @@ from rest_framework import mixins, viewsets, status
 from rest_framework.response import Response
 from rest_framework.decorators import action
 from django.db import transaction
-from django.db.models import Prefetch
+from django.db.models import Exists, OuterRef, Prefetch
 from django.utils import timezone
 from .models import TestPlan, TestRun, TestRunCase, TestRunCaseHistory
 from apps.testcases.models import TestCase
@@ -41,7 +41,10 @@ class TestPlanViewSet(viewsets.ModelViewSet):
                             'testcase__assignee',
                             'testcase__project',  # 序列化 testcase.project_name 需要
                             'executed_by',
-                        ).prefetch_related('testcase__step_details').order_by('testcase__id')
+                        ).prefetch_related(
+                            'testcase__step_details',
+                            'testcase__automation_links',
+                        ).order_by('testcase__id')
                     )
                 )
             ),
@@ -50,7 +53,44 @@ class TestPlanViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         queryset = super().get_queryset()
         if self.action != 'retrieve':
-            return queryset
+            params = self.request.query_params
+            is_active = params.get('is_active')
+            project_id = params.get('project')
+            execution_status = params.get('execution_status')
+
+            if is_active in {'true', '1'}:
+                queryset = queryset.filter(is_active=True)
+            elif is_active in {'false', '0'}:
+                queryset = queryset.filter(is_active=False)
+
+            if project_id:
+                queryset = queryset.filter(projects__id=project_id)
+
+            run_cases = TestRunCase.objects.filter(test_run__test_plan=OuterRef('pk'))
+            has_run_cases = Exists(run_cases)
+            has_untested_cases = Exists(run_cases.filter(status='untested'))
+            has_tested_cases = Exists(run_cases.exclude(status='untested'))
+            if execution_status == 'not_started':
+                queryset = queryset.annotate(
+                    has_tested_cases=has_tested_cases,
+                ).filter(has_tested_cases=False)
+            elif execution_status == 'in_progress':
+                queryset = queryset.annotate(
+                    has_untested_cases=has_untested_cases,
+                    has_tested_cases=has_tested_cases,
+                ).filter(has_untested_cases=True, has_tested_cases=True)
+            elif execution_status == 'completed':
+                queryset = queryset.annotate(
+                    has_run_cases=has_run_cases,
+                    has_untested_cases=has_untested_cases,
+                ).filter(has_run_cases=True, has_untested_cases=False)
+
+            return queryset.prefetch_related(
+                Prefetch(
+                    'test_runs__run_cases',
+                    queryset=TestRunCase.objects.only('id', 'test_run_id', 'status'),
+                )
+            ).distinct()
         return self._detail_queryset()
 
     @staticmethod

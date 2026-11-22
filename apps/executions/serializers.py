@@ -19,14 +19,22 @@ class TestCaseExecutionSerializer(serializers.ModelSerializer):
     project_name = serializers.CharField(source='project.name', read_only=True)
     module = TestCaseModuleSimpleSerializer(read_only=True)
     steps = TestCaseStepSerializer(source='step_details', many=True, read_only=True)
+    automation_links = serializers.SerializerMethodField()
 
     class Meta:
         model = TestCase
         fields = (
             'id', 'title', 'description', 'notes', 'preconditions', 'steps',
-            'priority', 'test_type', 'author', 'assignee',
+            'priority', 'test_type', 'automatability', 'automation_links', 'author', 'assignee',
             'project_name', 'module'
         )
+
+    def get_automation_links(self, obj):
+        """返回测试计划用例列表展示自动化图标所需的关联类型。"""
+        return [
+            {'id': link.id, 'type': link.case_type, 'object_id': link.object_id}
+            for link in obj.automation_links.all()
+        ]
 
 class TestRunCaseSimpleSerializer(serializers.ModelSerializer):
     testcase = TestCaseExecutionSerializer(read_only=True)
@@ -81,10 +89,33 @@ class TestPlanSerializer(serializers.ModelSerializer):
     creator = UserSimpleSerializer(read_only=True)
     projects = serializers.StringRelatedField(many=True, read_only=True)
     version = serializers.StringRelatedField()
+    execution_status = serializers.SerializerMethodField()
 
     class Meta:
         model = TestPlan
-        fields = ('id', 'name', 'projects', 'version', 'creator', 'created_at', 'is_active')
+        fields = ('id', 'name', 'projects', 'version', 'creator', 'created_at', 'is_active', 'execution_status')
+
+    def get_execution_status(self, obj):
+        """按执行用例进度汇总计划状态，供列表筛选和展示使用。"""
+        prefetched_runs = getattr(obj, '_prefetched_objects_cache', {}).get('test_runs')
+        if prefetched_runs is not None:
+            statuses = [
+                run_case.status
+                for test_run in prefetched_runs
+                for run_case in getattr(test_run, '_prefetched_objects_cache', {}).get('run_cases', [])
+            ]
+        else:
+            statuses = list(
+                TestRunCase.objects.filter(test_run__test_plan=obj)
+                .values_list('status', flat=True)
+            )
+        if not statuses:
+            return 'not_started'
+        if all(value == 'untested' for value in statuses):
+            return 'not_started'
+        if all(value != 'untested' for value in statuses):
+            return 'completed'
+        return 'in_progress'
 
 
 class TestPlanDetailSerializer(serializers.ModelSerializer):
