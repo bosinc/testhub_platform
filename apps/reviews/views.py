@@ -1,4 +1,5 @@
 from rest_framework import viewsets, status, permissions
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from django.utils import timezone
@@ -142,6 +143,18 @@ class TestCaseReviewCommentViewSet(viewsets.ModelViewSet):
     
     def perform_create(self, serializer):
         serializer.save(author=self.request.user)
+
+    def perform_update(self, serializer):
+        # 评审意见只能由作者本人修改，避免仅依赖前端按钮做权限控制。
+        if serializer.instance.author_id != self.request.user.id:
+            raise PermissionDenied('只能修改本人发布的评审意见')
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        # 评审意见只能由作者本人删除。
+        if instance.author_id != self.request.user.id:
+            raise PermissionDenied('只能删除本人发布的评审意见')
+        instance.delete()
 
 
 class ReviewTemplateViewSet(viewsets.ModelViewSet):

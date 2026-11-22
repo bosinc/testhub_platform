@@ -9,6 +9,8 @@ class SimpleUserSerializer(serializers.Serializer):
     email = serializers.EmailField()
     first_name = serializers.CharField()
     last_name = serializers.CharField()
+    # 评审意见列表需要使用作者头像，保持与用户接口相同的 URL 序列化行为。
+    avatar = serializers.ImageField(read_only=True, allow_null=True)
 
 
 class SimpleProjectSerializer(serializers.Serializer):

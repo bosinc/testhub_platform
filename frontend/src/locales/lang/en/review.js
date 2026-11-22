@@ -121,6 +121,7 @@ export default {
 
     // Testcases Card
     reviewTestcases: 'Review Test Cases',
+    testcaseId: 'ID',
     testcaseTitle: 'Test Case Title',
     testType: 'Test Type',
     author: 'Author',
@@ -138,6 +139,13 @@ export default {
     // Comments Card
     reviewComments: 'Review Comments',
     addComment: 'Add Comment',
+    editCommentDialog: 'Edit Review Comment',
+    editComment: 'Edit',
+    deleteComment: 'Delete',
+    deleteCommentConfirm: 'Are you sure to delete this review comment?',
+    editCommentSuccess: 'Comment updated successfully',
+    deleteCommentSuccess: 'Comment deleted successfully',
+    deleteCommentFailed: 'Failed to delete comment',
     relatedTestcase: 'Related Test Case',
     noComments: 'No review comments',
 
@@ -208,6 +216,10 @@ export default {
     description: 'Review Description',
     descriptionPlaceholder: 'Enter review description',
 
+    // Test plan selection
+    testPlans: 'Test Plans',
+    selectTestPlans: 'Select test plans to choose cases automatically',
+
     // Testcase Selection
     selectTestcases: 'Select Test Cases',
     searchTestcases: 'Search test cases',
@@ -246,6 +258,7 @@ export default {
     fetchProjectsFailed: 'Failed to fetch projects',
     fetchUsersFailed: 'Failed to fetch users',
     fetchTestcasesFailed: 'Failed to fetch test cases',
+    fetchTestPlanTestcasesFailed: 'Failed to fetch test plan test cases',
     fetchTemplatesFailed: 'Failed to fetch templates',
     fetchReviewFailed: 'Failed to fetch review data'
   },

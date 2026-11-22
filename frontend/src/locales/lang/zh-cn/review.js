@@ -121,6 +121,7 @@ export default {
 
     // Testcases Card
     reviewTestcases: '评审用例',
+    testcaseId: 'ID',
     testcaseTitle: '用例标题',
     testType: '测试类型',
     author: '作者',
@@ -138,6 +139,13 @@ export default {
     // Comments Card
     reviewComments: '评审意见',
     addComment: '添加意见',
+    editCommentDialog: '修改评审意见',
+    editComment: '修改',
+    deleteComment: '删除',
+    deleteCommentConfirm: '确定要删除这条评审意见吗？',
+    editCommentSuccess: '意见修改成功',
+    deleteCommentSuccess: '意见删除成功',
+    deleteCommentFailed: '意见删除失败',
     relatedTestcase: '相关用例',
     noComments: '暂无评审意见',
 
@@ -208,6 +216,10 @@ export default {
     description: '评审描述',
     descriptionPlaceholder: '请输入评审描述',
 
+    // Test plan selection
+    testPlans: '测试计划',
+    selectTestPlans: '可按测试计划自动选择用例',
+
     // Testcase Selection
     selectTestcases: '选择用例',
     searchTestcases: '搜索用例',
@@ -246,6 +258,7 @@ export default {
     fetchProjectsFailed: '获取项目列表失败',
     fetchUsersFailed: '获取用户列表失败',
     fetchTestcasesFailed: '获取用例列表失败',
+    fetchTestPlanTestcasesFailed: '获取测试计划用例失败',
     fetchTemplatesFailed: '获取模板列表失败',
     fetchReviewFailed: '获取评审数据失败'
   },

@@ -3,7 +3,7 @@
     <div class="page-header">
       <h1 class="page-title">{{ $t('reviewDetail.title') }}</h1>
       <div>
-        <el-button @click="$router.back()">{{ $t('reviewDetail.back') }}</el-button>
+        <el-button @click="backToReviewList">{{ $t('reviewDetail.back') }}</el-button>
         <el-button v-if="canEdit" type="warning" @click="editReview">{{ $t('reviewDetail.edit') }}</el-button>
         <el-button v-if="canReview" type="success" @click="showReviewDialog">{{ $t('reviewDetail.submitReview') }}</el-button>
       </div>
@@ -123,6 +123,7 @@
           <span class="card-header">{{ $t('reviewDetail.reviewTestcases') }} ({{ review.testcases?.length || 0 }})</span>
         </template>
         <el-table :data="review.testcases" stripe>
+          <el-table-column prop="id" :label="$t('reviewDetail.testcaseId')" width="60" />
           <el-table-column prop="title" :label="$t('reviewDetail.testcaseTitle')" min-width="200" show-overflow-tooltip />
           <el-table-column :label="$t('reviewDetail.testType')" width="140">
             <template #default="{ row }">
@@ -167,12 +168,20 @@
                 <el-tag size="small" :type="getCommentTypeColor(comment.comment_type)">
                   {{ getCommentTypeText(comment.comment_type) }}
                 </el-tag>
+                <span v-if="isCommentAuthor(comment)" class="comment-actions">
+                  <el-button link type="primary" :title="$t('reviewDetail.editComment')" @click="editComment(comment)">
+                    <el-icon><Edit /></el-icon>
+                  </el-button>
+                  <el-button link type="danger" :title="$t('reviewDetail.deleteComment')" @click="deleteComment(comment)">
+                    <el-icon><Delete /></el-icon>
+                  </el-button>
+                </span>
               </div>
               <div class="comment-time">{{ formatDate(comment.created_at) }}</div>
             </div>
             <div class="comment-content">{{ comment.content }}</div>
             <div v-if="comment.testcase" class="comment-testcase">
-              {{ $t('reviewDetail.relatedTestcase') }}: {{ comment.testcase.title }}
+              {{ $t('reviewDetail.relatedTestcase') }}: #{{ comment.testcase.id }} {{ comment.testcase.title }}
             </div>
           </div>
           <div v-if="!review.comments?.length" class="empty-comments">
@@ -239,7 +248,7 @@
     </el-dialog>
 
     <!-- 添加意见对话框 -->
-    <el-dialog v-model="commentDialogVisible" :title="$t('reviewDetail.addCommentDialog')" :close-on-click-modal="false" width="600px">
+    <el-dialog v-model="commentDialogVisible" :title="editingCommentId ? $t('reviewDetail.editCommentDialog') : $t('reviewDetail.addCommentDialog')" :close-on-click-modal="false" width="600px">
       <el-form :model="commentForm" label-width="100px">
         <el-form-item :label="$t('reviewDetail.commentType')" required>
           <el-radio-group v-model="commentForm.comment_type">
@@ -252,7 +261,7 @@
             <el-option
               v-for="testcase in review.testcases"
               :key="testcase.id"
-              :label="testcase.title"
+              :label="`#${testcase.id} ${testcase.title}`"
               :value="testcase.id"
             />
           </el-select>
@@ -278,8 +287,8 @@
 import { ref, reactive, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { ElMessage } from 'element-plus'
-import { Check, Close, QuestionFilled, UserFilled } from '@element-plus/icons-vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { Check, Close, Delete, Edit, QuestionFilled, UserFilled } from '@element-plus/icons-vue'
 import api from '@/utils/api'
 import dayjs from 'dayjs'
 import { useUserStore } from '@/stores/user'
@@ -292,6 +301,7 @@ const { t } = useI18n()
 const review = ref(null)
 const reviewDialogVisible = ref(false)
 const commentDialogVisible = ref(false)
+const editingCommentId = ref(null)
 
 const reviewForm = reactive({
   status: 'approved',
@@ -347,6 +357,11 @@ const fetchReview = async () => {
   }
 }
 
+// 评审详情的返回按钮固定回到评审列表，避免浏览器历史记录不完整时无法返回。
+const backToReviewList = () => {
+  router.push('/ai-generation/reviews')
+}
+
 const editReview = () => {
   router.push(`/ai-generation/reviews/${route.params.id}/edit`)
 }
@@ -378,13 +393,46 @@ const submitReview = async () => {
 }
 
 const showAddCommentDialog = () => {
+  editingCommentId.value = null
   commentForm.comment_type = 'general'
   commentForm.testcase = ''
   commentForm.content = ''
   commentDialogVisible.value = true
 }
 
+const isCommentAuthor = (comment) => {
+  return String(comment.author?.id) === String(userStore.user?.id)
+}
+
+const editComment = (comment) => {
+  if (!isCommentAuthor(comment)) return
+  editingCommentId.value = comment.id
+  commentForm.comment_type = comment.comment_type
+  commentForm.testcase = comment.testcase?.id || ''
+  commentForm.content = comment.content
+  commentDialogVisible.value = true
+}
+
+const deleteComment = async (comment) => {
+  if (!isCommentAuthor(comment)) return
+  try {
+    await ElMessageBox.confirm(
+      t('reviewDetail.deleteCommentConfirm'),
+      t('reviewDetail.deleteComment'),
+      { type: 'warning' }
+    )
+    await api.delete(`/reviews/review-comments/${comment.id}/`)
+    ElMessage.success(t('reviewDetail.deleteCommentSuccess'))
+    await fetchReview()
+  } catch (error) {
+    if (error !== 'cancel' && error !== 'close') {
+      ElMessage.error(t('reviewDetail.deleteCommentFailed'))
+    }
+  }
+}
+
 const addComment = (testcase) => {
+  editingCommentId.value = null
   commentForm.comment_type = 'testcase'
   commentForm.testcase = testcase.id
   commentForm.content = ''
@@ -408,18 +456,46 @@ const addCommentSubmit = async () => {
       data.testcase = commentForm.testcase
     }
 
-    await api.post('/reviews/review-comments/', data)
-    ElMessage.success(t('reviewDetail.addCommentSuccess'))
+    if (editingCommentId.value) {
+      await api.patch(`/reviews/review-comments/${editingCommentId.value}/`, data)
+      ElMessage.success(t('reviewDetail.editCommentSuccess'))
+    } else {
+      await api.post('/reviews/review-comments/', data)
+      ElMessage.success(t('reviewDetail.addCommentSuccess'))
+    }
     commentDialogVisible.value = false
-    fetchReview()
+    editingCommentId.value = null
+    await fetchReview()
   } catch (error) {
     console.error('Add comment failed:', error)
     ElMessage.error(t('reviewDetail.addCommentFailed'))
   }
 }
 
+const saveTestcaseNavigationContext = () => {
+  try {
+    const cases = (review.value?.testcases || []).map(testcase => ({
+      id: testcase.id,
+      title: testcase.title,
+      automation_links: testcase.automation_links || []
+    }))
+    sessionStorage.setItem('testcase-detail-navigation', JSON.stringify({
+      cases,
+      total: cases.length,
+      filters: {}
+    }))
+  } catch (error) {
+    console.warn('保存评审用例详情导航上下文失败:', error)
+  }
+}
+
 const viewTestcase = (id) => {
-  router.push(`/ai-generation/testcases/${id}`)
+  // 携带评审详情地址，避免用例详情返回时丢失当前评审上下文。
+  saveTestcaseNavigationContext()
+  router.push({
+    path: `/ai-generation/testcases/${id}`,
+    query: { returnTo: route.fullPath }
+  })
 }
 
 const getStatusType = (status) => {
@@ -601,6 +677,17 @@ onMounted(() => {
 
         .author-name {
           font-weight: 500;
+        }
+
+        .comment-actions {
+          display: inline-flex;
+          align-items: center;
+          gap: 2px;
+
+          .el-button {
+            padding: 2px;
+            margin-left: 0;
+          }
         }
       }
 

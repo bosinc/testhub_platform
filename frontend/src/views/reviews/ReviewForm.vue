@@ -68,6 +68,24 @@
           />
         </el-form-item>
 
+        <el-form-item :label="$t('reviewForm.testPlans')">
+          <el-select
+            v-model="form.testPlans"
+            multiple
+            clearable
+            :disabled="!form.projects || form.projects.length === 0"
+            :placeholder="$t('reviewForm.selectTestPlans')"
+            @change="onTestPlansChange"
+          >
+            <el-option
+              v-for="plan in testPlans"
+              :key="plan.id"
+              :label="plan.name"
+              :value="plan.id"
+            />
+          </el-select>
+        </el-form-item>
+
         <el-form-item :label="$t('reviewForm.selectTestcases')" prop="testcases">
           <div class="testcase-selector">
             <div class="search-bar">
@@ -157,6 +175,7 @@ const testcaseSelectorVisible = ref(false)
 const projects = ref([])
 const projectUsers = ref([])
 const templates = ref([])
+const testPlans = ref([])
 // 已关联但可能不在候选用例列表中的用例（如已归档），透传给选择弹窗保留勾选
 const selectedTestcases = ref([])
 
@@ -166,6 +185,7 @@ const form = reactive({
   projects: [],
   priority: 'medium',
   deadline: '',
+  testPlans: [],
   testcases: [],
   reviewers: [],
   template: ''
@@ -240,12 +260,76 @@ const fetchTemplates = async (projectIds) => {
   }
 }
 
+// 获取当前项目下的测试计划，供评审用例快速回填使用
+const fetchTestPlans = async (projectIds) => {
+  if (!projectIds || projectIds.length === 0) {
+    testPlans.value = []
+    return
+  }
+
+  try {
+    const responses = await Promise.all(projectIds.map(async projectId => {
+      const plans = []
+      let response = await api.get('/executions/plans/', { params: { project: projectId } })
+      while (response?.data) {
+        plans.push(...(response.data.results || response.data || []))
+        if (!response.data.next) break
+        response = await api.get(response.data.next)
+      }
+      return plans
+    }))
+    const allPlans = responses.flat()
+    testPlans.value = allPlans.filter((plan, index, self) =>
+      index === self.findIndex(item => item.id === plan.id)
+    )
+  } catch (error) {
+    console.error('Fetch test plans failed:', error)
+    testPlans.value = []
+  }
+}
+
+// 读取计划详情并合并该计划下所有已关联用例
+const onTestPlansChange = async (planIds) => {
+  if (!planIds || planIds.length === 0) {
+    selectedTestcases.value = []
+    form.testcases = []
+    return
+  }
+
+  try {
+    const responses = await Promise.all(planIds.map(planId =>
+      api.get(`/executions/plans/${planId}/`)
+    ))
+    const testcaseMap = new Map()
+    responses.forEach(response => {
+      const testRuns = response.data.test_runs || []
+      testRuns.forEach(testRun => {
+        const runCases = testRun.run_cases || []
+        runCases.forEach(runCase => {
+          const testcase = runCase.testcase
+          if (testcase?.id) testcaseMap.set(testcase.id, testcase)
+        })
+      })
+    })
+
+    selectedTestcases.value = [...testcaseMap.values()]
+    form.testcases = [...testcaseMap.keys()]
+    formRef.value?.clearValidate('testcases')
+  } catch (error) {
+    console.error('Fetch test plan testcases failed:', error)
+    ElMessage.error(t('reviewForm.fetchTestPlanTestcasesFailed'))
+  }
+}
+
 const onProjectChange = (projectIds) => {
   // 项目变化时清空已选用例（用例选择弹窗按项目范围重新加载）
   selectedTestcases.value = []
+  form.testPlans = []
+  testPlans.value = []
 
   if (projectIds && projectIds.length > 0) {
     fetchTemplates(projectIds)
+    fetchTestPlans(projectIds)
   } else {
     templates.value = []
   }
@@ -305,10 +389,13 @@ const saveReview = async () => {
     }
 
     const data = {
-      ...form,
+      title: form.title,
+      description: form.description,
+      projects: form.projects,
+      priority: form.priority,
+      deadline,
       testcases: form.testcases,
       reviewers: form.reviewers,
-      deadline,
       // 确保包含 template 字段
       template: form.template || null
     }
@@ -384,6 +471,7 @@ const fetchReviewData = async (reviewId) => {
     form.projects = review.projects.map(p => p.id)
     form.priority = review.priority
     form.deadline = review.deadline
+    form.testPlans = []
     form.reviewers = review.assignments.map(a => a.reviewer.id)
 
     // 处理测试用例
@@ -393,6 +481,7 @@ const fetchReviewData = async (reviewId) => {
     // 加载项目相关数据
     if (form.projects.length > 0) {
       await fetchTemplates(form.projects)
+      await fetchTestPlans(form.projects)
 
       // 在模板加载完成后，尝试找到匹配的模板
       const matchingTemplate = findMatchingTemplate(review, templates.value)
