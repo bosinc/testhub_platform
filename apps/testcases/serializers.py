@@ -78,7 +78,7 @@ class TestCaseListSerializer(serializers.ModelSerializer):
         model = TestCase
         fields = [
             'id', 'title', 'description', 'notes', 'preconditions', 'steps',
-            'priority', 'test_type',
+            'priority', 'test_type', 'automatability',
             'author', 'assignee', 'project', 'module', 'versions', 'tags', 'automation_links', 'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
@@ -114,7 +114,7 @@ class TestCaseCreateSerializer(serializers.ModelSerializer):
         model = TestCase
         fields = [
             'title', 'description', 'notes', 'preconditions', 'steps',
-            'priority', 'test_type', 'status', 'tags', 'project_id', 'version_ids', 'maintainer_id', 'module_id'
+            'priority', 'test_type', 'automatability', 'status', 'tags', 'project_id', 'version_ids', 'maintainer_id', 'module_id'
         ]
     
     def validate_steps(self, value):
@@ -159,7 +159,7 @@ class TestCaseUpdateSerializer(serializers.ModelSerializer):
         model = TestCase
         fields = [
             'title', 'description', 'notes', 'preconditions', 'steps',
-            'priority', 'test_type', 'status', 'tags', 'project_id', 'version_ids', 'maintainer_id', 'module_id'
+            'priority', 'test_type', 'automatability', 'status', 'tags', 'project_id', 'version_ids', 'maintainer_id', 'module_id'
         ]
 
     def validate_steps(self, value):

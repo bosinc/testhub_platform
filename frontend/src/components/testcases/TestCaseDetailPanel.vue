@@ -110,14 +110,13 @@ const displayText = value => value ? String(value).replace(/<br\s*\/?>/gi, '\n')
 
 .case-id {
   color: var(--el-text-color-secondary);
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .case-title-row h2 {
   margin: 5px 0 0;
   color: var(--el-text-color-primary);
-  font-size: 19px;
-  line-height: 1.45;
+  font-size: 18px;
   overflow-wrap: anywhere;
 }
 

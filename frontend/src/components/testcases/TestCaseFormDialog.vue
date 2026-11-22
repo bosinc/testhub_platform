@@ -5,7 +5,6 @@
     width="min(1440px, 96vw)"
     align-center
     append-to-body
-    destroy-on-close
     :close-on-click-modal="false"
     class="testcase-form-dialog"
     @update:model-value="handleVisibility"
@@ -17,6 +16,21 @@
           <span class="tc-dialog-title">{{ dialogTitle }}</span>
         </div>
         <div class="tc-dialog-toolbar">
+          <div v-if="hasNavigation" class="tc-case-navigation">
+            <el-button
+              class="tc-case-navigation__button"
+              :icon="ArrowUp"
+              :disabled="currentCaseIndex <= 0"
+              :aria-label="$t('testcase.previousCase')"
+              @click="navigateCase(-1)" />
+            <span class="tc-case-navigation__count">{{ currentCaseIndex + 1 }} / {{ navigationCases.length }}</span>
+            <el-button
+              class="tc-case-navigation__button"
+              :icon="ArrowDown"
+              :disabled="currentCaseIndex >= navigationCases.length - 1"
+              :aria-label="$t('testcase.nextCase')"
+              @click="navigateCase(1)" />
+          </div>
           <el-button @click="close">{{ $t('common.cancel') }}</el-button>
           <el-button type="primary" :loading="busy" @click="handleSave">
             {{ isEdit ? $t('common.save') : $t('testcase.createCase') }}
@@ -26,10 +40,11 @@
     </template>
 
     <TestCaseFormPanel
-      v-if="modelValue"
+      v-if="panelMounted"
       ref="panelRef"
       :test-case-id="testCaseId"
       :project-id="projectId"
+      :initial-automation-links="initialAutomationLinks"
       @busy-change="busy = $event"
       @saved="handleSaved"
       @load-error="close"
@@ -38,8 +53,9 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { ArrowUp, ArrowDown } from '@element-plus/icons-vue'
 import TestCaseFormPanel from '@/components/testcases/TestCaseFormPanel.vue'
 
 const props = defineProps({
@@ -47,15 +63,21 @@ const props = defineProps({
   // 为空表示新建用例
   testCaseId: { type: [Number, String], default: null },
   // 新建时的默认归属项目
-  projectId: { type: [Number, String], default: null }
+  projectId: { type: [Number, String], default: null },
+  // 编辑详情页传入当前列表快照，用于弹窗顶部前后切换。
+  navigationCases: { type: Array, default: () => [] },
+  currentCaseIndex: { type: Number, default: -1 },
+  initialAutomationLinks: { type: Array, default: null }
 })
-const emit = defineEmits(['update:modelValue', 'saved'])
+const emit = defineEmits(['update:modelValue', 'saved', 'navigate'])
 
 const { t } = useI18n()
 const panelRef = ref()
 const busy = ref(false)
+const panelMounted = ref(false)
 
 const isEdit = computed(() => props.testCaseId !== null && props.testCaseId !== undefined && props.testCaseId !== '')
+const hasNavigation = computed(() => isEdit.value && props.currentCaseIndex >= 0 && props.navigationCases.length > 0)
 // 新建复用「新建用例」文案；编辑显示 ID 前缀和用例编号。
 const dialogTitle = computed(() => (isEdit.value ? `ID ${props.testCaseId}` : t('testcase.newCase')))
 
@@ -65,10 +87,17 @@ const handleClosed = () => { busy.value = false }
 
 const handleSave = async () => {
   const ok = await panelRef.value?.submit()
-  if (ok) close()
+  // 带导航的列表编辑保存后保持弹窗打开，便于继续切换和编辑其他用例。
+  if (ok && !hasNavigation.value) close()
 }
 
 const handleSaved = (detail, mode) => emit('saved', detail, mode)
+const navigateCase = offset => emit('navigate', offset)
+
+// 首次打开后保留表单实例，关闭再打开或切换用例时只更新数据，避免整块编辑器闪烁重建。
+watch(() => props.modelValue, visible => {
+  if (visible) panelMounted.value = true
+})
 </script>
 
 <style lang="scss" scoped>
@@ -95,7 +124,7 @@ const handleSaved = (detail, mode) => emit('saved', detail, mode)
 .tc-dialog-title {
   flex: 0 0 auto;
   /* 与左栏用例标题输入框的字号保持一致 */
-  font-size: 20px;
+  font-size: 18px;
   font-weight: 600;
 }
 
@@ -105,6 +134,25 @@ const handleSaved = (detail, mode) => emit('saved', detail, mode)
   flex: 0 0 auto;
   justify-content: flex-end;
   gap: 8px;
+}
+
+.tc-case-navigation {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-right: 4px;
+}
+
+.tc-case-navigation__button {
+  width: 34px;
+  height: 34px;
+  padding: 8px;
+}
+
+.tc-case-navigation__count {
+  min-width: 52px;
+  color: var(--el-text-color-secondary);
+  text-align: center;
 }
 </style>
 

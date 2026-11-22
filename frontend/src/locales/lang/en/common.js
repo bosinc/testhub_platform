@@ -23,5 +23,7 @@ export default {
   tips: 'Tips',
   warning: 'Warning',
   previous: 'Previous',
-  next: 'Next'
+  next: 'Next',
+  yes: 'Yes',
+  no: 'No'
 }

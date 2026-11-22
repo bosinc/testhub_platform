@@ -352,7 +352,7 @@ class TestCaseListCreateView(generics.ListCreateAPIView):
     permission_classes = [permissions.IsAuthenticated]
     pagination_class = TestCasePagination
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, TestCaseOrderingFilter]
-    filterset_fields = ['priority', 'test_type']
+    filterset_fields = ['priority', 'test_type', 'automatability']
     search_fields = ['title', 'description']
     ordering_fields = ['id', 'created_at', 'updated_at', 'priority']
     ordering = ['-created_at']
@@ -414,6 +414,7 @@ class TestCaseListCreateView(generics.ListCreateAPIView):
     def list(self, request, *args, **kwargs):
         """Serialize the current page with its typed automation links in bulk."""
         queryset = self.filter_queryset(self.get_queryset())
+        automation_summary = get_automation_summary(queryset)
         page = self.paginate_queryset(queryset)
         cases = list(page if page is not None else queryset)
         links_by_case = get_automation_links_for_cases(cases, request.user)
@@ -423,8 +424,10 @@ class TestCaseListCreateView(generics.ListCreateAPIView):
             context={**self.get_serializer_context(), 'automation_links_by_test_case': links_by_case},
         )
         if page is not None:
-            return self.get_paginated_response(serializer.data)
-        return Response(serializer.data)
+            response = self.get_paginated_response(serializer.data)
+            response.data['automation_summary'] = automation_summary
+            return response
+        return Response({'results': serializer.data, 'automation_summary': automation_summary})
     
     def get_user_accessible_projects(self, user):
         """获取用户有权限访问的项目"""
@@ -594,6 +597,30 @@ def get_automation_links_for_cases(cases, user):
                 'detail_url': detail_url,
             })
     return result
+
+
+def get_automation_summary(queryset):
+    """统计当前筛选结果中的自动化关联情况，分母排除不可自动化用例。"""
+    automatable_total = queryset.filter(automatability=True).count()
+    linked_counts = {
+        case_type: TestCaseAutomationLink.objects.filter(
+            test_case__in=queryset,
+            case_type=case_type,
+        ).values('test_case_id').distinct().count()
+        for case_type in ('ui_test_case', 'api_scenario_case')
+    }
+
+    def rate(linked_count):
+        return round(linked_count / automatable_total * 100, 1) if automatable_total else 0
+
+    return {
+        'total': queryset.count(),
+        'automatable_total': automatable_total,
+        'ui_linked': linked_counts['ui_test_case'],
+        'api_linked': linked_counts['api_scenario_case'],
+        'ui_rate': rate(linked_counts['ui_test_case']),
+        'api_rate': rate(linked_counts['api_scenario_case']),
+    }
 
 
 class TestCaseAutomationOptionsPagination(pagination.PageNumberPagination):

@@ -2,15 +2,31 @@
   <div class="page-container">
     <div class="page-header">
       <h1 class="page-title">{{ $t('testcase.detail') }}</h1>
-      <div>
-        <el-button @click="$router.back()">{{ $t('common.back') }}</el-button>
+      <div class="detail-actions">
+        <div v-if="currentCaseIndex >= 0" class="case-navigation">
+          <el-button
+            :icon="ArrowUp"
+            :disabled="currentCaseIndex <= 0"
+            :aria-label="$t('testcase.previousCase')"
+            @click="navigateCase(-1)" />
+          <span class="case-navigation__count">{{ currentCaseIndex + 1 }} / {{ navigationCases.length }}</span>
+          <el-button
+            :icon="ArrowDown"
+            :disabled="currentCaseIndex >= navigationCases.length - 1"
+            :aria-label="$t('testcase.nextCase')"
+            @click="navigateCase(1)" />
+        </div>
+        <el-button @click="backToList">{{ $t('common.back') }}</el-button>
         <el-button type="primary" @click="editTestCase">{{ $t('common.edit') }}</el-button>
       </div>
     </div>
 
     <div class="card-container" v-if="testcase">
       <el-descriptions :column="2" border>
-        <el-descriptions-item :label="$t('testcase.caseTitle')" :span="2">{{ testcase.title }}</el-descriptions-item>
+        <el-descriptions-item class="case-title-item" :label="$t('testcase.caseTitle')" :span="2">
+          <span class="case-title-id">ID {{ testcase.id }}</span>
+          <span>{{ testcase.title }}</span>
+        </el-descriptions-item>
         <el-descriptions-item :label="$t('testcase.priority')">
           <el-tag :class="`priority-tag ${testcase.priority}`">{{ getPriorityText(testcase.priority) }}</el-tag>
         </el-descriptions-item>
@@ -47,10 +63,11 @@
       </el-descriptions>
     </div>
 
-    <!-- 编辑用例改为弹窗展示公共组件，不再跳转到编辑页 -->
+    <!-- 编辑弹窗保留原有表单布局，仅在顶部增加当前列表中的前后导航。 -->
     <TestCaseFormDialog
       v-model="editDialogVisible"
       :test-case-id="route.params.id"
+      :initial-automation-links="currentNavigationCase?.automation_links"
       @saved="fetchTestCase"
     />
 
@@ -61,10 +78,11 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
-import { useRoute } from 'vue-router'
+import { ref, computed, onMounted, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
+import { ArrowUp, ArrowDown } from '@element-plus/icons-vue'
 import api from '@/utils/api'
 import dayjs from 'dayjs'
 import TestCaseStepEditor from '@/components/testcases/TestCaseStepEditor.vue'
@@ -72,8 +90,10 @@ import TestCaseFormDialog from '@/components/testcases/TestCaseFormDialog.vue'
 
 const { t } = useI18n()
 const route = useRoute()
+const router = useRouter()
 const testcase = ref(null)
 const editDialogVisible = ref(false)
+const navigationCases = ref([])
 const imagePreviewVisible = ref(false)
 const previewImageUrl = ref('')
 
@@ -114,6 +134,36 @@ const previewNoteImage = (event) => {
   imagePreviewVisible.value = true
 }
 
+const loadNavigationContext = () => {
+  try {
+    const raw = sessionStorage.getItem('testcase-detail-navigation')
+    const context = raw ? JSON.parse(raw) : null
+    navigationCases.value = Array.isArray(context?.cases) ? context.cases : []
+  } catch (error) {
+    navigationCases.value = []
+  }
+}
+
+const updateNavigationTitle = (detail) => {
+  const item = navigationCases.value.find(candidate => String(candidate.id) === String(detail?.id))
+  if (item) item.title = detail.title
+  try {
+    const raw = sessionStorage.getItem('testcase-detail-navigation')
+    const context = raw ? JSON.parse(raw) : null
+    if (context?.cases) {
+      const target = context.cases.find(candidate => String(candidate.id) === String(detail?.id))
+      if (target) target.title = detail.title
+      sessionStorage.setItem('testcase-detail-navigation', JSON.stringify(context))
+    }
+  } catch (error) {
+    console.warn('更新用例详情导航上下文失败:', error)
+  }
+}
+
+const currentCaseIndex = computed(() => navigationCases.value.findIndex(item => String(item.id) === String(route.params.id)))
+// 详情页和单用例编辑弹窗复用同一份列表快照，避免重复获取当前用例关联数据。
+const currentNavigationCase = computed(() => navigationCases.value[currentCaseIndex.value] || null)
+
 const fetchTestCase = async () => {
   try {
     const response = await api.get(`/testcases/${route.params.id}/`)
@@ -125,6 +175,25 @@ const fetchTestCase = async () => {
 
 const editTestCase = () => {
   editDialogVisible.value = true
+}
+
+const returnTo = computed(() => {
+  const target = route.query.returnTo
+  return Array.isArray(target) ? target[0] : target
+})
+
+const backToList = () => {
+  if (typeof returnTo.value === 'string' && returnTo.value.startsWith('/ai-generation/')) {
+    router.push(returnTo.value)
+    return
+  }
+  router.push('/ai-generation/testcases')
+}
+
+const navigateCase = (offset) => {
+  const nextIndex = currentCaseIndex.value + offset
+  const target = navigationCases.value[nextIndex]
+  if (target) router.push({ path: `/ai-generation/testcases/${target.id}`, query: route.query })
 }
 
 const getPriorityText = (priority) => {
@@ -154,6 +223,12 @@ const formatDate = (dateString) => {
 }
 
 onMounted(() => {
+  loadNavigationContext()
+  fetchTestCase()
+})
+
+watch(() => route.params.id, () => {
+  loadNavigationContext()
   fetchTestCase()
 })
 </script>
@@ -215,4 +290,38 @@ onMounted(() => {
   margin: 0 auto;
   object-fit: contain;
 }
+
+.detail-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.case-navigation {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-right: 8px;
+}
+
+.case-navigation__count {
+  min-width: 52px;
+  color: var(--el-text-color-secondary);
+  text-align: center;
+}
+
+.case-title-item :deep(.el-descriptions__label) {
+  width: 180px;
+}
+
+.case-title-item :deep(.el-descriptions__content) {
+  white-space: nowrap;
+}
+
+.case-title-id {
+  margin-right: 12px;
+  color: var(--el-text-color-secondary);
+  font-weight: 600;
+}
+
 </style>

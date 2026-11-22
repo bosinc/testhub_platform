@@ -155,6 +155,11 @@
             </el-select>
           </div>
 
+          <div class="tc-attr tc-attr--inline">
+            <div class="tc-attr__label">{{ $t('testcase.automatability') }}</div>
+            <el-switch v-model="form.automatability" />
+          </div>
+
           <div class="tc-attr">
             <div class="tc-attr__label">{{ $t('testcase.automation') }}</div>
             <AutomationCaseLinks
@@ -162,7 +167,7 @@
               :project-id="form.project_id"
               :links="automationLinks"
               :allow-unlink="isEdit"
-              :load-links-on-mount="isEdit"
+              :load-links-on-mount="isEdit && !hasInitialAutomationLinks"
               @update:links="automationLinks = $event"
             />
           </div>
@@ -200,7 +205,9 @@ const props = defineProps({
   // 为空表示新建用例；有值表示编辑该用例
   testCaseId: { type: [Number, String], default: null },
   // 新建时的默认归属项目（一般由列表页当前项目传入）
-  projectId: { type: [Number, String], default: null }
+  projectId: { type: [Number, String], default: null },
+  // 列表页已返回的自动化关联，编辑切换用例时直接复用，避免重复请求。
+  initialAutomationLinks: { type: Array, default: null }
 })
 const emit = defineEmits(['saved', 'busy-change', 'load-error'])
 
@@ -211,6 +218,7 @@ const userStore = useUserStore()
 const SHOW_DESCRIPTION = false
 
 const isEdit = computed(() => props.testCaseId !== null && props.testCaseId !== undefined && props.testCaseId !== '')
+const hasInitialAutomationLinks = computed(() => Array.isArray(props.initialAutomationLinks))
 const notesUploadUrl = computed(() => (isEdit.value ? `/testcases/${props.testCaseId}/notes-image/` : ''))
 
 const formRef = ref()
@@ -232,6 +240,7 @@ const createForm = () => ({
   project_id: null,
   priority: 'medium',
   test_type: 'functional',
+  automatability: true,
   preconditions: '',
   steps: [],
   version_ids: [],
@@ -353,7 +362,9 @@ const onProjectChange = projectId => {
 const resetForm = () => {
   Object.assign(form, createForm())
   detail.value = {}
-  automationLinks.value = []
+  automationLinks.value = hasInitialAutomationLinks.value
+    ? props.initialAutomationLinks.map(link => ({ ...link }))
+    : []
   projectVersions.value = []
   projectMembers.value = []
   moduleOptions.value = []
@@ -362,9 +373,11 @@ const resetForm = () => {
 
 const init = async () => {
   loading.value = true
-  resetForm()
+  // 新建时需要清空表单，编辑态切换用例时保留旧内容直到新详情加载完成，避免界面闪烁。
+  if (!isEdit.value) resetForm()
   try {
-    await fetchProjects()
+    // 编辑态的项目只读且详情接口已返回项目名称，无需再次拉取项目列表。
+    if (!isEdit.value) await fetchProjects()
     if (isEdit.value) {
       const { data } = await api.get(`/testcases/${props.testCaseId}/`)
       detail.value = data
@@ -375,10 +388,14 @@ const init = async () => {
       form.module_id = data.module?.id || null
       form.priority = data.priority || 'medium'
       form.test_type = data.test_type || 'functional'
+      form.automatability = data.automatability !== false
       form.preconditions = convertBrToNewline(data.preconditions || '')
       form.steps = Array.isArray(data.steps) ? data.steps.map(step => ({ ...step })) : []
       form.version_ids = (data.versions || []).map(version => version.id)
       form.maintainer_id = data.author?.id || null
+      if (hasInitialAutomationLinks.value) {
+        automationLinks.value = props.initialAutomationLinks.map(link => ({ ...link }))
+      }
       await loadProjectOptions(form.project_id)
     } else {
       const requested = Number(props.projectId)
@@ -499,9 +516,8 @@ watch(() => [props.testCaseId, props.projectId], () => { init() })
     box-shadow: none;
     background: transparent;
     color: var(--el-text-color-primary);
-    font-size: 20px;
+    font-size: 18px;
     font-weight: 500;
-    line-height: 1.45;
   }
   :deep(.el-textarea__inner::placeholder) {
     color: var(--el-text-color-placeholder);
@@ -558,10 +574,21 @@ watch(() => [props.testCaseId, props.projectId], () => { init() })
   &:last-child { margin-bottom: 0; }
 }
 
+/* 可自动化字段与开关保持同一行，减少属性区的垂直占用。 */
+.tc-attr--inline {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
 .tc-attr__label {
   margin-bottom: 8px;
   color: var(--el-text-color-regular);
   font-size: 13px;
+}
+
+.tc-attr--inline .tc-attr__label {
+  margin-bottom: 0;
 }
 
 .tc-required {

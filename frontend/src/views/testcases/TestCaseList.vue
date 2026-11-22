@@ -55,7 +55,7 @@
               <el-button type="success" size="small" :disabled="!moduleProjectId" @click="openModuleDialog()"><el-icon><Plus /></el-icon></el-button>
             </div>
           </div>
-          <div class="collection-tree">
+          <div class="collection-tree" v-loading="moduleTreeLoading">
             <div class="tree-entry" :class="{ active: selectedModule === '' }" @click="selectModule('')">
               <span class="tree-entry-label">{{ $t('testcase.allCases') }}</span><span class="tree-count">{{ allProjectCount }}</span>
             </div>
@@ -131,6 +131,16 @@
             <el-option :label="$t('testcase.critical')" value="critical" />
           </el-select>
           <el-select
+            v-model="automatabilityFilter"
+            class="filter-select"
+            :placeholder="$t('testcase.automatabilityFilter')"
+            clearable
+            @change="handleFilter"
+          >
+            <el-option :label="$t('common.yes')" value="true" />
+            <el-option :label="$t('common.no')" value="false" />
+          </el-select>
+          <el-select
             v-model="maintainerFilter"
             class="filter-select"
             :placeholder="$t('testcase.maintainerFilter')"
@@ -146,24 +156,37 @@
             />
           </el-select>
           <el-tooltip :content="$t('testcase.dateRangeTip')" placement="top" :show-after="400">
-            <el-date-picker
-              v-model="dateRange"
-              class="filter-date"
-              type="daterange"
-              value-format="YYYY-MM-DD"
-              :range-separator="$t('testcase.dateRangeSeparator')"
-              :start-placeholder="$t('testcase.dateRangeStart')"
-              :end-placeholder="$t('testcase.dateRangeEnd')"
-              unlink-panels
-              clearable
-              @change="handleFilter"
-            />
+            <!-- Tooltip 需要原生单根节点，避免直接包裹 ElDatePicker 时的运行时指令警告。 -->
+            <span class="filter-date-wrapper">
+              <el-date-picker
+                v-model="dateRange"
+                class="filter-date"
+                type="daterange"
+                value-format="YYYY-MM-DD"
+                :range-separator="$t('testcase.dateRangeSeparator')"
+                :start-placeholder="$t('testcase.dateRangeStart')"
+                :end-placeholder="$t('testcase.dateRangeEnd')"
+                unlink-panels
+                clearable
+                @change="handleFilter"
+              />
+            </span>
           </el-tooltip>
         </div>
       </div>
       
       <div class="list-summary">
         <span class="summary-text">{{ $t('testcase.listSummary', { total, selected: selectedCount }) }}</span>
+        <div class="automation-summary">
+          <span class="automation-summary-item">
+            <el-icon class="automation-summary-icon-ui"><Monitor /></el-icon>
+            {{ $t('testcase.uiAutomationSummary', { linked: automationSummary.ui_linked, total: automationSummary.automatable_total, rate: automationSummary.ui_rate }) }}
+          </span>
+          <span class="automation-summary-item">
+            <el-icon class="automation-summary-icon-api"><Link /></el-icon>
+            {{ $t('testcase.apiAutomationSummary', { linked: automationSummary.api_linked, total: automationSummary.automatable_total, rate: automationSummary.api_rate }) }}
+          </span>
+        </div>
       </div>
 
       <div class="table-container">
@@ -178,7 +201,7 @@
           @select-all="handleSelectAll"
           @sort-change="handleSortChange">
           <el-table-column type="selection" width="30" />
-          <el-table-column prop="id" :label="$t('testcase.caseId')" width="90" sortable="custom" />
+          <el-table-column prop="id" :label="$t('testcase.caseId')" width="60" sortable="custom" />
           <el-table-column prop="title" :label="$t('testcase.caseTitle')" min-width="360">
             <template #default="{ row }">
               <el-tooltip :content="row.title" placement="top" :show-after="500">
@@ -193,17 +216,26 @@
               </el-tooltip>
             </template>
           </el-table-column>
-          <el-table-column :label="$t('testcase.automation')" width="110">
+          <el-table-column prop="automatability" :label="$t('testcase.automatability')" width="80">
+            <template #default="{ row }">
+              <el-tag :type="row.automatability ? 'success' : 'info'" size="small">
+                {{ row.automatability ? $t('common.yes') : $t('common.no') }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column :label="$t('testcase.automation')" width="100">
             <template #default="{ row }">
               <AutomationCaseLinks
+                v-if="row.automatability"
                 :test-case-id="row.id"
                 :project-id="row.project?.id"
                 :links="row.automation_links || []"
-                @update:links="row.automation_links = $event"
+                @update:links="updateAutomationLinks(row, $event)"
               />
+              <span v-else class="automation-disabled-mark" aria-label="不可自动化">×</span>
             </template>
           </el-table-column>
-          <el-table-column prop="priority" :label="$t('testcase.priority')" width="100" sortable="custom">
+          <el-table-column prop="priority" :label="$t('testcase.priority')" width="80" sortable="custom">
             <template #default="{ row }">
               <el-tag :class="`priority-tag ${row.priority}`">{{ getPriorityText(row.priority) }}</el-tag>
             </template>
@@ -214,7 +246,7 @@
             </template>
           </el-table-column>
           <el-table-column prop="author.username" :label="$t('testcase.maintainer')" width="100" />
-          <el-table-column prop="updated_at" :label="$t('testcase.updatedAt')" width="170" sortable="custom">
+          <el-table-column prop="updated_at" :label="$t('testcase.updatedAt')" width="160" sortable="custom">
             <template #default="{ row }">
               {{ formatDate(row.updated_at) }}
             </template>
@@ -274,6 +306,10 @@
       v-model="formDialogVisible"
       :test-case-id="editingCaseId"
       :project-id="formDialogProjectId"
+      :navigation-cases="formNavigationCases"
+      :current-case-index="formCurrentCaseIndex"
+      :initial-automation-links="formEditingCase?.automation_links"
+      @navigate="navigateFormCase"
       @saved="onCaseFormSaved"
     />
 
@@ -349,11 +385,11 @@
 <script setup>
 defineOptions({ name: 'TestCaseList' })
 
-import { ref, onMounted, onActivated, onUnmounted, computed, nextTick } from 'vue'
+import { ref, onMounted, onUnmounted, computed, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox, ElLoading } from 'element-plus'
-import { Plus, Search, Download, Delete, Edit, Upload, Folder, FolderOpened, MoreFilled, Loading } from '@element-plus/icons-vue'
+import { Plus, Search, Download, Delete, Edit, Upload, Folder, FolderOpened, MoreFilled, Loading, Monitor, Link } from '@element-plus/icons-vue'
 import ResizableSplitPane from '@/components/ResizableSplitPane.vue'
 import AutomationCaseLinks from '@/components/testcases/AutomationCaseLinks.vue'
 import TestCaseFormDialog from '@/components/testcases/TestCaseFormDialog.vue'
@@ -369,8 +405,11 @@ const router = useRouter()
 // 新建 / 编辑用例弹窗状态：testCaseId 为空表示新建
 const formDialogVisible = ref(false)
 const editingCaseId = ref(null)
+const formNavigationCases = ref([])
 const formDialogProjectId = ref(null)
 const loading = ref(false)
+// 左侧模块树及其统计数据的加载状态，页面进入时先展示，直到首轮数据请求完成
+const moduleTreeLoading = ref(true)
 const sidebarWidth = ref(280)
 const moduleTree = ref([])
 const moduleTreeRef = ref(null)
@@ -408,6 +447,7 @@ const projects = ref([])
 const maintainers = ref([])
 const currentPage = ref(1)
 const total = ref(0)
+const automationSummary = ref({ total: 0, automatable_total: 0, ui_linked: 0, api_linked: 0, ui_rate: 0, api_rate: 0 })
 const tableRef = ref(null)
 const loadMoreSentinel = ref(null)
 const loadingMore = ref(false)
@@ -416,6 +456,41 @@ const selectAllMode = ref(false)
 // 程序化勾选新加载行时，避免 selection-change 把 selectAllMode 误判为取消全选
 const syncingSelection = ref(false)
 const hasMore = computed(() => testcases.value.length < total.value)
+const updateAutomationLinks = (row, links) => {
+  const previous = row.automation_links || []
+  const countByType = (items, type) => items.filter(link => link.type === type).length
+  const uiDelta = countByType(links, 'ui_test_case') - countByType(previous, 'ui_test_case')
+  const apiDelta = countByType(links, 'api_scenario_case') - countByType(previous, 'api_scenario_case')
+  row.automation_links = links
+  automationSummary.value = {
+    ...automationSummary.value,
+    ui_linked: Math.max(0, automationSummary.value.ui_linked + uiDelta),
+    api_linked: Math.max(0, automationSummary.value.api_linked + apiDelta),
+    ui_rate: automationSummary.value.automatable_total
+      ? Math.round((automationSummary.value.ui_linked + uiDelta) / automationSummary.value.automatable_total * 1000) / 10
+      : 0,
+    api_rate: automationSummary.value.automatable_total
+      ? Math.round((automationSummary.value.api_linked + apiDelta) / automationSummary.value.automatable_total * 1000) / 10
+      : 0
+  }
+}
+const updateAutomationEligibility = (row, canAutomate) => {
+  const previous = row.automatability !== false
+  const next = canAutomate !== false
+  if (previous === next) return
+  const delta = next ? 1 : -1
+  const summary = automationSummary.value
+  const automatableTotal = summary.automatable_total + delta
+  row.automatability = next
+  automationSummary.value = {
+    ...summary,
+    automatable_total: automatableTotal,
+    ui_rate: automatableTotal ? Math.round(summary.ui_linked / automatableTotal * 1000) / 10 : 0,
+    api_rate: automatableTotal ? Math.round(summary.api_linked / automatableTotal * 1000) / 10 : 0
+  }
+}
+const formCurrentCaseIndex = computed(() => formNavigationCases.value.findIndex(item => String(item.id) === String(editingCaseId.value)))
+const formEditingCase = computed(() => formNavigationCases.value[formCurrentCaseIndex.value] || null)
 const LIST_PAGE_SIZE = 50
 const MAX_PAGE_SIZE = 100
 // 批量删除接口单次最多 5000 个 id（与后端 max_batch_size 保持一致），超出则分块提交
@@ -424,6 +499,7 @@ const searchText = ref('')
 // 由左侧模块树选中的项目驱动，不再单独提供项目筛选器
 const projectFilter = ref('')
 const priorityFilter = ref('')
+const automatabilityFilter = ref('')
 const maintainerFilter = ref('')
 // 创建日期范围筛选：['YYYY-MM-DD', 'YYYY-MM-DD']
 const dateRange = ref(null)
@@ -448,6 +524,7 @@ const buildListParams = (page, size) => {
     search: searchText.value,
     project: projectFilter.value,
     priority: priorityFilter.value,
+    automatability: automatabilityFilter.value,
     maintainer: maintainerFilter.value
   }
   if (selectedModule.value) {
@@ -464,12 +541,28 @@ const buildListParams = (page, size) => {
   return params
 }
 
+const isUnfilteredProjectList = () => (
+  Boolean(projectFilter.value)
+  && String(projectFilter.value) === String(moduleProjectId.value)
+  && !selectedModule.value
+  && !searchText.value
+  && !priorityFilter.value
+  && !automatabilityFilter.value
+  && !maintainerFilter.value
+  && !(Array.isArray(dateRange.value) && dateRange.value.length === 2)
+)
+
 const fetchTestCases = async () => {
   loading.value = true
   try {
     const response = await api.get('/testcases/', { params: buildListParams(1, LIST_PAGE_SIZE) })
     testcases.value = response.data.results || []
     total.value = response.data.count || 0
+    automationSummary.value = response.data.automation_summary || automationSummary.value
+    // 未筛选项目列表时，列表响应的总数就是左侧“全部用例”数量，避免再次请求 page_size=1。
+    if (isUnfilteredProjectList()) allProjectCount.value = total.value
+    // 详情页需要复用当前列表的筛选结果，保存已加载行作为导航和编辑弹窗左侧列表。
+    saveDetailNavigationContext()
     currentPage.value = 1
     selectAllMode.value = false
     selectedTestCases.value = []
@@ -502,6 +595,8 @@ const loadMore = async () => {
     testcases.value.push(...results)
     currentPage.value = nextPage
     if (typeof response.data.count === 'number') total.value = response.data.count
+    if (response.data.automation_summary) automationSummary.value = response.data.automation_summary
+    saveDetailNavigationContext()
     if (keepSelectAll) {
       await nextTick()
       results.forEach(row => tableRef.value?.toggleRowSelection(row, true))
@@ -559,20 +654,7 @@ const resolveSelectedForAction = async () => {
   return selectedTestCases.value
 }
 
-onActivated(() => {
-  // 已滚动加载多页或处于全选状态时不再自动刷新，避免丢失已加载数据与勾选
-  if (selectAllMode.value || selectedTestCases.value.length || testcases.value.length > LIST_PAGE_SIZE) return
-  fetchTestCases()
-})
-
-const refreshTestCasesOnFocus = () => {
-  if (document.visibilityState !== 'visible') return
-  if (selectAllMode.value || selectedTestCases.value.length || testcases.value.length > LIST_PAGE_SIZE) return
-  fetchTestCases()
-}
-onMounted(() => window.addEventListener('focus', refreshTestCasesOnFocus))
 onUnmounted(() => {
-  window.removeEventListener('focus', refreshTestCasesOnFocus)
   sentinelObserver?.disconnect()
   sentinelObserver = null
 })
@@ -596,17 +678,22 @@ const moveModuleOptions = computed(() => {
   return [{ id: '__root__', label: t('testcase.noParentModule'), children: addLabels(moduleTree.value) }]
 })
 const loadModuleTree = async () => {
-  if (!moduleProjectId.value) { moduleTree.value = []; return }
+  if (!moduleProjectId.value) {
+    moduleTree.value = []
+    moduleTreeLoading.value = false
+    return
+  }
+  moduleTreeLoading.value = true
   try {
     const { data } = await api.get('/testcases/modules/', { params: { project: moduleProjectId.value } })
     moduleTree.value = data
-    const [allCases, unassigned] = await Promise.all([
-      api.get('/testcases/', { params: { project: moduleProjectId.value, page_size: 1 } }),
-      api.get('/testcases/', { params: { project: moduleProjectId.value, module: 'none', page_size: 1 } })
-    ])
-    allProjectCount.value = allCases.data.count || 0
+    // 全部用例数量由未筛选列表请求复用，模块树这里只需查询未分配模块数量。
+    const unassigned = await api.get('/testcases/', {
+      params: { project: moduleProjectId.value, module: 'none', page_size: 1 }
+    })
     unassignedCount.value = unassigned.data.count || 0
   } catch (error) { ElMessage.error(t('testcase.fetchModulesFailed')) }
+  finally { moduleTreeLoading.value = false }
 }
 const handleModuleExpand = (module) => {
   if (!expandedModuleKeys.value.includes(module.id)) {
@@ -716,7 +803,34 @@ const moveSelectedCases = async () => {
 }
 
 const goToTestCase = (id) => {
+  // 点击标题时立即进入详情页，导航快照使用当前已加载结果，避免阻塞点击并触发额外列表请求。
+  saveDetailNavigationContext(testcases.value)
   router.push(`/ai-generation/testcases/${id}`)
+}
+
+// 将当前列表快照交给详情页，避免详情页重新请求后丢失列表筛选和排序状态。
+const saveDetailNavigationContext = (items = testcases.value) => {
+  try {
+    sessionStorage.setItem('testcase-detail-navigation', JSON.stringify({
+      cases: items.map(item => ({
+        id: item.id,
+        title: item.title,
+        automation_links: item.automation_links || []
+      })),
+      total: total.value,
+      filters: {
+        search: searchText.value,
+        project: projectFilter.value,
+        module: selectedModule.value,
+        priority: priorityFilter.value,
+        maintainer: maintainerFilter.value,
+        dateRange: dateRange.value,
+        ordering: sortParams.value
+      }
+    }))
+  } catch (error) {
+    console.warn('保存用例详情导航上下文失败:', error)
+  }
 }
 
 const goToCreateTestCase = () => {
@@ -726,12 +840,39 @@ const goToCreateTestCase = () => {
 }
 
 const editTestCase = (testcase) => {
+  // 列表入口保留当前已加载列表，供编辑弹窗顶部前后切换。
+  formNavigationCases.value = testcases.value.map(item => ({
+    id: item.id,
+    title: item.title,
+    automation_links: item.automation_links || []
+  }))
+  saveDetailNavigationContext(testcases.value)
   editingCaseId.value = testcase.id
   formDialogVisible.value = true
 }
 
-const onCaseFormSaved = async () => {
-  await Promise.all([fetchTestCases(), loadModuleTree()])
+const navigateFormCase = (offset) => {
+  const nextIndex = formCurrentCaseIndex.value + offset
+  const target = formNavigationCases.value[nextIndex]
+  if (target) editingCaseId.value = target.id
+}
+
+const onCaseFormSaved = async detail => {
+  if (!detail?.id) return
+  const row = testcases.value.find(item => String(item.id) === String(detail.id))
+  if (row) {
+    // 更新接口不一定返回自动化关联，保留当前快照中的已有关联。
+    const automationLinks = row.automation_links
+    updateAutomationEligibility(row, detail.automatability)
+    Object.assign(row, detail)
+    if (automationLinks && !detail.automation_links) row.automation_links = automationLinks
+  }
+  const snapshot = formNavigationCases.value.find(item => String(item.id) === String(detail.id))
+  if (snapshot) {
+    snapshot.title = detail.title
+    if (detail.automation_links) snapshot.automation_links = detail.automation_links
+  }
+  saveDetailNavigationContext(testcases.value)
 }
 
 const deleteTestCase = async (testcase) => {
@@ -1157,9 +1298,9 @@ onMounted(async () => {
   moduleProjectId.value = preferredProjectId ?? (projects.value[0]?.id ?? '')
   if (moduleProjectId.value) rememberSelectedProject(moduleProjectId.value, projects.value)
   if (preferredProjectId) projectFilter.value = preferredProjectId
-  await loadModuleTree()
   await fetchMaintainers()
-  fetchTestCases()
+  await fetchTestCases()
+  await loadModuleTree()
 })
 </script>
 
@@ -1255,6 +1396,18 @@ onMounted(async () => {
     width: 230px;
     flex: 0 0 230px;
   }
+
+  .filter-date-wrapper {
+    display: inline-flex;
+    width: 230px;
+    flex: 0 0 230px;
+    min-width: 0;
+  }
+
+  .filter-date-wrapper :deep(.filter-date) {
+    width: 100%;
+    flex: 1 1 auto;
+  }
 }
 
 .table-container {
@@ -1267,6 +1420,11 @@ onMounted(async () => {
   
   :deep(.el-table__body-wrapper) {
     overflow-y: auto !important;
+  }
+
+  /* 缩窄排序箭头占位，避免 Element Plus 默认 24px 宽度挤压表头文字。 */
+  :deep(.el-table__header .caret-wrapper) {
+    width: 14px;
   }
 }
 
@@ -1295,6 +1453,36 @@ onMounted(async () => {
   border-bottom: 1px solid #ebeef5;
   font-size: 14px;
   color: #303133;
+}
+
+.automation-summary {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  margin-left: auto;
+  color: #606266;
+}
+
+.automation-summary-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+.automation-summary-item :deep(.automation-summary-icon-ui) {
+  color: #e6a23c;
+}
+
+.automation-summary-item :deep(.automation-summary-icon-api) {
+  color: #67c23a;
+}
+
+.automation-disabled-mark {
+  color: var(--el-text-color-secondary);
+  font-size: 18px;
+  line-height: 1;
+  margin-left: 5px;
 }
 
 .summary-text {

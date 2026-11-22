@@ -24,5 +24,7 @@ export default {
   warning: '警告',
   selectProject: '选择项目',
   previous: '上一步',
-  next: '下一步'
+  next: '下一步',
+  yes: '是',
+  no: '否'
 }
