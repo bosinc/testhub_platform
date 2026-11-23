@@ -142,6 +142,17 @@ def validate_test_case_step_data(
         elif operation == 'switch' and not params.get('storage_state_id'):
             raise serializers.ValidationError('切换登录态需要选择目标登录态')
 
+    # 清空购物车动作：API 地址与鉴权模式校验。
+    if action_type == 'clearCart':
+        params = action_params or {}
+        api_base = str(params.get('api_base') or '').strip() or str(input_value or '').strip()
+        if not api_base:
+            raise serializers.ValidationError('清空购物车需要填写 API 地址')
+        if params.get('auth_mode', 'bearer') not in {'bearer', 'none'}:
+            raise serializers.ValidationError('清空购物车的鉴权模式仅支持 bearer 或 none')
+        if element:
+            raise serializers.ValidationError('清空购物车步骤不能绑定元素')
+
 
 class UserSerializer(serializers.ModelSerializer):
     class Meta:

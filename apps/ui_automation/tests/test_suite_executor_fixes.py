@@ -169,3 +169,115 @@ class TestSuiteExecutorFixes(SimpleTestCase):
 
         self.assertTrue(result['success'])
         self.assertTrue(result['skipped'])
+
+
+    # ---- clearCart 清空购物车动作 ----
+
+    def _make_clear_cart_executor(self):
+        executor = object.__new__(TestExecutor)
+        executor.variables = UiVariableContext()
+        executor.context = Mock()
+        return executor
+
+    def _clear_cart_step(self, params):
+        return {
+            'step_number': 1,
+            'action_type': 'clearCart',
+            'description': '清空购物车',
+            'element': None,
+            'action_params': params,
+            'wait_time': 1000,
+            'input_value': '',
+            'assert_value': '',
+            'assert_type': '',
+        }
+
+    def test_clear_cart_bearer_mode_refreshes_token_then_deletes(self):
+        executor = self._make_clear_cart_executor()
+        api = executor.context.request
+
+        refresh_resp = Mock()
+        refresh_resp.status = 200
+        refresh_resp.json.return_value = {'code': 200, 'data': 'jwt-token-xyz'}
+        delete_resp = Mock()
+        delete_resp.status = 200
+
+        def fetch(url, **kwargs):
+            self.assertTrue(url.endswith('/cart'))
+            self.assertEqual(kwargs['method'], 'DELETE')
+            self.assertEqual(kwargs['headers']['Authorization'], 'Bearer jwt-token-xyz')
+            return delete_resp
+
+        api.get.return_value = refresh_resp
+        api.fetch.side_effect = fetch
+
+        step = self._clear_cart_step({
+            'api_base': 'https://api.example.test',
+            'auth_mode': 'bearer',
+        })
+        result = executor._execute_step_playwright(step)
+
+        self.assertTrue(result['success'], result.get('error'))
+        api.get.assert_called_once()
+        self.assertIn('/auth/refreshToken', api.get.call_args.args[0])
+        api.fetch.assert_called_once()
+
+    def test_clear_cart_none_mode_skips_token_refresh(self):
+        executor = self._make_clear_cart_executor()
+        api = executor.context.request
+        delete_resp = Mock()
+        delete_resp.status = 204
+        api.fetch.return_value = delete_resp
+
+        step = self._clear_cart_step({
+            'api_base': 'https://release.pear.us',
+            'cart_path': '/api/cart',
+            'auth_mode': 'none',
+        })
+        result = executor._execute_step_playwright(step)
+
+        self.assertTrue(result['success'], result.get('error'))
+        api.get.assert_not_called()
+        args, kwargs = api.fetch.call_args
+        self.assertEqual(args[0], 'https://release.pear.us/api/cart')
+        self.assertEqual(kwargs['method'], 'DELETE')
+
+    def test_clear_cart_put_with_body(self):
+        executor = self._make_clear_cart_executor()
+        api = executor.context.request
+        resp = Mock()
+        resp.status = 200
+        api.fetch.return_value = resp
+
+        step = self._clear_cart_step({
+            'api_base': 'https://api.example.test',
+            'method': 'PUT',
+            'auth_mode': 'none',
+            'body': '{"items": []}',
+        })
+        result = executor._execute_step_playwright(step)
+
+        self.assertTrue(result['success'], result.get('error'))
+        _, kwargs = api.fetch.call_args
+        self.assertEqual(kwargs['method'], 'PUT')
+        self.assertEqual(kwargs['data'], '{"items": []}')
+
+    def test_clear_cart_fails_on_refresh_error(self):
+        executor = self._make_clear_cart_executor()
+        refresh_resp = Mock()
+        refresh_resp.status = 401
+        executor.context.request.get.return_value = refresh_resp
+
+        step = self._clear_cart_step({'api_base': 'https://api.example.test'})
+        result = executor._execute_step_playwright(step)
+
+        self.assertFalse(result['success'])
+        self.assertIn('401', result['error'])
+        executor.context.request.fetch.assert_not_called()
+
+    def test_clear_cart_requires_api_base(self):
+        executor = self._make_clear_cart_executor()
+        step = self._clear_cart_step({})
+        result = executor._execute_step_playwright(step)
+        self.assertFalse(result['success'])
+        self.assertIn('API', result['error'])

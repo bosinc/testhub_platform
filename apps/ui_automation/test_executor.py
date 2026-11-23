@@ -746,6 +746,12 @@ class TestExecutor:
             if step_data['action_type'] == 'storageState':
                 self._execute_storage_state_action(step_data.get('action_params') or {})
                 step_result['success'] = True
+            elif step_data['action_type'] == 'clearCart':
+                # 清空购物车：复用当前登录态，通过 HTTP 接口原子化清车。
+                # 不依赖页面元素，故优先于按元素分派的普通动作处理。
+                detail = self._execute_clear_cart(step_data)
+                step_result['success'] = True
+                step_result['result'] = detail
             elif step_data['action_type'] == 'navigate':
                 url = step_data.get('input_value', '')
                 if not url:
@@ -1485,6 +1491,98 @@ class TestExecutor:
             print(f"   错误信息: {error_str[:500]}")  # 限制长度避免刷屏
 
         return step_result
+
+    def _execute_clear_cart(self, step_data):
+        """清空当前登录态账号的购物车（原子化、幂等）。
+
+        通过 Playwright 的 ``context.request`` 发送 HTTP 请求：它复用浏览器上下文的
+        Cookie（含 httpOnly），且不受页面同源策略/CORS 限制，正好适配“登录态在浏览器、
+        清车 API 在另一域名”的场景。
+
+        鉴权与地址全部由步骤参数配置，保持动作通用（不绑定某个站点的业务实现）：
+          - action_params.api_base   : API 根地址，如 https://release.katana-api.1m.app
+          - action_params.cart_path  : 清车接口路径，默认 /cart
+          - action_params.method     : HTTP 方法，默认 DELETE
+          - action_params.auth_mode  : bearer（默认，见下）或 none
+          - action_params.refresh_path : 换取 JWT 的路径，默认 /auth/refreshToken
+          - action_params.refresh_query: 换 token 的查询串，默认 ?subdomainVanityUrl=
+          - action_params.body       : 自定义请求体（配合 PUT /cart 全量置空）
+          - input_value              : 可作为 api_base 的兜底（支持 {变量} 插值）
+
+        bearer 模式复刻门店的真实链路：先 GET {api_base}{refresh_path} 拿 JWT
+        （浏览器 Cookie 由 context.request 自动携带），再用 Authorization: Bearer <JWT>
+        调清车接口。空购物车时接口同样返回成功，因此动作天然幂等。
+        """
+        params = dict(step_data.get('action_params') or {})
+
+        def _render(value):
+            """渲染步骤里的 {变量}，未定义变量原样保留。"""
+            if not isinstance(value, str) or '{' not in value:
+                return value
+            try:
+                return self.variables.render(value)
+            except Exception:
+                return value
+
+        api_base = _render(params.get('api_base') or step_data.get('input_value') or '').rstrip('/')
+        if not api_base:
+            raise ValueError('清空购物车需要先配置 API 地址（action_params.api_base）')
+
+        cart_path = _render(params.get('cart_path') or '/cart')
+        if not str(cart_path).startswith('/'):
+            cart_path = '/' + str(cart_path)
+        method = str(params.get('method') or 'DELETE').upper()
+        auth_mode = str(params.get('auth_mode') or 'bearer').lower()
+        timeout = int(params.get('timeout') or 15000)
+
+        # 复用浏览器上下文的 APIRequestContext：自动带 Cookie，且不受 CORS 限制。
+        api = self.context.request
+
+        headers = {'accept': 'application/json'}
+        for key, value in (params.get('headers') or {}).items():
+            headers[str(key)] = _render(value)
+
+        if auth_mode == 'bearer':
+            refresh_path = _render(params.get('refresh_path') or '/auth/refreshToken')
+            if not str(refresh_path).startswith('/'):
+                refresh_path = '/' + str(refresh_path)
+            refresh_query = _render(params.get('refresh_query') or '?subdomainVanityUrl=')
+            refresh_url = f'{api_base}{refresh_path}{refresh_query}'
+            refresh_response = api.get(refresh_url, headers={'accept': 'application/json'}, timeout=timeout)
+            if refresh_response.status != 200:
+                raise ValueError(
+                    f'清空购物车失败：获取登录令牌返回 HTTP {refresh_response.status} '
+                    f'(url={refresh_url})'
+                )
+            token = None
+            try:
+                payload = refresh_response.json()
+                data = payload.get('data') if isinstance(payload, dict) else None
+                token = data.get('token') if isinstance(data, dict) else data
+                token = token or (payload.get('token') if isinstance(payload, dict) else None)
+            except Exception:
+                token = None
+            if not token:
+                raise ValueError('清空购物车失败：登录令牌响应中未找到 token')
+            headers['Authorization'] = f'Bearer {token}'
+        elif auth_mode != 'none':
+            raise ValueError(f'清空购物车失败：未知的鉴权模式 {auth_mode}（仅支持 bearer / none）')
+
+        cart_url = f'{api_base}{cart_path}'
+        request_kwargs = {'headers': headers, 'timeout': timeout}
+        if method in {'PUT', 'POST', 'PATCH'}:
+            body = params.get('body')
+            if body is not None:
+                request_kwargs['data'] = _render(body)
+            headers.setdefault('content-type', 'application/json')
+
+        response = api.fetch(cart_url, method=method, **request_kwargs)
+        if not (200 <= response.status < 300):
+            raise ValueError(
+                f'清空购物车失败：{method} {cart_url} 返回 HTTP {response.status}: '
+                f'{(response.text() or "")[:200]}'
+            )
+        return f'✓ 已清空购物车（{method} {cart_url} → HTTP {response.status}）'
 
     def _execute_storage_state_action(self, params):
         """在同步 Playwright 上下文中执行保存、切换或清除登录态。"""
