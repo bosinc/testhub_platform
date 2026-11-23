@@ -1,10 +1,10 @@
-from django.db import migrations
+from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('ui_automation', '0002_initial'),
+        ('ui_automation', '0007_storagestate_note'),
     ]
 
     operations = [
