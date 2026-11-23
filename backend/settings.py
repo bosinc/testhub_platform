@@ -441,15 +441,16 @@ LOGGING = {
     },
     'loggers': {
         # 其他具体模块的 logger 配置
+        # 这些 logger 自己挂了与 root 相同的 handler，propagate 必须为 False，否则每条日志会写两遍
         'django': {
             'handlers': ['file', 'error_file', 'console'],
             'level': 'INFO',
-            'propagate': True,
+            'propagate': False,
         },
         'apps.api_testing.views': {
             'handlers': ['file', 'error_file', 'console'],
             'level': 'INFO',
-            'propagate': True,
+            'propagate': False,
         },
         'apps.data_factory.tools.json_tools': {
             'handlers': ['file', 'error_file', 'console'],
@@ -464,7 +465,7 @@ LOGGING = {
         'apps.data_factory.tools': {
             'handlers': ['file', 'error_file', 'console'],
             'level': 'INFO',
-            'propagate': True,
+            'propagate': False,
         },
         'apps.analytics': {
             'handlers': ['file', 'error_file', 'console'],

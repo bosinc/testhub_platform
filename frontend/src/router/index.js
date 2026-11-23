@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import { useUserStore } from '@/stores/user'
+import { useUserStore, getTokenExpiresAt } from '@/stores/user'
+import { resolveLoginRedirect } from '@/utils/authNavigation'
 import { trackPageView } from '@/utils/tracker'
 
 // 静态导入常用组件来避免动态导入问题
@@ -746,7 +747,7 @@ router.beforeEach(async (to, _from, next) => {
                 action: 'redeem',
                 code: code,
             })
-            const expiresAt = Date.now() + 30 * 60 * 1000
+            const expiresAt = getTokenExpiresAt(response.data.access)
             localStorage.setItem('access_token', response.data.access)
             localStorage.setItem('refresh_token', response.data.refresh)
             localStorage.setItem('token_expires_at', expiresAt.toString())
@@ -780,9 +781,10 @@ router.beforeEach(async (to, _from, next) => {
     const isPublicPage = to.meta.public === true || to.meta.requiresGuest === true
 
     if (!isPublicPage && !userStore.isAuthenticated) {
-        next('/login')
+        // 带上目标地址，登录后回到原本要访问的页面（首页是默认落地页，不需要带）
+        next({ path: '/login', query: to.path === '/home' ? {} : { redirect: to.fullPath } })
     } else if (to.meta.requiresGuest && userStore.isAuthenticated) {
-        next('/home')
+        next(resolveLoginRedirect(to.query.redirect))
     } else {
         next()
     }

@@ -2,6 +2,62 @@ from django.contrib.auth import get_user_model
 from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APITestCase
+from rest_framework_simplejwt.tokens import RefreshToken
+
+
+class LogoutTests(APITestCase):
+    """退出登录必须作废 refresh token，且不依赖 access token 是否有效。"""
+
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username='logout user',
+            email='logout@example.com',
+            password='secret123',
+        )
+        self.refresh = str(RefreshToken.for_user(self.user))
+        self.url = reverse('logout')
+
+    def assert_refresh_rejected(self):
+        response = self.client.post(reverse('token_refresh'), {'refresh': self.refresh}, format='json')
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_blacklists_refresh_token_without_access_token(self):
+        response = self.client.post(self.url, {'refresh': self.refresh}, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assert_refresh_rejected()
+
+    def test_blacklists_refresh_token_when_access_token_is_invalid(self):
+        self.client.credentials(HTTP_AUTHORIZATION='Bearer expired.or.invalid')
+
+        response = self.client.post(self.url, {'refresh': self.refresh}, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assert_refresh_rejected()
+
+    def test_ends_session_created_by_password_login(self):
+        self.client.post(reverse('login'), {
+            'username': 'logout user',
+            'password': 'secret123',
+        }, format='json')
+        self.assertEqual(self.client.get(reverse('get_current_user')).status_code, status.HTTP_200_OK)
+
+        self.client.post(self.url, {'refresh': self.refresh}, format='json')
+
+        self.assertEqual(
+            self.client.get(reverse('get_current_user')).status_code,
+            status.HTTP_401_UNAUTHORIZED,
+        )
+
+    def test_tolerates_missing_or_malformed_refresh_token(self):
+        for payload in ({}, {'refresh': 'not-a-jwt'}, {'refresh': ['list']}):
+            response = self.client.post(self.url, payload, format='json')
+            self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        # 重复退出同一个 token 也不报错
+        self.client.post(self.url, {'refresh': self.refresh}, format='json')
+        response = self.client.post(self.url, {'refresh': self.refresh}, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
 
 
 class EmailRegistrationTests(APITestCase):

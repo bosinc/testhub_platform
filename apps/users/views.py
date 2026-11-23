@@ -1,5 +1,5 @@
 from rest_framework import generics, status, permissions
-from rest_framework.decorators import api_view, permission_classes, parser_classes
+from rest_framework.decorators import api_view, authentication_classes, permission_classes, parser_classes
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
 from django.contrib.auth import login, logout
@@ -17,6 +17,7 @@ from .serializers import (
 )
 
 # JWT 相关导入
+from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.tokens import RefreshToken
 
 # 短信注册/登录已停用；保留依赖和视图实现注释，恢复时再启用。
@@ -90,20 +91,24 @@ def login_view(request):
     })
 
 @api_view(['POST'])
+@authentication_classes([])
+@permission_classes([permissions.AllowAny])
 @csrf_exempt
 def logout_view(request):
-    """用户退出登录，将refresh token加入黑名单"""
-    if request.user.is_authenticated:
-        # 将 refresh token 加入黑名单
-        refresh_token = request.data.get('refresh')
-        if refresh_token:
-            try:
-                from rest_framework_simplejwt.tokens import RefreshToken as JWTRefreshToken
-                JWTRefreshToken(refresh_token).blacklist()
-            except Exception:
-                pass
+    """用户退出登录，将refresh token加入黑名单
 
-        logout(request)
+    不做登录态校验：access token 过期后同样要能退出，否则 refresh token 在有效期内一直可用。
+    持有 refresh token 本身即可证明身份，作废它不需要额外凭证。
+    """
+    refresh_token = request.data.get('refresh')
+    if isinstance(refresh_token, str) and refresh_token:
+        try:
+            RefreshToken(refresh_token).blacklist()
+        except TokenError:
+            # 已过期、已在黑名单或格式不对的 token 无需再作废
+            pass
+
+    logout(request)
 
     return Response({'message': '退出成功'})
 

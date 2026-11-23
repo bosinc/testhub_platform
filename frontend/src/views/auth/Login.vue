@@ -202,13 +202,15 @@ import { ref, reactive, computed } from 'vue'
 // import { onUnmounted } from 'vue'
 // import { Phone } from '@element-plus/icons-vue'
 // import api from '@/utils/api'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 import { User, Lock, Document, MagicStick, Connection, TrendCharts, ArrowDown } from '@element-plus/icons-vue'
 import { useUserStore } from '@/stores/user'
 import { useAppStore } from '@/stores/app'
+import { resolveLoginRedirect } from '@/utils/authNavigation'
 
+const route = useRoute()
 const router = useRouter()
 const userStore = useUserStore()
 const appStore = useAppStore()
@@ -368,7 +370,8 @@ const handleLogin = async () => {
       try {
         await userStore.login(form)
         ElMessage.success(t('auth.loginSuccess'))
-        await router.replace('/home')
+        // 登录态失效后被带到登录页时，回到原来的页面
+        await router.replace(resolveLoginRedirect(route.query.redirect))
       } catch (error) {
         ElMessage.error(getLoginErrorMessage(error))
       } finally {

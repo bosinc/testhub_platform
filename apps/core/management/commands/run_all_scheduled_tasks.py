@@ -12,6 +12,9 @@ logger = logging.getLogger(__name__)
 class Command(BaseCommand):
     help = '运行所有模块的定时任务调度器（API测试 + UI自动化 + APP自动化 + 性能测试）'
 
+    # 上次清理过期 JWT 记录的日期
+    _tokens_flushed_on = None
+
     def add_arguments(self, parser):
         parser.add_argument(
             '--interval',
@@ -58,6 +61,9 @@ class Command(BaseCommand):
                 # 调度性能测试模块的定时任务
                 perf_count = self.schedule_perf_tasks()
 
+                # 每天清理一次已过期的 JWT 记录
+                self.flush_expired_tokens(now.date())
+
                 total_count = api_count + ui_count + app_count + perf_count
                 if total_count > 0:
                     self.stdout.write(self.style.SUCCESS(f"✓ 本次调度执行了 {total_count} 个任务 (API: {api_count}, UI: {ui_count}, APP: {app_count}, 性能: {perf_count})"))
@@ -99,6 +105,24 @@ class Command(BaseCommand):
             logger.error(f"收敛失联执行记录失败: {e}", exc_info=True)
             self.stdout.write(self.style.ERROR(f"  [API] 收敛失联执行记录失败: {e}"))
             return 0
+
+    def flush_expired_tokens(self, today):
+        """清理已过期的 JWT 记录，每天（及调度器启动时）执行一次。
+        refresh token 每轮换一次都会在 OutstandingToken / BlacklistedToken 各留一行，
+        过期后这些记录不再有用，不清理会无限增长。
+        """
+        if self._tokens_flushed_on == today:
+            return
+        # 先记日期：清理失败也等到第二天再试，避免每个调度周期都重复报错
+        self._tokens_flushed_on = today
+        try:
+            from django.core.management import call_command
+
+            call_command('flushexpiredtokens')
+            self.stdout.write("  [系统] 已清理过期的 JWT 记录")
+        except Exception as e:  # noqa: BLE001 - 清理失败不能中断调度器
+            logger.error(f"清理过期 JWT 记录失败: {e}", exc_info=True)
+            self.stdout.write(self.style.ERROR(f"  [系统] 清理过期 JWT 记录失败: {e}"))
 
     def schedule_api_tasks(self):
         """调度 API 测试模块的定时任务"""

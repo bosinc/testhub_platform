@@ -1,7 +1,6 @@
 import axios from 'axios'
 import { ElMessage } from 'element-plus'
 import { useUserStore } from '@/stores/user'
-import { redirectToLogin } from '@/utils/authNavigation'
 
 const api = axios.create({
   baseURL: '/api',
@@ -10,24 +9,6 @@ const api = axios.create({
     'Content-Type': 'application/json',
   },
 })
-
-// 正在刷新的标志
-let isRefreshing = false
-// 等待刷新的请求队列
-let failedQueue = []
-
-// 处理队列中的请求
-const processQueue = (error, token = null) => {
-  failedQueue.forEach(prom => {
-    if (error) {
-      prom.reject(error)
-    } else {
-      prom.resolve(token)
-    }
-  })
-
-  failedQueue = []
-}
 
 // 请求拦截器
 api.interceptors.request.use(
@@ -41,39 +22,22 @@ api.interceptors.request.use(
 
     // 如果有access token
     if (userStore.accessToken) {
-      // 检查token是否即将过期（5分钟内）
-      if (userStore.isTokenExpiringSoon && !userStore.isTokenExpired) {
-        // 如果没有正在刷新，开始刷新
-        if (!isRefreshing) {
-          isRefreshing = true
-          console.log('Token即将过期，开始刷新...')
-
-          try {
-            const newToken = await userStore.refreshAccessToken()
-            console.log('Token刷新成功')
-            processQueue(null, newToken)
-
-            // 更新当前请求的token
-            config.headers.Authorization = `Bearer ${newToken}`
-          } catch (error) {
-            console.error('Token刷新失败:', error)
-            processQueue(error, null)
-            // 刷新失败会在user store中自动logout
+      // 检查token是否即将过期（5分钟内）。并发请求共用 user store 中同一个进行中的刷新。
+      // logout 请求不触发刷新：它可能正是刷新失败后发出的，而且新换的 refresh token 不会被加入黑名单。
+      if (
+        config.url !== '/auth/logout/' &&
+        userStore.isTokenExpiringSoon() &&
+        !userStore.isTokenExpired()
+      ) {
+        try {
+          await userStore.refreshAccessToken()
+        } catch (error) {
+          console.error('Token刷新失败:', error)
+          // refresh token 被拒时 user store 已自动logout；
+          // 只是网络或服务端故障时，当前 token 尚未过期，继续用它发送请求
+          if (!userStore.accessToken) {
             return Promise.reject(error)
-          } finally {
-            isRefreshing = false
           }
-        } else {
-          // 如果正在刷新，将请求加入队列
-          console.log('Token正在刷新，请求加入队列等待...')
-          return new Promise((resolve, reject) => {
-            failedQueue.push({ resolve, reject })
-          }).then(token => {
-            config.headers.Authorization = `Bearer ${token}`
-            return config
-          }).catch(err => {
-            return Promise.reject(err)
-          })
         }
       }
 
@@ -99,31 +63,26 @@ api.interceptors.response.use(
 
     // 如果是401错误且不是刷新token的请求
     if (error.response?.status === 401 && !originalRequest._retry) {
-      // 如果是logout请求失败，直接清除本地状态不再重试logout，防止死循环
+      // 如果是logout请求失败，直接清除本地状态不再重试logout，防止死循环（跳转登录页由 user store 的 logout 负责）
       if (originalRequest.url === '/auth/logout/') {
         console.error('Logout请求401，直接清除本地状态')
         userStore.clearAuth()
-        redirectToLogin()
         return Promise.reject(error)
       }
 
-      // 如果是刷新token的请求失败
+      // 刷新token的请求失败：是否登出由 user store 判断（可能只是其他标签页抢先轮换了 refresh token）
       if (originalRequest.url === '/auth/token/refresh/') {
-        console.error('Refresh token失败，跳转登录页')
-        await userStore.logout()
         return Promise.reject(error)
       }
 
       // 如果有refresh token，尝试刷新
-      if (userStore.refreshToken && !isRefreshing) {
+      if (userStore.refreshToken) {
         originalRequest._retry = true
-        isRefreshing = true
 
         try {
-          console.log('收到401响应，尝试刷新token...')
-          const newToken = await userStore.refreshAccessToken()
-          console.log('Token刷新成功，重试原请求')
-          processQueue(null, newToken)
+          // 并发的401共用同一个进行中的刷新，各自等到结果后重试原请求
+          const staleToken = String(originalRequest.headers?.Authorization || '').replace(/^Bearer /, '')
+          const newToken = await userStore.refreshAccessToken(staleToken)
 
           // 更新当前请求的token
           originalRequest.headers.Authorization = `Bearer ${newToken}`
@@ -132,16 +91,13 @@ api.interceptors.response.use(
           return api(originalRequest)
         } catch (refreshError) {
           console.error('Token刷新失败:', refreshError)
-          processQueue(refreshError, null)
-          await userStore.logout()
+          // refresh token 被拒时 user store 已自动logout；网络或服务端故障则保留登录态，本次请求按失败处理
           return Promise.reject(refreshError)
-        } finally {
-          isRefreshing = false
         }
       } else {
         // 没有refresh token，直接退出
         console.error('没有refresh token，跳转登录页')
-        await userStore.logout()
+        await userStore.logout({ sessionExpired: true })
       }
 
       return Promise.reject(error)
