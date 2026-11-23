@@ -2372,8 +2372,8 @@ class TestCaseViewSet(viewsets.ModelViewSet):
         headless = _request_bool(request.data.get('headless'), False)
 
         if engine_type == 'selenium' and test_case.steps.filter(
-                action_type='storageState').exists():
-            return Response({'error': '包含登录态步骤的测试用例必须使用 Playwright 执行'},
+                action_type__in=['storageState', 'clearCart']).exists():
+            return Response({'error': '包含登录态或清空购物车步骤的测试用例必须使用 Playwright 执行'},
                             status=status.HTTP_400_BAD_REQUEST)
 
         # 先建记录再检查环境：环境不可用时也要留下一条 failed 记录可追溯。

@@ -753,6 +753,7 @@ class TestCaseStep(models.Model):
         ('navigate', '跳转URL'),
         ('setVariable', '设置临时变量'),
         ('storageState', '登录态'),
+        ('clearCart', '清空购物车'),
     ]
 
     ASSERT_TYPE_CHOICES = [

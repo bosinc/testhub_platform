@@ -94,6 +94,35 @@
               </el-option>
             </el-select>
           </div>
+          <!-- 清空购物车步骤通过 HTTP 接口清车，配置 API 地址、接口路径与鉴权方式。 -->
+          <div v-else-if="element.action_type === 'clearCart'" class="clear-cart-fields">
+            <div class="step-field">
+              <el-input v-model="element.action_params.api_base" size="default" :placeholder="t('uiAutomation.stepEditor.clearCartApiBase')" @input="emitSteps" />
+            </div>
+            <div class="step-field">
+              <el-input v-model="element.action_params.cart_path" size="default" :placeholder="t('uiAutomation.stepEditor.clearCartPath')" @input="emitSteps" />
+              <el-select v-model="element.action_params.method" size="default" class="clear-cart-method">
+                <el-option label="DELETE" value="DELETE" /><el-option label="PUT" value="PUT" /><el-option label="POST" value="POST" />
+              </el-select>
+            </div>
+            <div class="step-field">
+              <el-select v-model="element.action_params.auth_mode" size="default" :placeholder="t('uiAutomation.stepEditor.clearCartAuthMode')" @change="emitSteps">
+                <el-option :label="t('uiAutomation.stepEditor.clearCartAuthBearer')" value="bearer" />
+                <el-option :label="t('uiAutomation.stepEditor.clearCartAuthNone')" value="none" />
+              </el-select>
+            </div>
+            <template v-if="element.action_params.auth_mode === 'bearer'">
+              <div class="step-field">
+                <el-input v-model="element.action_params.refresh_path" size="default" :placeholder="t('uiAutomation.stepEditor.clearCartRefreshPath')" @input="emitSteps" />
+              </div>
+              <div class="step-field">
+                <el-input v-model="element.action_params.refresh_query" size="default" :placeholder="t('uiAutomation.stepEditor.clearCartRefreshQuery')" @input="emitSteps" />
+              </div>
+            </template>
+            <div v-if="['PUT', 'POST'].includes(element.action_params.method)" class="step-field">
+              <el-input v-model="element.action_params.body" size="default" :placeholder="t('uiAutomation.stepEditor.clearCartBody')" @input="emitSteps" />
+            </div>
+          </div>
           <div v-else-if="element.action_type === 'getText'" class="step-field">
             <el-input v-model="element.assert_value" size="default" :placeholder="t('uiAutomation.stepEditor.saveToVariable')" @input="emitSteps" />
           </div>
@@ -147,7 +176,7 @@ const emit = defineEmits(['update:modelValue', 'change', 'helper', 'variable', '
 const strategies = ['role', 'label', 'placeholder', 'text', 'test-id', 'title', 'alt-text', 'css', 'xpath']
 const { t } = useI18n()
 // 动作标识保持不变，仅展示文案随当前语言即时更新。
-const actionTypes = ['click', 'fill', 'press', 'select', 'check', 'uncheck', 'hover', 'getText', 'waitFor', 'scroll', 'screenshot', 'assert', 'wait', 'switchTab', 'navigate', 'setVariable', 'storageState']
+const actionTypes = ['click', 'fill', 'press', 'select', 'check', 'uncheck', 'hover', 'getText', 'waitFor', 'scroll', 'screenshot', 'assert', 'wait', 'switchTab', 'navigate', 'setVariable', 'storageState', 'clearCart']
 const actions = computed(() => actionTypes.map(value => ({
   value,
   // 登录态复用管理模块的统一文案，避免维护重复翻译键。
@@ -165,7 +194,7 @@ const addStep = () => localSteps.value = [...localSteps.value, {
 }]
 const removeStep = index => { localSteps.value = localSteps.value.filter((_, i) => i !== index) }
 const needsInput = action => ['fill', 'press', 'select'].includes(action)
-const needsElement = step => !['wait', 'switchTab', 'screenshot', 'navigate', 'setVariable', 'storageState'].includes(step.action_type) && !(step.action_type === 'assert' && step.assert_type === 'urlContains')
+const needsElement = step => !['wait', 'switchTab', 'screenshot', 'navigate', 'setVariable', 'storageState', 'clearCart'].includes(step.action_type) && !(step.action_type === 'assert' && step.assert_type === 'urlContains')
 const hasElement = step => Boolean(step.element_id)
 const locatorOptionsText = options => JSON.stringify(options || {})
 // 关闭的选择器只保留已选项，避免每个步骤都创建整份元素库的选项组件。
@@ -217,6 +246,7 @@ const onActionChange = step => {
   if (step.action_type !== 'assert') { step.assert_type = 'textContains'; step.assert_value = '' }
   if (!needsElement(step)) { step.element_id = ''; step.element_page = '' }
   if (step.action_type === 'storageState') step.action_params = { operation: 'save', mode: 'save_as', name: '', storage_state_id: null }
+  if (step.action_type === 'clearCart') step.action_params = { api_base: '', cart_path: '/cart', method: 'DELETE', auth_mode: 'bearer', refresh_path: '/auth/refreshToken', refresh_query: '?subdomainVanityUrl=', body: '' }
   emitSteps()
 }
 // 覆盖时沿用目标登录态名称，兼容保存校验并避免隐藏的旧名称重命名目标。
