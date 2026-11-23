@@ -1,5 +1,5 @@
 <template>
-  <div class="interface-management">
+  <div class="interface-management page-container">
     <div class="interface-layout">
       <ResizableSplitPane v-model="sidebarWidth" :min-size="240" :max-size="520" :second-min-size="480" storage-key="api-testing.interfaces.sidebar-width">
         <template #first>

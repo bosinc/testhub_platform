@@ -1,5 +1,5 @@
 <template>
-  <div class="test-report">
+  <div class="test-report page-container">
     <!-- Filter bar -->
     <div class="filter-bar">
       <div class="left-filters">
@@ -385,7 +385,6 @@ onUnmounted(() => {
 
 <style scoped>
 .test-report {
-  padding: 20px;
   background-color: #f5f7fa;
   min-height: 100vh;
 }
@@ -396,7 +395,7 @@ onUnmounted(() => {
   align-items: center;
   margin-bottom: 20px;
   background: white;
-  padding: 16px;
+  padding: 10px;
   border-radius: 8px;
   box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.05);
 }

@@ -1,5 +1,5 @@
 <template>
-  <div class="notification-logs">
+  <div class="notification-logs page-container">
     <!-- 搜索栏 -->
     <div class="filters">
       <el-row :gutter="20">
@@ -213,7 +213,6 @@ const parsedContent = computed(() => {
 <style scoped>
 .notification-logs { padding: 20px; background: #fff; border-radius: 8px; }
 .filters { margin-bottom: 20px; padding: 20px; background: #f8f9fa; border-radius: 6px; }
-.pagination { margin-top: 20px; display: flex; justify-content: flex-end; }
 .content-box { width: 100%; }
 .parsed-content { background: #fff; border-radius: 8px; padding: 16px; border: 1px solid #e4e7ed; }
 .content-row { display: flex; padding: 10px 0; border-bottom: 1px solid #f0f2f5; }

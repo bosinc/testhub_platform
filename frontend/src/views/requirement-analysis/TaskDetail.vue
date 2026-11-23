@@ -1,5 +1,5 @@
 <template>
-  <div class="task-detail">
+  <div class="task-detail page-container">
     <div class="page-header">
       <div class="header-left">
         <h2>{{ $t('taskDetail.title') }} <span v-if="task.title">- {{ task.title }}</span></h2>

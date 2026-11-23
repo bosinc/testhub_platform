@@ -1,5 +1,5 @@
 <template>
-  <div class="requirement-analysis">
+  <div class="requirement-analysis page-container">
     <div class="page-header">
       <h1>{{ $t('requirementAnalysis.title') }}</h1>
       <p>{{ $t('requirementAnalysis.subtitle') }}</p>
@@ -1509,18 +1509,22 @@ export default {
 
 <style scoped>
 .requirement-analysis {
-  padding: 20px;
+  padding: 10px;
   margin: 0 auto;
   position: relative;
 }
 
 .page-header {
+  display: flex;
+  flex-direction: column;
   text-align: center;
-  margin-bottom: 40px;
+  background: none;
+  border-bottom: none;
+  gap: 0;
 }
 
 .page-header h1 {
-  font-size: 2.5rem;
+  font-size: 2rem;
   color: #2c3e50;
   margin-bottom: 10px;
 }
@@ -1565,25 +1569,7 @@ export default {
   line-height: 1.5;
 }
 
-/* 配置引导弹出窗口 */
-.modal-overlay {
-  position: fixed !important;
-  top: 0 !important;
-  left: 0 !important;
-  right: 0 !important;
-  bottom: 0 !important;
-  width: 100vw !important;
-  height: 100vh !important;
-  background: rgba(15, 23, 42, 0.6) !important;
-  backdrop-filter: blur(4px);
-  display: flex !important;
-  align-items: center !important;
-  justify-content: center !important;
-  z-index: 9999 !important;
-  padding: 20px;
-  margin: 0 !important;
-  opacity: 1 !important;
-}
+
 
 .guide-config-modal {
   background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%) !important;
@@ -2495,28 +2481,7 @@ export default {
 </style>
 
 <style>
-/* 全局样式：确保弹窗不受任何容器限制 */
-.modal-overlay {
-  position: fixed !important;
-  top: 0 !important;
-  left: 0 !important;
-  right: 0 !important;
-  bottom: 0 !important;
-  width: 100vw !important;
-  height: 100vh !important;
-  max-width: none !important;
-  max-height: none !important;
-  background: rgba(15, 23, 42, 0.6) !important;
-  backdrop-filter: blur(4px);
-  display: flex !important;
-  align-items: center !important;
-  justify-content: center !important;
-  z-index: 9999 !important;
-  padding: 20px;
-  margin: 0 !important;
-  opacity: 1 !important;
-  box-sizing: border-box !important;
-}
+
 
 .guide-config-modal {
   background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%) !important;

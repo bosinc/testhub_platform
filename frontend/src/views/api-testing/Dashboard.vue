@@ -1,5 +1,5 @@
 <template>
-  <div class="dashboard-container">
+  <div class="dashboard-container page-container">
     <!-- 数据概览 -->
     <div class="stats-section">
       <el-row :gutter="20">

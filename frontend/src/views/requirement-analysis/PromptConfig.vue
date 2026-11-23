@@ -1,5 +1,5 @@
 <template>
-  <div class="prompt-config">
+  <div class="prompt-config page-container">
     <div class="page-header">
       <h1>{{ $t('promptConfig.title') }}</h1>
       <p>{{ $t('promptConfig.subtitle') }}</p>

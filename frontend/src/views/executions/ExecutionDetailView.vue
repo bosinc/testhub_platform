@@ -1,5 +1,5 @@
 <template>
-  <div class="execution-detail">
+  <div class="execution-detail page-container">
     <!-- 页面头部：扁平、克制，Grafana 式仪表盘标题区 -->
     <header class="plan-header">
       <div class="plan-header__title-row">
@@ -13,7 +13,7 @@
           {{ testPlan.version }}
         </span>
         <div class="plan-header__actions">
-          <el-button size="small" :icon="Link" @click="openLinkDialog">
+          <el-button :icon="Link" @click="openLinkDialog">
             {{ $t('execution.linkCases') }}
           </el-button>
         </div>
@@ -1354,7 +1354,7 @@ onMounted(() => {
   border: 1px solid var(--el-border-color-lighter);
   border-radius: 4px;
   box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.06);
-  padding: 20px;
+  padding: 10px;
   margin-bottom: 10px;
 }
 
@@ -1434,7 +1434,7 @@ onMounted(() => {
   border: 1px solid var(--el-border-color-lighter);
   border-radius: 4px;
   box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.06);
-  padding: 20px;
+  padding: 10px;
 }
 
 .run-card:last-of-type {

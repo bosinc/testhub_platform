@@ -2,42 +2,40 @@
   <div class="page-container">
     <div class="page-header">
       <h1 class="page-title">{{ $t('reviewList.title') }}</h1>
-      <div>
-        <el-button type="primary" @click="createReview">
-          <el-icon><Plus /></el-icon>
-          {{ $t('reviewList.createReview') }}
-        </el-button>
+      <el-button type="primary" @click="createReview">
+        <el-icon><Plus /></el-icon>
+        {{ $t('reviewList.createReview') }}
+      </el-button>
+    </div>
+
+    <div class="card-container">
+      <div class="filter-bar">
+        <el-form :inline="true" :model="filters" class="filter-form">
+          <el-form-item :label="$t('reviewList.project')">
+            <el-select v-model="filters.project" :placeholder="$t('reviewList.selectProject')" clearable @change="fetchReviews">
+              <el-option
+                v-for="project in projects"
+                :key="project.id"
+                :label="project.name"
+                :value="project.id"
+              />
+            </el-select>
+          </el-form-item>
+          <el-form-item :label="$t('reviewList.status')">
+            <el-select v-model="filters.status" :placeholder="$t('reviewList.selectStatus')" clearable @change="fetchReviews">
+              <el-option :label="$t('reviewList.statusPending')" value="pending" />
+              <el-option :label="$t('reviewList.statusInProgress')" value="in_progress" />
+              <el-option :label="$t('reviewList.statusApproved')" value="approved" />
+              <el-option :label="$t('reviewList.statusRejected')" value="rejected" />
+              <el-option :label="$t('reviewList.statusCancelled')" value="cancelled" />
+            </el-select>
+          </el-form-item>
+          <el-form-item :label="$t('reviewList.reviewer')">
+            <UserSelect v-model="filters.reviewer" :options="users" :placeholder="$t('reviewList.selectReviewer')" clearable @change="fetchReviews" />
+          </el-form-item>
+        </el-form>
       </div>
-    </div>
 
-    <div class="filter-bar">
-      <el-form :inline="true" :model="filters" class="filter-form">
-        <el-form-item :label="$t('reviewList.project')">
-          <el-select v-model="filters.project" :placeholder="$t('reviewList.selectProject')" clearable @change="fetchReviews">
-            <el-option
-              v-for="project in projects"
-              :key="project.id"
-              :label="project.name"
-              :value="project.id"
-            />
-          </el-select>
-        </el-form-item>
-        <el-form-item :label="$t('reviewList.status')">
-          <el-select v-model="filters.status" :placeholder="$t('reviewList.selectStatus')" clearable @change="fetchReviews">
-            <el-option :label="$t('reviewList.statusPending')" value="pending" />
-            <el-option :label="$t('reviewList.statusInProgress')" value="in_progress" />
-            <el-option :label="$t('reviewList.statusApproved')" value="approved" />
-            <el-option :label="$t('reviewList.statusRejected')" value="rejected" />
-            <el-option :label="$t('reviewList.statusCancelled')" value="cancelled" />
-          </el-select>
-        </el-form-item>
-        <el-form-item :label="$t('reviewList.reviewer')">
-          <UserSelect v-model="filters.reviewer" :options="users" :placeholder="$t('reviewList.selectReviewer')" clearable @change="fetchReviews" />
-        </el-form-item>
-      </el-form>
-    </div>
-
-    <div class="table-container">
       <el-table :data="reviews" style="width: 100%" v-loading="loading" stripe>
         <el-table-column
           prop="id"
@@ -404,12 +402,6 @@ onMounted(() => {
   &.medium { color: #e6a23c; }
   &.high { color: #f56c6c; }
   &.urgent { color: #f56c6c; font-weight: bold; }
-}
-
-.pagination {
-  margin-top: 10px;
-  display: flex;
-  justify-content: center;
 }
 
 /* 评审人列：多个评审人换行排列 */

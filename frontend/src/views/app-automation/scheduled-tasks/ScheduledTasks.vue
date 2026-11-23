@@ -1,5 +1,5 @@
 <template>
-  <div class="scheduled-tasks">
+  <div class="scheduled-tasks page-container">
     <div class="header">
       <h3>{{ $t('appAutomation.scheduledTask.title') }}</h3>
       <el-button type="primary" @click="handleCreate">
@@ -434,10 +434,9 @@ const formatDateTime = (s) => {
 </script>
 
 <style scoped>
-.scheduled-tasks { padding: 20px; display: flex; flex-direction: column; height: 100%; }
+.scheduled-tasks { display: flex; flex-direction: column; height: 100%; }
 .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
 .filters { margin-bottom: 20px; background: #f8f9fa; padding: 20px; border-radius: 8px; }
-.pagination { margin-top: 20px; display: flex; justify-content: flex-end; }
 .cron-help { margin-top: 8px; font-size: 12px; }
 .unit { margin-left: 8px; color: #606266; }
 </style>

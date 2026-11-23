@@ -9,7 +9,7 @@
     :destroy-on-close="false"
     @close="handleClose"
   >
-    <div v-if="loading" class="report-loading">
+    <div v-if="loading" class="report-loading page-container">
       <el-icon class="is-loading"><Loading /></el-icon>
       <span>{{ $t('uiAutomation.ai.executionReport.generatingReport') }}</span>
     </div>

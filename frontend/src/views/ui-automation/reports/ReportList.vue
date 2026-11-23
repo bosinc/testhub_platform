@@ -1,13 +1,13 @@
 <template>
-  <div class="report-view">
-    <div class="header">
+  <div class="report-view page-container">
+    <div class="page-header">
       <div class="title-group">
-        <h3>{{ $t('uiAutomation.report.title') }}</h3>
+        <h3 class="page-title">{{ $t('uiAutomation.report.title') }}</h3>
         <el-tag v-if="scheduledTaskId" closable class="task-filter-tag" @close="clearTaskFilter">
           {{ $t('uiAutomation.scheduledTask.relatedTask') }}: {{ route.query.task_name || `#${scheduledTaskId}` }}
         </el-tag>
       </div>
-      <div class="actions">
+      <div class="header-actions">
         <el-select v-model="selectedProject" :placeholder="$t('uiAutomation.common.selectProject')" style="width: 200px; margin-right: 15px" @change="onProjectChange">
           <el-option v-for="project in projects" :key="project.id" :label="project.name" :value="project.id" />
         </el-select>
@@ -18,7 +18,7 @@
       </div>
     </div>
 
-    <div class="content">
+    <div class="content card-container">
       <el-table :data="reports" v-loading="loading" style="width: 100%">
         <el-table-column prop="id" label="ID" width="80" />
         <el-table-column prop="test_suite_name" :label="$t('uiAutomation.report.testSuite')" min-width="200" />
@@ -94,7 +94,7 @@
         </el-table-column>
       </el-table>
 
-      <div class="pagination-container">
+      <div class="pagination">
         <el-pagination
           v-model:current-page="pagination.currentPage"
           v-model:page-size="pagination.pageSize"
@@ -346,45 +346,6 @@ onMounted(async () => {
   height: 100%;
   display: flex;
   flex-direction: column;
-  background: #f5f5f5;
-}
-
-.header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 10px;
-  background: white;
-  padding: 10px 20px;
-  border-radius: 4px;
-
-  h3 {
-    margin: 0;
-    color: #303133;
-    font-size: 24px;
-    font-weight: 700;
-
-    @media screen and (max-width: 1920px) {
-      font-size: 22px;
-    }
-    @media screen and (max-width: 1600px) {
-      font-size: 20px;
-    }
-    @media screen and (max-width: 1440px) {
-      font-size: 18px;
-    }
-    @media screen and (max-width: 1280px) {
-      font-size: 16px;
-    }
-    @media screen and (max-width: 480px) {
-      font-size: 14px;
-    }
-  }
-
-  .actions {
-    display: flex;
-    align-items: center;
-  }
 }
 
 // 标题与「关联定时任务」筛选标签同行，标签紧贴标题右侧。
@@ -402,9 +363,6 @@ onMounted(async () => {
 .content {
   flex: 1;
   overflow: auto;
-  background: white;
-  padding: 20px;
-  border-radius: 4px;
 }
 
 // 与脚本/套件/执行记录列表一致：文字按钮 + 紧凑间距，禁止换行。
@@ -470,12 +428,6 @@ onMounted(async () => {
 
 .result-dist-empty {
   color: #c0c4cc;
-}
-
-.pagination-container {
-  margin-top: 10px;
-  display: flex;
-  justify-content: flex-end;
 }
 </style>
 

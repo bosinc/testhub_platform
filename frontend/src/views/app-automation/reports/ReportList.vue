@@ -1,5 +1,5 @@
 <template>
-  <div class="report-list">
+  <div class="report-list page-container">
     <!-- Tab 切换 -->
     <el-tabs v-model="activeTab" @tab-change="onTabChange">
       <!-- ==================== 套件报告 ==================== -->
@@ -600,14 +600,12 @@ function formatDuration(seconds) {
 </script>
 
 <style scoped>
-.report-list { padding: 20px; }
 .stats-row { display: flex; gap: 16px; margin-bottom: 20px; }
 .stat-card { flex: 1; }
 .stat-content { text-align: center; }
 .stat-number { font-size: 28px; font-weight: bold; line-height: 1.6; }
 .stat-label { font-size: 13px; color: #909399; }
 .filters { margin-bottom: 20px; padding: 20px; background: #f8f9fa; border-radius: 8px; }
-.pagination { margin-top: 20px; display: flex; justify-content: flex-end; }
 .step-stats { display: flex; align-items: center; font-size: 13px; }
 .detail-section { margin-top: 24px; }
 .detail-section h4 { margin-bottom: 12px; color: #303133; }

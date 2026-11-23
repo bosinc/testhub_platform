@@ -1,5 +1,5 @@
 <template>
-  <div class="ui-env-config">
+  <div class="ui-env-config page-container">
     <div class="page-header">
       <h1>{{ $t('configuration.uiEnv.title') }}</h1>
       <p>{{ $t('configuration.uiEnv.description') }}</p>

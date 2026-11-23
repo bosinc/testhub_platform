@@ -1,14 +1,14 @@
 <template>
-  <div class="ai-service-config">
+  <div class="ai-service-config page-container">
     <div class="page-header">
-      <h2>{{ $t('apiTesting.aiServiceConfig.title') }}</h2>
+      <h2 class="page-title">{{ $t('apiTesting.aiServiceConfig.title') }}</h2>
       <el-button type="primary" @click="showCreateDialog = true">
         <el-icon><Plus /></el-icon>
         {{ $t('apiTesting.aiServiceConfig.addConfig') }}
       </el-button>
     </div>
 
-    <div class="config-list">
+    <div class="config-list card-container">
       <el-table :data="configs" v-loading="loading" stripe>
         <el-table-column prop="name" :label="$t('apiTesting.aiServiceConfig.configName')" width="200" />
         <el-table-column prop="service_type_display" :label="$t('apiTesting.aiServiceConfig.serviceType')" width="120" />
@@ -254,23 +254,9 @@ onMounted(() => {
 
 <style scoped>
 .ai-service-config {
-  padding: 20px;
   height: 100%;
   display: flex;
   flex-direction: column;
-}
-
-.page-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 20px;
-}
-
-.page-header h2 {
-  margin: 0;
-  font-size: 20px;
-  font-weight: 500;
 }
 
 .config-list {

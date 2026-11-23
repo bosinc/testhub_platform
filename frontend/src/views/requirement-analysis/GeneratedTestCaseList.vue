@@ -1,5 +1,5 @@
 <template>
-  <div class="generated-testcase-list">
+  <div class="generated-testcase-list page-container">
     <div class="page-header">
       <h2>{{ $t('generatedTestCases.title') }}</h2>
     </div>
@@ -21,6 +21,13 @@
         <div class="filter-actions">
           <!-- 图标已在 main.js 全局注册，这里用字符串名引用即可 -->
           <el-button
+            class="filter-refresh-btn"
+            icon="Refresh"
+            :loading="isLoading"
+            @click="loadTasks">
+            {{ $t('generatedTestCases.refresh') }}
+          </el-button>
+          <el-button
             v-if="selectedTasks.length > 0"
             class="filter-delete-btn"
             type="danger"
@@ -29,13 +36,6 @@
             @click="batchDeleteTasks">
             <span v-if="isDeleting">{{ $t('generatedTestCases.deleting') }}</span>
             <span v-else>{{ $t('generatedTestCases.batchDelete', { count: selectedTasks.length }) }}</span>
-          </el-button>
-          <el-button
-            class="filter-refresh-btn"
-            icon="Refresh"
-            :loading="isLoading"
-            @click="loadTasks">
-            {{ $t('generatedTestCases.refresh') }}
           </el-button>
         </div>
       </div>
@@ -972,15 +972,19 @@ export default {
 }
 
 .page-header {
+  display: block;
+  background: none;
+  border-bottom: none;
   text-align: center;
-  margin-bottom: 15px; /* 进一步减少底部边距 */
+  padding: 0;
+  margin-bottom: 10px; /* 进一步减少底部边距 */
 }
 
 .page-header h2 {
   font-size: 1.6rem; /* H2标题适合的字体大小 */
   color: #303133;
   margin-bottom: 0; /* 移除底部边距 */
-  margin-top: 5px; /* 减少顶部边距 */
+  margin-top: 0; /* 移除顶部边距 */
 }
 
 .page-header p {
@@ -996,7 +1000,7 @@ export default {
 .filter-card {
   background: white;
   border-radius: 4px;
-  padding: 25px;
+  padding: 10px;
   box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.1);
   display: flex;
   gap: 16px;
@@ -1088,7 +1092,7 @@ export default {
 .testcases-section {
   background: white;
   border-radius: 4px;
-  padding: 30px;
+  padding: 10px;
   box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.1);
 }
 
@@ -1448,7 +1452,7 @@ export default {
   justify-content: space-between;
   align-items: center;
   background: white;
-  padding: 20px;
+  padding: 10px;
   border-radius: 4px;
   box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.1);
 }

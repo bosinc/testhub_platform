@@ -14,7 +14,7 @@
       <el-step :title="$t('uiAutomation.recording.steps.import')" />
     </el-steps>
 
-    <div v-if="step === 0" class="wizard-panel">
+    <div v-if="step === 0" class="wizard-panel page-container">
       <el-form ref="configFormRef" :model="form" :rules="rules" label-width="112px">
         <el-form-item :label="$t('uiAutomation.recording.startUrl')" prop="start_url">
           <el-input v-model="form.start_url" placeholder="https://example.com/login" />

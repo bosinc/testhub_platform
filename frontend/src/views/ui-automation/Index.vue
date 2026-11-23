@@ -1,5 +1,5 @@
 <template>
-  <div class="ui-automation-container">
+  <div class="ui-automation-container page-container">
     <!-- 页面头部 -->
     <div class="page-header">
       <h1 class="page-title">{{ $t('uiAutomation.nav.title') }}</h1>

@@ -108,7 +108,7 @@
         </el-table-column>
       </el-table>
       
-      <div class="pagination-container">
+      <div class="pagination">
         <el-pagination
           v-model:current-page="currentPage"
           :page-size="pageSize"
@@ -403,21 +403,6 @@ onMounted(() => {
 </script>
 
 <style lang="scss" scoped>
-.filter-bar {
-  margin-bottom: 20px;
-}
-
-.pagination-container {
-  margin-top: 20px;
-  display: flex;
-  justify-content: center;
-}
-
-.header-actions {
-  display: flex;
-  gap: 10px;
-}
-
 .version-name {
   display: flex;
   align-items: center;

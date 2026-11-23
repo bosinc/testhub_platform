@@ -93,7 +93,7 @@
         </el-table-column>
       </el-table>
 
-      <div class="pagination-container">
+      <div class="pagination">
         <el-pagination
           v-model:current-page="currentPage"
           v-model:page-size="pageSize"
@@ -295,17 +295,6 @@ onMounted(() => {
 .page-container {
   height: 100%;
   overflow-y: auto;
-  background: #f5f5f5;
-}
-
-.page-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 10px;
-  background: #fff;
-  padding: 10px 20px;
-  border-radius: 4px;
 }
 
 .title-group {
@@ -314,47 +303,10 @@ onMounted(() => {
   gap: 12px;
 }
 
-.page-container .page-header .page-title {
-  margin: 0;
-  font-size: 24px;
-  font-weight: 700;
-  color: #303133;
-}
-
-/* 与 UI 自动化对应页面保持一致的响应式标题字号。 */
-@media screen and (max-width: 1920px) {
-  .page-container .page-header .page-title { font-size: 22px; }
-}
-
-@media screen and (max-width: 1600px) {
-  .page-container .page-header .page-title { font-size: 20px; }
-}
-
-@media screen and (max-width: 1440px) {
-  .page-container .page-header .page-title { font-size: 18px; }
-}
-
-@media screen and (max-width: 1280px) {
-  .page-container .page-header .page-title { font-size: 16px; }
-}
-
-@media screen and (max-width: 480px) {
-  .page-container .page-header .page-title { font-size: 14px; }
-}
-
 .card-container {
   min-height: calc(100% - 70px);
   box-sizing: border-box;
-  background: #fff;
-  padding: 20px;
-  border-radius: 4px;
   overflow: auto;
-}
-
-.pagination-container {
-  display: flex;
-  justify-content: flex-end;
-  margin-top: 10px;
 }
 
 .row-actions {

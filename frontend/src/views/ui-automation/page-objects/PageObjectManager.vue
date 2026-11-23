@@ -1,5 +1,5 @@
 <template>
-  <div class="page-object-manager">
+  <div class="page-object-manager page-container">
     <div class="page-header">
       <h1 class="page-title">{{ $t('uiAutomation.pageObject.title') }}</h1>
       <div class="header-actions">
@@ -791,24 +791,6 @@ onMounted(async () => {
   height: 100vh;
   display: flex;
   flex-direction: column;
-}
-
-.page-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 20px;
-  border-bottom: 1px solid #e6e6e6;
-}
-
-.page-title {
-  margin: 0;
-  font-size: 24px;
-}
-
-.header-actions {
-  display: flex;
-  align-items: center;
 }
 
 .main-content {

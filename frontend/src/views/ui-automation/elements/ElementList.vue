@@ -76,7 +76,7 @@
         </el-table-column>
       </el-table>
       
-      <div class="pagination-container">
+      <div class="pagination">
         <el-pagination
           v-model:current-page="pagination.currentPage"
           v-model:page-size="pagination.pageSize"
@@ -601,37 +601,7 @@ onMounted(async () => {
 
 <style scoped>
 .page-container {
-  padding: 20px;
   height: 100%;
   overflow-y: auto;
-}
-
-.page-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 20px;
-}
-
-.page-title {
-  margin: 0;
-  font-size: 24px;
-}
-
-.card-container {
-  background-color: #fff;
-  border-radius: 8px;
-  padding: 20px;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-}
-
-.filter-bar {
-  margin-bottom: 10px;
-}
-
-.pagination-container {
-  margin-top: 10px;
-  display: flex;
-  justify-content: flex-end;
 }
 </style>

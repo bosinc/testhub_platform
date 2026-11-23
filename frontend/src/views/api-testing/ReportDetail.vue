@@ -1,5 +1,5 @@
 <template>
-  <div class="report-detail-page">
+  <div class="report-detail-page page-container">
     <div class="page-header">
       <div class="header-left">
         <el-button
@@ -205,11 +205,11 @@ watch(reportId, () => {
 </script>
 
 <style scoped lang="scss">
-.report-detail-page { height: 100%; display: flex; flex-direction: column; background: #f5f5f5; overflow: hidden; }
-.page-header { flex: none; display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; padding: 10px 20px; background: #fff; border-radius: 4px; }
+.report-detail-page { height: 100%; display: flex; flex-direction: column; overflow: hidden; }
+.page-header { flex: none; }
 .header-left { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .back-btn { flex: none; padding: 0; font-size: 18px; }
-.page-title { margin: 0; color: #303133; font-size: 22px; font-weight: 700; white-space: nowrap; }
+.page-title { white-space: nowrap; }
 .report-no { color: #909399; font-size: 14px; }
 .page-body { flex: 1; min-height: 200px; overflow-y: auto; padding-bottom: 10px; }
 .detail-card { margin-bottom: 10px; border: none; border-radius: 4px; }

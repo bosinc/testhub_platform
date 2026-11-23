@@ -1,7 +1,7 @@
 <template>
-  <div class="execution-list">
-    <div class="header">
-      <h1>{{ $t('execution.testPlan') }}</h1>
+  <div class="page-container">
+    <div class="page-header">
+      <h1 class="page-title">{{ $t('execution.testPlan') }}</h1>
       <div class="header-actions">
         <el-button
           v-if="selectedPlans.length > 0"
@@ -18,38 +18,39 @@
       </div>
     </div>
 
-    <div class="filter-bar">
-      <el-form :inline="true">
-        <el-form-item :label="$t('execution.projects')">
-          <el-select v-model="filters.project" :placeholder="$t('execution.selectProject')" clearable style="width: 200px">
-            <el-option v-for="item in projects" :key="item.id" :label="item.name" :value="item.id"></el-option>
-          </el-select>
-        </el-form-item>
-        <el-form-item :label="$t('execution.status')">
-          <el-select v-model="filters.is_active" :placeholder="$t('execution.selectStatus')" clearable style="width: 120px">
-            <el-option :label="$t('execution.active')" :value="true"></el-option>
-            <el-option :label="$t('execution.closed')" :value="false"></el-option>
-          </el-select>
-        </el-form-item>
-        <el-form-item :label="$t('execution.executionStatus')">
-          <el-select v-model="filters.execution_status" :placeholder="$t('execution.selectExecutionStatus')" clearable style="width: 140px">
-            <el-option :label="$t('execution.notStarted')" value="not_started"></el-option>
-            <el-option :label="$t('execution.inProgress')" value="in_progress"></el-option>
-            <el-option :label="$t('execution.completed')" value="completed"></el-option>
-          </el-select>
-        </el-form-item>
-        <el-form-item>
-          <el-button type="primary" @click="applyFilters">{{ $t('common.search') }}</el-button>
-          <el-button @click="resetFilters">{{ $t('common.reset') }}</el-button>
-        </el-form-item>
-      </el-form>
-    </div>
+    <div class="card-container">
+      <div class="filter-bar">
+        <el-form :inline="true">
+          <el-form-item :label="$t('execution.projects')">
+            <el-select v-model="filters.project" :placeholder="$t('execution.selectProject')" clearable style="width: 200px">
+              <el-option v-for="item in projects" :key="item.id" :label="item.name" :value="item.id"></el-option>
+            </el-select>
+          </el-form-item>
+          <el-form-item :label="$t('execution.status')">
+            <el-select v-model="filters.is_active" :placeholder="$t('execution.selectStatus')" clearable style="width: 120px">
+              <el-option :label="$t('execution.active')" :value="true"></el-option>
+              <el-option :label="$t('execution.closed')" :value="false"></el-option>
+            </el-select>
+          </el-form-item>
+          <el-form-item :label="$t('execution.executionStatus')">
+            <el-select v-model="filters.execution_status" :placeholder="$t('execution.selectExecutionStatus')" clearable style="width: 140px">
+              <el-option :label="$t('execution.notStarted')" value="not_started"></el-option>
+              <el-option :label="$t('execution.inProgress')" value="in_progress"></el-option>
+              <el-option :label="$t('execution.completed')" value="completed"></el-option>
+            </el-select>
+          </el-form-item>
+          <el-form-item>
+            <el-button type="primary" @click="applyFilters">{{ $t('common.search') }}</el-button>
+            <el-button @click="resetFilters">{{ $t('common.reset') }}</el-button>
+          </el-form-item>
+        </el-form>
+      </div>
 
-    <el-table
-      :data="testPlans"
-      style="width: 100%"
-      v-loading="loading"
-      @selection-change="handleSelectionChange">
+      <el-table
+        :data="testPlans"
+        style="width: 100%"
+        v-loading="loading"
+        @selection-change="handleSelectionChange">
       <el-table-column type="selection" width="30" />
       <el-table-column prop="id" :label="$t('execution.id')" width="70" />
       <el-table-column prop="name" :label="$t('execution.planName')" min-width="200">
@@ -104,19 +105,20 @@
           </el-button>
         </template>
       </el-table-column>
-    </el-table>
+      </el-table>
 
-    <div class="pagination">
-      <el-pagination
-        v-model:current-page="currentPage"
-        v-model:page-size="pageSize"
-        :page-sizes="[10, 20, 50, 100]"
-        :small="false"
-        :total="total"
-        layout="total, sizes, prev, pager, next, jumper"
-        @size-change="handleSizeChange"
-        @current-change="handleCurrentChange"
-      />
+      <div class="pagination">
+        <el-pagination
+          v-model:current-page="currentPage"
+          v-model:page-size="pageSize"
+          :page-sizes="[10, 20, 50, 100]"
+          :small="false"
+          :total="total"
+          layout="total, sizes, prev, pager, next, jumper"
+          @size-change="handleSizeChange"
+          @current-change="handleCurrentChange"
+        />
+      </div>
     </div>
 
     <!-- 创建测试计划对话框 -->
@@ -709,28 +711,8 @@ onMounted(() => {
 </script>
 
 <style scoped>
-
-.header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.header-actions {
-  display: flex;
-  gap: 10px;
-}
-
 .filter-bar {
-  background: #f8f9fa;
-  border-radius: 4px;
-  padding: 20px 20px 0;
-}
-
-.pagination {
-  margin-top: 10px;
-  display: flex;
-  justify-content: center;
+  margin-bottom: 10px;
 }
 
 .testcase-picker-trigger {

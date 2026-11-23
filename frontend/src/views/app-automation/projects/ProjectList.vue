@@ -72,7 +72,7 @@
       </el-table>
 
       <!-- 分页 -->
-      <div class="pagination-container">
+      <div class="pagination">
         <el-pagination
           v-model:current-page="pagination.current"
           v-model:page-size="pagination.size"
@@ -262,12 +262,3 @@ function formatDateTime(dt) {
   return new Date(dt).toLocaleString(locale.value === 'zh-cn' ? 'zh-CN' : 'en-US', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
 }
 </script>
-
-<style scoped>
-.page-container { padding: 20px; }
-.page-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
-.page-title { margin: 0; font-size: 20px; }
-.card-container { background: #fff; border-radius: 8px; padding: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-.filter-bar { margin-bottom: 20px; }
-.pagination-container { margin-top: 20px; display: flex; justify-content: flex-end; }
-</style>

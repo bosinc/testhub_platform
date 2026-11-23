@@ -1,5 +1,5 @@
 <template>
-  <div class="dify-config-container">
+  <div class="dify-config-container page-container">
     <div class="page-header">
       <h1>{{ $t('configuration.dify.title') }}</h1>
       <p>{{ $t('configuration.dify.description') }}</p>

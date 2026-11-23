@@ -62,7 +62,7 @@
         </el-table>
       </div>
 
-      <div class="pagination-container">
+      <div class="pagination">
         <el-pagination
           v-model:current-page="currentPage"
           v-model:page-size="pageSize"
@@ -263,29 +263,12 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   height: 100vh;
-  padding: 20px;
   box-sizing: border-box;
   overflow: hidden;
 }
 
 .page-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 20px;
   flex-shrink: 0;
-}
-
-.page-title {
-  margin: 0;
-  font-size: 24px;
-  font-weight: 600;
-  color: #303133;
-}
-
-.header-actions {
-  display: flex;
-  gap: 10px;
 }
 
 .card-container {
@@ -293,9 +276,6 @@ onBeforeUnmount(() => {
   flex-direction: column;
   flex: 1;
   overflow: hidden;
-  background: #fff;
-  border-radius: 4px;
-  box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.1);
 }
 
 .table-container {
@@ -304,11 +284,9 @@ onBeforeUnmount(() => {
   padding: 20px;
 }
 
-.pagination-container {
+.pagination {
   padding: 20px;
   border-top: 1px solid #ebeef5;
-  display: flex;
-  justify-content: center;
 }
 
 .failure-section {

@@ -1,7 +1,7 @@
 <template>
-  <div class="automation-testing" @click="showFolderContextMenu = false">
-    <div class="header">
-      <h3 class="page-title">{{ $t('apiTesting.automation.title') }}</h3>
+  <div class="automation-testing page-container" @click="showFolderContextMenu = false">
+    <div class="page-header">
+      <h1 class="page-title">{{ $t('apiTesting.automation.title') }}</h1>
       <div class="page-header-actions">
         <el-select
           v-model="selectedProject"
@@ -1028,24 +1028,6 @@ onMounted(() => {
   height: 100%;
   display: flex;
   flex-direction: column;
-}
-
-.header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 16px;
-  flex-wrap: wrap;
-  padding: 12px 20px;
-  background: #fff;
-  border-bottom: 1px solid #e4e7ed;
-}
-
-.page-title {
-  margin: 0;
-  font-size: 18px;
-  font-weight: 600;
-  color: #303133;
 }
 
 .page-header-actions {

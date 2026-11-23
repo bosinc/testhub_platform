@@ -1,5 +1,5 @@
 <template>
-  <div class="configuration-center">
+  <div class="configuration-center page-container">
     <div class="content-area">
       <router-view v-slot="{ Component }">
         <transition name="fade" mode="out-in">

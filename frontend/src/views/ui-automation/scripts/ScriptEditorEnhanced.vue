@@ -1,5 +1,5 @@
 <template>
-  <div class="script-editor-enhanced">
+  <div class="script-editor-enhanced page-container">
     <div class="page-header">
       <h1 class="page-title">{{ $t('uiAutomation.scriptEditor.title') }}</h1>
       <div class="header-actions">
@@ -694,25 +694,6 @@ onBeforeUnmount(() => {
   min-height: 0;
   display: flex;
   flex-direction: column;
-}
-
-.page-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 10px 20px;
-  border-bottom: 1px solid #e6e6e6;
-  background: white;
-}
-
-.page-title {
-  margin: 0;
-  font-size: 24px;
-}
-
-.header-actions {
-  display: flex;
-  align-items: center;
 }
 
 .main-content {

@@ -1,5 +1,5 @@
 <template>
-  <div class="monitor-channels">
+  <div class="monitor-channels page-container">
     <div class="page-header">
       <div class="page-title">
         <el-icon><Connection /></el-icon>
@@ -296,9 +296,7 @@ onMounted(load)
 </script>
 
 <style lang="scss" scoped>
-.monitor-channels { padding: 16px; }
-.page-header { display: flex; align-items: center; justify-content: space-between; }
-.page-title { display: flex; align-items: center; font-size: 20px; font-weight: 600; color: #1f2d3d;
+.page-title { display: flex; align-items: center;
   .el-icon { margin-right: 8px; color: #1890ff; font-size: 22px; } }
 .page-subtitle { color: #8c8c8c; font-size: 13px; margin: 4px 0 16px; }
 .tbl { margin-top: 8px; }

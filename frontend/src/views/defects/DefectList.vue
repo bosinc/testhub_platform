@@ -152,7 +152,7 @@
         </el-table-column>
       </el-table>
 
-      <div class="pagination-container">
+      <div class="pagination">
         <el-pagination
           v-model:current-page="currentPage"
           :page-size="pageSize"
@@ -374,8 +374,6 @@ onMounted(() => {
 }
 
 .filter-bar {
-  margin-bottom: 16px;
-
   // 筛选项在窄屏下会折成多行，el-row 的 gutter 只产生水平间距，
   // 折行后行与行之间没有纵向间距会“挤到一起”，这里补一个 row-gap
   :deep(.el-row) {
@@ -400,11 +398,5 @@ onMounted(() => {
 
 .batch-input {
   width: 160px;
-}
-
-.pagination-container {
-  display: flex;
-  justify-content: center;
-  margin-top: 20px;
 }
 </style>

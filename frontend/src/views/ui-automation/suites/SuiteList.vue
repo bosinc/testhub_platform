@@ -91,7 +91,7 @@
         </el-table-column>
       </el-table>
 
-      <div class="pagination-container">
+      <div class="pagination">
         <el-pagination
           v-model:current-page="pagination.currentPage"
           v-model:page-size="pagination.pageSize"
@@ -130,7 +130,6 @@
                 <el-input
                   v-model="testCaseSearchText"
                   :placeholder="$t('uiAutomation.suite.searchCases')"
-                  size="medium"
                   clearable
                   style="width: 200px;"
                 >
@@ -179,10 +178,10 @@
               <div class="panel-header selected-panel-header">
                 <h4>{{ $t('uiAutomation.suite.selectedCases') }} ({{ selectedTestCases.length }})</h4>
                 <div class="panel-actions">
-                  <el-button size="medium" text type="danger" :icon="Delete" :disabled="!selectedTestCases.length" @click="clearSelectedTestCases">
+                  <el-button text type="danger" :icon="Delete" :disabled="!selectedTestCases.length" @click="clearSelectedTestCases">
                     {{ $t('uiAutomation.suite.clearSelected') }}
                   </el-button>
-                  <el-button size="medium" text type="warning" :icon="Minus" :disabled="!checkedSelectedTestCases.length" @click="removeCheckedTestCases">
+                  <el-button text type="warning" :icon="Minus" :disabled="!checkedSelectedTestCases.length" @click="removeCheckedTestCases">
                     {{ $t('uiAutomation.suite.removeChecked') }}
                   </el-button>
                 </div>
@@ -885,41 +884,7 @@ const handleNewSuite = async () => {
 
 <style scoped lang="scss">
 .page-container {
-  background: #f5f5f5;
   min-height: 100vh;
-}
-
-.page-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 10px;
-  background: white;
-  padding: 10px 20px;
-  border-radius: 4px;
-}
-
-/* 与脚本列表 / 用例管理保持一致：同样跟随全局响应式断点 */
-.page-container .page-header .page-title {
-  margin: 0;
-  font-size: 24px;
-  font-weight: 700;
-
-  @media screen and (max-width: 1920px) {
-    font-size: 22px;
-  }
-  @media screen and (max-width: 1600px) {
-    font-size: 20px;
-  }
-  @media screen and (max-width: 1440px) {
-    font-size: 18px;
-  }
-  @media screen and (max-width: 1280px) {
-    font-size: 16px;
-  }
-  @media screen and (max-width: 480px) {
-    font-size: 14px;
-  }
 }
 
 .suite-header-actions {
@@ -931,16 +896,6 @@ const handleNewSuite = async () => {
 
 .project-select {
   width: 200px;
-}
-
-.card-container {
-  background: white;
-  padding: 20px;
-  border-radius: 4px;
-}
-
-.filter-bar {
-  margin-bottom: 10px;
 }
 
 // 与脚本列表一致：文字按钮 + 紧凑间距，避免每行三个实心按钮挤占宽度。
@@ -955,12 +910,6 @@ const handleNewSuite = async () => {
 .row-actions :deep(.el-button) {
   margin: 0;
   padding: 0 4px;
-}
-
-.pagination-container {
-  margin-top: 10px;
-  display: flex;
-  justify-content: flex-end;
 }
 
 // 限制整个弹窗的高度（包含表单和底部按钮），滚动仅发生在左右用例列表中。

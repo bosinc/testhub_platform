@@ -1,5 +1,5 @@
 <template>
-  <div class="api-testing-layout">
+  <div class="api-testing-layout page-container">
     <!-- 顶部导航 -->
     <div class="top-nav">
       <h2>{{ $t('apiTesting.nav.title') }}</h2>

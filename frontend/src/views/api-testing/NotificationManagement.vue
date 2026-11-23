@@ -88,7 +88,7 @@
           </el-table>
 
           <!-- 分页 -->
-          <div class="pagination-container">
+          <div class="pagination">
             <el-pagination
               v-model:current-page="pagination.current"
               v-model:page-size="pagination.size"
@@ -595,43 +595,10 @@ onMounted(() => {
 .page-container {
   height: 100%;
   overflow-y: auto;
-  background: #f5f5f5;
-}
-
-.page-header {
-  display: flex;
-  align-items: center;
-  margin-bottom: 10px;
-  background: #fff;
-  padding: 10px 20px;
-  border-radius: 4px;
-}
-
-.page-title {
-  margin: 0;
-  font-size: 24px;
-  font-weight: 700;
-  color: #303133;
-}
-
-.card-container {
-  background: #fff;
-  padding: 20px;
-  border-radius: 4px;
 }
 
 .tab-content {
   padding: 20px;
-}
-
-.filter-bar {
-  margin-bottom: 20px;
-}
-
-.pagination-container {
-  margin-top: 10px;
-  display: flex;
-  justify-content: flex-end;
 }
 
 .config-section {

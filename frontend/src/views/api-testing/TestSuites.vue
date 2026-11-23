@@ -71,7 +71,7 @@
         </el-table-column>
       </el-table>
 
-      <div class="pagination-container">
+      <div class="pagination">
         <el-pagination
           v-model:current-page="currentPage"
           v-model:page-size="pageSize"
@@ -412,27 +412,16 @@ onMounted(loadProjects)
 </script>
 
 <style scoped>
-.page-container { height: 100%; overflow-y: auto; background: #f5f5f5; }
-.page-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; background: #fff; padding: 10px 20px; border-radius: 4px; }
-.page-container .page-header .page-title { margin: 0; font-size: 24px; font-weight: 700; color: #303133; }
-/* 与 UI 自动化对应页面保持一致的响应式标题字号。 */
-@media screen and (max-width: 1920px) { .page-container .page-header .page-title { font-size: 22px; } }
-@media screen and (max-width: 1600px) { .page-container .page-header .page-title { font-size: 20px; } }
-@media screen and (max-width: 1440px) { .page-container .page-header .page-title { font-size: 18px; } }
-@media screen and (max-width: 1280px) { .page-container .page-header .page-title { font-size: 16px; } }
-@media screen and (max-width: 480px) { .page-container .page-header .page-title { font-size: 14px; } }
+.page-container { height: 100%; overflow-y: auto; }
 .test-suites-header-actions { display: flex; width: max-content; align-items: center; justify-self: end; gap: 16px; }
 .project-select { flex: 0 0 200px; width: 200px; }
 .environment-select { width: 100%; }
 .row-actions { display: flex; flex-wrap: nowrap; align-items: center; gap: 0; white-space: nowrap; }
 .row-actions :deep(.el-button) { flex-shrink: 0; margin-left: 0 !important; padding: 5px 3px; }
-.card-container { background: #fff; padding: 20px; border-radius: 4px; }
-.filter-bar { margin-bottom: 10px; }
 .search-input { width: 380px; }
-.pagination-container { margin-top: 10px; display: flex; justify-content: flex-end; }
 .scenario-picker { border: 1px solid var(--el-border-color); border-radius: 4px; }
 .picker-header { display: flex; justify-content: space-between; align-items: center; padding: 10px 12px; border-bottom: 1px solid var(--el-border-color); font-weight: 600; }
 .picker-header :deep(.el-input) { width: 240px; font-weight: 400; }
 .tree-node-label { display: inline-flex; align-items: center; gap: 8px; }
-@media (max-width: 760px) { .page-header { flex-wrap: wrap; gap: 10px; } .test-suites-header-actions { width: 100%; justify-self: stretch; } .project-select { flex: 1 1 auto; } .search-input { width: 100%; } }
+@media (max-width: 760px) { .test-suites-header-actions { width: 100%; justify-self: stretch; } .project-select { flex: 1 1 auto; } .search-input { width: 100%; } }
 </style>

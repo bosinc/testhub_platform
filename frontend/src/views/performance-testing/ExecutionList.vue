@@ -1,5 +1,5 @@
 <template>
-  <div class="perf-execution-list">
+  <div class="perf-execution-list page-container">
     <div class="page-head">
       <div>
         <h2 class="page-title">{{ t('performanceTesting.execution.title') }}</h2>
@@ -423,8 +423,6 @@ onBeforeUnmount(() => {
 </script>
 
 <style lang="scss" scoped>
-.perf-execution-list { padding: 16px; }
-
 .page-head {
   display: flex;
   align-items: flex-start;

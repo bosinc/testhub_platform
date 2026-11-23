@@ -1,5 +1,5 @@
 <template>
-  <div class="judge-kb">
+  <div class="judge-kb page-container">
     <el-card shadow="never" class="page-card">
       <template #header>
         <div class="card-header">
@@ -854,7 +854,6 @@ onMounted(async () => {
 .page-title { margin: 0; font-size: 18px; color: #303133; }
 .page-desc { margin: 4px 0 0; font-size: 13px; color: #909399; }
 .section-title { margin: 0; font-size: 16px; color: #303133; }
-.header-actions { display: flex; gap: 10px; flex-wrap: wrap; }
 .kb-overview { margin-bottom: 16px; }
 .overview-grid {
   display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));

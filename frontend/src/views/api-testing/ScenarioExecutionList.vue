@@ -54,7 +54,7 @@
         </el-table-column>
       </el-table>
 
-      <div class="pagination-container">
+      <div class="pagination">
         <el-pagination
           v-model:current-page="page"
           v-model:page-size="pageSize"
@@ -154,42 +154,14 @@ onMounted(loadExecutions)
 </script>
 
 <style scoped>
-.page-container { height: 100%; overflow-y: auto; background: #f5f5f5; }
-.page-header { display: flex; align-items: center; padding: 10px 20px; margin-bottom: 10px; background: #fff; border-radius: 4px; }
+.page-container { height: 100%; overflow-y: auto; }
 .title-group { display: flex; align-items: center; gap: 12px; }
-.page-container .page-header .page-title {
-  margin: 0;
-  font-size: 24px;
-  font-weight: 700;
-  color: #303133;
-}
-
-@media screen and (max-width: 1920px) {
-  .page-container .page-header .page-title { font-size: 22px; }
-}
-
-@media screen and (max-width: 1600px) {
-  .page-container .page-header .page-title { font-size: 20px; }
-}
-
-@media screen and (max-width: 1440px) {
-  .page-container .page-header .page-title { font-size: 18px; }
-}
-
-@media screen and (max-width: 1280px) {
-  .page-container .page-header .page-title { font-size: 16px; }
-}
-
-@media screen and (max-width: 480px) {
-  .page-container .page-header .page-title { font-size: 14px; }
-}
 
 .status-select { width: 180px; }
 
 @media screen and (max-width: 480px) {
   .status-select { width: 100%; }
 }
-.card-container { padding: 20px; background: #fff; border-radius: 4px; }
-.pagination-container { display: flex; justify-content: flex-end; margin-top: 12px; }
+
 .detail-panel { margin-top: 20px; }
 </style>

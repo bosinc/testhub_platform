@@ -398,11 +398,6 @@ onBeforeUnmount(() => {
 </script>
 
 <style lang="scss" scoped>
-.header-actions {
-  display: flex;
-  gap: 10px;
-}
-
 .metric-grid {
   margin-bottom: 16px;
 }

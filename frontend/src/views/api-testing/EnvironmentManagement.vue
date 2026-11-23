@@ -529,51 +529,6 @@ onMounted(async () => {
 .page-container {
   height: 100%;
   overflow-y: auto;
-  background: #f5f5f5;
-}
-
-.page-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 10px;
-  background: #fff;
-  padding: 10px 20px;
-  border-radius: 4px;
-}
-
-.page-container .page-header .page-title {
-  margin: 0;
-  font-size: 24px;
-  font-weight: 700;
-  color: #303133;
-}
-
-/* 与 UI 自动化对应页面保持一致的响应式标题字号。 */
-@media screen and (max-width: 1920px) {
-  .page-container .page-header .page-title { font-size: 22px; }
-}
-
-@media screen and (max-width: 1600px) {
-  .page-container .page-header .page-title { font-size: 20px; }
-}
-
-@media screen and (max-width: 1440px) {
-  .page-container .page-header .page-title { font-size: 18px; }
-}
-
-@media screen and (max-width: 1280px) {
-  .page-container .page-header .page-title { font-size: 16px; }
-}
-
-@media screen and (max-width: 480px) {
-  .page-container .page-header .page-title { font-size: 14px; }
-}
-
-.card-container {
-  background: #fff;
-  border-radius: 4px;
-  padding: 20px;
 }
 
 .local-env-header {

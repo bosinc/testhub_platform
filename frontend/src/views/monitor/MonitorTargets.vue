@@ -1,5 +1,5 @@
 <template>
-  <div class="monitor-targets">
+  <div class="monitor-targets page-container">
     <div class="page-header">
       <div class="page-title">
         <el-icon><Monitor /></el-icon>
@@ -412,9 +412,7 @@ onUnmounted(() => { if (schedTimer) clearInterval(schedTimer) })
 </script>
 
 <style lang="scss" scoped>
-.monitor-targets { padding: 16px; }
-.page-header { display: flex; align-items: center; justify-content: space-between; }
-.page-title { display: flex; align-items: center; font-size: 20px; font-weight: 600; color: #1f2d3d;
+.page-title { display: flex; align-items: center;
   .el-icon { margin-right: 8px; color: #1890ff; font-size: 22px; } }
 .sched-badge { display: inline-flex; align-items: center; gap: 5px; margin-left: 12px; }
 .sched-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #bbb; }

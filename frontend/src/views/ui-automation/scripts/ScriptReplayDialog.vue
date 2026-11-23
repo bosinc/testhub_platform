@@ -1,6 +1,6 @@
 <template>
   <el-dialog v-model="dialogVisible" :title="$t('uiAutomation.replay.title')" width="760px" :close-on-click-modal="false" destroy-on-close>
-    <div v-if="script" class="replay-header">
+    <div v-if="script" class="replay-header page-container">
       <span>{{ $t('uiAutomation.replay.currentScript') }}</span>
       <el-tag :type="statusType">{{ statusText }}</el-tag>
       <div class="replay-actions">

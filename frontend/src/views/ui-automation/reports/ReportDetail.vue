@@ -1,5 +1,5 @@
 <template>
-  <div class="report-detail-page">
+  <div class="report-detail-page page-container">
     <!-- 顶栏：返回图标 + 标题 + 状态 + 刷新（返回只保留图标，不显示文案） -->
     <div class="page-header">
       <div class="header-left">
@@ -369,20 +369,11 @@ watch(reportId, () => {
   height: 100%;
   display: flex;
   flex-direction: column;
-  background: #f5f5f5;
   overflow: hidden;
 }
 
 .page-header {
   flex: none;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 12px;
-  background: #fff;
-  padding: 10px 20px;
-  border-radius: 4px;
-  margin-bottom: 10px;
 
   .header-left {
     display: flex;
@@ -402,29 +393,8 @@ watch(reportId, () => {
     font-size: 18px;
   }
 
-  /* 与报告列表页「测试报告」标题保持完全一致（含响应式断点） */
   .page-title {
-    margin: 0;
-    color: #303133;
-    font-size: 24px;
-    font-weight: 700;
     white-space: nowrap;
-
-    @media screen and (max-width: 1920px) {
-      font-size: 22px;
-    }
-    @media screen and (max-width: 1600px) {
-      font-size: 20px;
-    }
-    @media screen and (max-width: 1440px) {
-      font-size: 18px;
-    }
-    @media screen and (max-width: 1280px) {
-      font-size: 16px;
-    }
-    @media screen and (max-width: 480px) {
-      font-size: 14px;
-    }
   }
 
   .report-no {

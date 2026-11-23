@@ -1,5 +1,5 @@
 <template>
-  <div class="notification-logs-container">
+  <div class="notification-logs-container page-container">
     <!-- 页面操作栏 -->
     <div class="page-actions">
       <el-row :gutter="20" class="filter-row">
@@ -144,7 +144,7 @@
       </el-table>
 
       <!-- 分页 -->
-      <div class="pagination-container">
+      <div class="pagination">
         <el-pagination
             v-model:current-page="pagination.currentPage"
             v-model:page-size="pagination.pageSize"
@@ -572,12 +572,6 @@ export default {
 
 .logs-table-container {
   margin-top: 20px;
-}
-
-.pagination-container {
-  margin-top: 10px;
-  display: flex;
-  justify-content: flex-end;
 }
 
 .notification-detail-form :deep(.el-form-item) {

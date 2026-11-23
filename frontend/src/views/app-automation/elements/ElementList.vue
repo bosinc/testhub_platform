@@ -1,5 +1,5 @@
 <template>
-  <div class="element-management">
+  <div class="element-management page-container">
     <el-card>
       <!-- 顶部操作栏 -->
       <template #header>

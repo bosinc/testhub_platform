@@ -1,5 +1,5 @@
 <template>
-  <div class="judge-dashboard">
+  <div class="judge-dashboard page-container">
     <el-card shadow="never" class="page-card">
       <template #header>
         <div class="card-header">

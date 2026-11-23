@@ -1,5 +1,5 @@
 <template>
-  <div class="docs-center">
+  <div class="docs-center page-container">
     <ResizableSplitPane v-model="sidebarWidth" :min-size="220" :max-size="480" :second-min-size="480" :storage-key="'docs-center.sidebar-width'">
       <template #first>
         <!-- 左侧文档列表 -->

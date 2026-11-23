@@ -1,5 +1,5 @@
 <template>
-  <div class="perf-projects">
+  <div class="perf-projects page-container">
     <div class="page-header">
       <div class="ph-left">
         <h2>{{ t('performanceTesting.project.title') }}</h2>
@@ -206,10 +206,8 @@ void dialogTitle_
 </script>
 
 <style lang="scss" scoped>
-.perf-projects { padding: 16px; }
-.page-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
 .ph-left { display: flex; align-items: baseline; gap: 10px; h2 { margin: 0; font-size: 20px; } }
 .subtitle { color: #8c8c8c; font-size: 13px; }
-.filter-bar { display: flex; gap: 10px; margin-bottom: 14px; }
+.filter-bar { display: flex; gap: 10px; }
 .pager { margin-top: 14px; display: flex; justify-content: flex-end; }
 </style>

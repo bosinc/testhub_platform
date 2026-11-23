@@ -1,5 +1,5 @@
 <template>
-  <div class="execution-list">
+  <div class="execution-list page-container">
     <!-- 工具栏 -->
     <el-card class="toolbar" shadow="never">
       <el-row :gutter="20">
@@ -289,23 +289,11 @@ onUnmounted(() => {
 </script>
 
 <style scoped lang="scss">
-.execution-list {
-  padding: 20px;
-}
-
 .toolbar {
   margin-bottom: 20px;
-  
+
   .text-right {
     text-align: right;
-  }
-}
-
-.table-card {
-  .pagination {
-    margin-top: 20px;
-    display: flex;
-    justify-content: flex-end;
   }
 }
 

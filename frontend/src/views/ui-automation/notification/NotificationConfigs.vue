@@ -1,5 +1,5 @@
 <template>
-  <div class="notification-configs-container">
+  <div class="notification-configs-container page-container">
     <!-- 页面说明 -->
     <div class="page-header">
       <h1 class="page-title">

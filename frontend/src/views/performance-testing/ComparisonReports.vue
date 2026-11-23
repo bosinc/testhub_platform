@@ -1,5 +1,5 @@
 <template>
-  <div class="perf-comparison-reports">
+  <div class="perf-comparison-reports page-container">
     <div class="page-head">
       <div>
         <h2 class="page-title">{{ t('performanceTesting.comparisonReport.title') }}</h2>
@@ -232,8 +232,6 @@ onMounted(() => {
 </script>
 
 <style lang="scss" scoped>
-.perf-comparison-reports { padding: 16px; }
-
 .page-head {
   display: flex;
   align-items: flex-start;

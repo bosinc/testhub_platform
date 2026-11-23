@@ -1,5 +1,5 @@
 <template>
-  <div class="app-automation-dashboard">
+  <div class="app-automation-dashboard page-container">
     <!-- 统计卡片 -->
     <div class="stats-section">
       <el-row :gutter="20">

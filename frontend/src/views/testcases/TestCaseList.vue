@@ -1310,24 +1310,7 @@ onMounted(async () => {
 }
 
 .page-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 12px;
   flex-shrink: 0;
-}
-
-.page-title {
-  margin: 0;
-  font-size: 24px;
-  font-weight: 600;
-  color: #303133;
-}
-
-.header-actions {
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
 }
 
 .card-container {
@@ -1336,9 +1319,6 @@ onMounted(async () => {
   flex: 1;
   min-width: 0;
   overflow: hidden;
-  background: #fff;
-  border-radius: 4px;
-  box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.1);
 }
 
 .resizable-split-pane { flex: 1; min-height: 0; }
@@ -1524,20 +1504,13 @@ onMounted(async () => {
 }
 
 @media (max-width: 768px) {
-  .page-header {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 15px;
-  }
-  
   .header-actions {
     width: 100%;
   }
-  
+
   .filter-bar {
     padding: 10px 15px;
   }
-  
 }
 
 .step-content {

@@ -1,8 +1,8 @@
 <template>
-  <div class="ui-flow-case-list">
+  <div class="ui-flow-case-list page-container">
     <!-- 页面标题 -->
     <div class="page-header">
-      <h3>{{ $t('appAutomation.testCase.title') }}</h3>
+      <h3 class="page-title">{{ $t('appAutomation.testCase.title') }}</h3>
       <div class="header-actions">
         <el-button
           type="primary"
@@ -824,29 +824,6 @@ onBeforeUnmount(() => {
   }
 }
 
-.page-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 16px;
-  background: white;
-  padding: 16px 20px;
-  border-radius: 4px;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
-
-  h3 {
-    margin: 0;
-    font-size: 18px;
-    font-weight: 600;
-    color: #303133;
-  }
-
-  .header-actions {
-    display: flex;
-    gap: 12px;
-  }
-}
-
 .device-card {
   margin-bottom: 16px;
 
@@ -918,10 +895,6 @@ onBeforeUnmount(() => {
 
 // 响应式设计
 @media screen and (max-width: 1366px) {
-  .page-header h3 {
-    font-size: 16px;
-  }
-
   .device-card :deep(.el-form-item__label) {
     font-size: 13px;
   }

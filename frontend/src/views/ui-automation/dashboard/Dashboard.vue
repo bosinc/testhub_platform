@@ -1,5 +1,5 @@
 <template>
-  <div class="dashboard-container">
+  <div class="dashboard-container page-container">
     <!-- 数据概览 -->
     <div class="stats-section" v-loading="statsLoading">
       <el-row :gutter="20">
@@ -139,7 +139,7 @@
     <!-- 核心功能介绍 -->
     <div class="features-section">
       <h2 class="section-title">{{ $t('uiAutomation.dashboard.coreFeatures') }}</h2>
-      <el-row :gutter="20">
+      <el-row :gutter="20" class="features-grid">
         <el-col :span="6">
           <el-card shadow="hover" class="feature-card">
             <div class="feature-icon">
@@ -608,6 +608,15 @@ onMounted(() => {
   height: 100%;
   padding: 30px;
   text-align: center;
+}
+
+/* Element Plus 栅格的 gutter 只处理横向间距，列级外边距用于补充换行后的行间距。 */
+.features-grid {
+  margin-bottom: -20px;
+}
+
+.features-grid :deep(.el-col) {
+  margin-bottom: 20px;
 }
 
 .feature-icon {

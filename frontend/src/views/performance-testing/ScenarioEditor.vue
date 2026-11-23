@@ -1,5 +1,5 @@
 <template>
-  <div class="perf-scenario-editor" v-loading="loading">
+  <div class="perf-scenario-editor page-container" v-loading="loading">
     <!-- ---------- 顶栏 ---------- -->
     <div class="editor-header">
       <div class="header-left">

@@ -1,5 +1,5 @@
 <template>
-  <div class="perf-monitor" v-loading="loading">
+  <div class="perf-monitor page-container" v-loading="loading">
     <!-- ---------- 顶栏 ---------- -->
     <div class="monitor-head">
       <div class="head-left">

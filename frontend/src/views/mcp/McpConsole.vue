@@ -1,5 +1,5 @@
 <template>
-  <div class="mcp-console">
+  <div class="mcp-console page-container">
     <el-alert
       v-if="showGuide"
       type="info"

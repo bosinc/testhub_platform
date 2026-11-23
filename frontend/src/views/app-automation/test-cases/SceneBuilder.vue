@@ -1,5 +1,5 @@
 <template>
-    <div class="ui-test-scene-builder">
+    <div class="ui-test-scene-builder page-container">
         <div class="page-header">
             <h3>{{ $t('appAutomation.sceneBuilder.header.title') }}</h3>
             <div class="header-actions">

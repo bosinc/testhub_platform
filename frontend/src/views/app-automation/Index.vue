@@ -1,5 +1,5 @@
 <template>
-  <div class="app-automation-index">
+  <div class="app-automation-index page-container">
     <el-card shadow="never">
       <div class="welcome-section">
         <h1>{{ $t('appAutomation.nav.title') }}</h1>

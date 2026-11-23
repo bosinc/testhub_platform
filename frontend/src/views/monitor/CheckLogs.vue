@@ -1,5 +1,5 @@
 <template>
-  <div class="check-logs">
+  <div class="check-logs page-container">
     <div class="page-header">
       <div>
         <h2 class="page-title">{{ $t('monitor.checkLogs.title') }}</h2>
@@ -239,24 +239,6 @@ onMounted(() => {
 </script>
 
 <style scoped lang="scss">
-.check-logs {
-  padding: 16px;
-}
-
-.page-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 16px;
-}
-
-.page-title {
-  margin: 0;
-  font-size: 20px;
-  font-weight: 600;
-  color: #303133;
-}
-
 .page-subtitle {
   margin: 4px 0 0;
   font-size: 13px;

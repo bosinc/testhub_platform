@@ -1,5 +1,5 @@
 <template>
-  <div class="ai-model-config">
+  <div class="ai-model-config page-container">
     <div class="page-header">
       <h1>{{ $t('configuration.aiModel.title') }}</h1>
       <p>{{ $t('configuration.aiModel.description') }}</p>

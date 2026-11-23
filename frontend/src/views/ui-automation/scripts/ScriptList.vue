@@ -1,5 +1,5 @@
 <template>
-  <div class="script-list">
+  <div class="script-list page-container">
     <div class="page-header">
       <h1 class="page-title">{{ $t('uiAutomation.script.title') }}</h1>
       <div class="header-actions">
@@ -140,8 +140,8 @@
           <el-input v-model="editingScript.name" maxlength="200" class="script-title-input" :placeholder="t('uiAutomation.script.messages.enterScriptName')" :aria-label="t('uiAutomation.script.scriptName')" />
           <el-tag :type="syncState === 'synced' ? 'success' : 'warning'">{{ syncStateText }}</el-tag>
           <span class="topbar-actions">
-            <el-button size="medium" @click="parseCode" :disabled="editorLoading" :loading="syncing">{{ t('uiAutomation.script.syncEditor.parseCode') }}</el-button>
-            <el-button size="medium" @click="generateFromSteps" :disabled="editorLoading" :loading="syncing">{{ t('uiAutomation.script.syncEditor.regenerateCode') }}</el-button>
+            <el-button @click="parseCode" :disabled="editorLoading" :loading="syncing">{{ t('uiAutomation.script.syncEditor.parseCode') }}</el-button>
+            <el-button @click="generateFromSteps" :disabled="editorLoading" :loading="syncing">{{ t('uiAutomation.script.syncEditor.regenerateCode') }}</el-button>
           </span>
         </div>
         <div class="sync-editor-body">
@@ -975,51 +975,8 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.script-list {
-  height: 100vh;
-  display: flex;
-  flex-direction: column;
-}
-
-.page-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 10px;
-  background: white;
-  padding: 10px 20px;
-  border-bottom: 1px solid #e6e6e6;
-}
-
-.page-title {
-  margin: 0;
-  font-size: 24px;
-}
-
-.header-actions {
-  display: flex;
-  align-items: center;
-}
-
 .script-file-input {
   display: none;
-}
-
-.card-container {
-  background-color: #fff;
-  border-radius: 8px;
-  padding: 20px;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-}
-
-.filter-bar {
-  margin-bottom: 10px;
-}
-
-.pagination {
-  margin-top: 10px;
-  display: flex;
-  justify-content: flex-end;
 }
 
 .row-actions {

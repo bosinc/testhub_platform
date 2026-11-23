@@ -1,5 +1,5 @@
 <template>
-  <div class="perf-dashboard">
+  <div class="perf-dashboard page-container">
     <div class="dash-header">
       <div class="dash-title">
         <el-icon><Odometer /></el-icon>

@@ -1,5 +1,5 @@
 <template>
-  <div class="perf-comparison">
+  <div class="perf-comparison page-container">
     <div class="page-head">
       <div>
         <h2 class="page-title">{{ t('performanceTesting.comparison.title') }}</h2>
@@ -613,8 +613,6 @@ onBeforeUnmount(() => {
 </script>
 
 <style lang="scss" scoped>
-.perf-comparison { padding: 16px; }
-
 .page-head {
   display: flex;
   align-items: flex-start;

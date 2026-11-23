@@ -1,5 +1,5 @@
 <template>
-  <div class="app-package-list">
+  <div class="app-package-list page-container">
     <div class="page-header">
       <h3>{{ $t('appAutomation.packages.title') }}</h3>
       <div class="header-actions">
@@ -221,19 +221,3 @@ onMounted(() => {
 })
 </script>
 
-<style scoped lang="scss">
-.app-package-list {
-  padding: 20px;
-}
-
-.page-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.header-actions {
-  display: flex;
-  gap: 10px;
-}
-</style>

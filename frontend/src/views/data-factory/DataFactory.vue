@@ -1,5 +1,5 @@
 <template>
-  <div class="data-factory-container">
+  <div class="data-factory-container page-container">
     <el-card class="header-card">
       <div class="header-content">
         <h1 class="page-title" @click="goToHome">

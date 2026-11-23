@@ -1,5 +1,5 @@
 <template>
-  <div class="element-manager">
+  <div class="element-manager page-container">
     <div class="element-layout">
       <ResizableSplitPane v-model="sidebarWidth" :min-size="240" :max-size="520" :second-min-size="480" :storage-key="'ui-automation.elements.sidebar-width'">
         <template #first>
@@ -1388,12 +1388,24 @@ const updatePage = async () => {
   display: flex;
   align-items: center;
   gap: 10px;
+  flex-wrap: nowrap;
 }
 
-.header-actions {
-  display: flex;
-  gap: 5px;
-  margin-left: auto;
+/* 侧栏宽度变化时，项目选择框收缩，操作按钮保持在同一行。 */
+.sidebar-header > .el-select {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.page-container .header-actions {
+  flex: 0 0 auto;
+  gap: 0;
+  margin-left: 0;
+  white-space: nowrap;
+
+  :deep(.el-button + .el-button) {
+    margin-left: 0;
+  }
 }
 
 .page-tree {

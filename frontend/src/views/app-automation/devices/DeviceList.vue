@@ -1,5 +1,5 @@
 <template>
-  <div class="device-management">
+  <div class="device-management page-container">
     <!-- 页面标题和操作按钮 -->
     <div class="device-header">
       <h3>{{ $t('appAutomation.device.title') }}</h3>

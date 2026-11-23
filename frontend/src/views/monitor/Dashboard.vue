@@ -1,5 +1,5 @@
 <template>
-  <div class="monitor-dashboard">
+  <div class="monitor-dashboard page-container">
     <!-- 头部：标题 + 自动刷新 + 刷新 -->
     <div class="dash-header">
       <div class="dash-title">

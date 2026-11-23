@@ -1,5 +1,5 @@
 <template>
-  <div class="perf-scheduled">
+  <div class="perf-scheduled page-container">
     <div class="page-head">
       <div>
         <h2 class="page-title">{{ t('performanceTesting.scheduled.title') }}</h2>
@@ -773,8 +773,6 @@ onMounted(async () => {
 </script>
 
 <style lang="scss" scoped>
-.perf-scheduled { padding: 16px; }
-
 .page-head {
   display: flex;
   align-items: flex-start;

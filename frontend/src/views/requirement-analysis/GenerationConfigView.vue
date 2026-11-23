@@ -1,5 +1,5 @@
 <template>
-  <div class="generation-config">
+  <div class="generation-config page-container">
     <div class="page-header">
       <h1>{{ $t('generationConfig.title') }}</h1>
       <p>{{ $t('generationConfig.subtitle') }}</p>

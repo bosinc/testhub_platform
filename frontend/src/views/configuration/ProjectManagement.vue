@@ -1,5 +1,5 @@
 <template>
-  <div class="project-center">
+  <div class="project-center page-container">
     <div class="page-header">
       <div>
         <h1>{{ $t('configuration.projectCenter.title') }}</h1>

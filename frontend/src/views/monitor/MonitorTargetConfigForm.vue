@@ -1,5 +1,5 @@
 <template>
-  <div class="cfg-form">
+  <div class="cfg-form page-container">
     <div class="mode-bar">
       <el-radio-group v-model="mode" size="small" @change="onModeChange">
         <el-radio-button value="form">&#x25CF; 表单模式</el-radio-button>

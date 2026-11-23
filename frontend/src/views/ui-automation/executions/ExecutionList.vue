@@ -123,7 +123,7 @@
         </el-table-column>
       </el-table>
 
-      <div class="pagination-container">
+      <div class="pagination">
         <el-pagination
           v-model:current-page="pagination.currentPage"
           v-model:page-size="pagination.pageSize"
@@ -669,41 +669,6 @@ onMounted(async () => {
 .page-container {
   height: 100%;
   overflow-y: auto;
-  background: #f5f5f5;
-}
-
-.page-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 10px;
-  background: white;
-  padding: 10px 20px;
-  border-radius: 4px;
-}
-
-/* 同样跟随全局响应式断点 */
-.page-container .page-header .page-title {
-  margin: 0;
-  font-size: 24px;
-  font-weight: 700;
-  color: #303133;
-
-  @media screen and (max-width: 1920px) {
-    font-size: 22px;
-  }
-  @media screen and (max-width: 1600px) {
-    font-size: 20px;
-  }
-  @media screen and (max-width: 1440px) {
-    font-size: 18px;
-  }
-  @media screen and (max-width: 1280px) {
-    font-size: 16px;
-  }
-  @media screen and (max-width: 480px) {
-    font-size: 14px;
-  }
 }
 
 .title-group {
@@ -715,23 +680,6 @@ onMounted(async () => {
 
 .task-filter-tag {
   flex-shrink: 0;
-}
-
-.card-container {
-  background-color: #fff;
-  border-radius: 8px;
-  padding: 20px;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-}
-
-.filter-bar {
-  margin-bottom: 10px;
-}
-
-.pagination-container {
-  margin-top: 10px;
-  display: flex;
-  justify-content: flex-end;
 }
 
 /* 固定操作列宽度并禁止按钮换行，确保三项操作保持在同一行。 */

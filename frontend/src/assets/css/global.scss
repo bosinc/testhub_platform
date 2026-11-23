@@ -16,28 +16,49 @@ body {
 }
 
 .page-container {
-  // padding: 20px;
   
   .page-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
     margin-bottom: 10px;
+    background: white;
+    padding: 10px;
+    border-radius: 4px;
+    border-bottom: 1px solid #e6e6e6;
     flex-wrap: wrap;
     gap: 10px;
     
     .page-title {
-      font-size: 24px;
+      margin: 0;
+      font-size: 20px;
       font-weight: 600;
       color: #303133;
     }
   }
+
+  .header-actions {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+}
+
+.filter-bar {
+  margin-bottom: 10px;
+}
+
+.pagination {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 10px;
 }
 
 .card-container {
   background: white;
-  border-radius: 8px;
-  padding: 20px;
+  border-radius: 4px;
+  padding: 10px;
   box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.1);
 }
 
@@ -66,22 +87,14 @@ body {
     font-size: 14px;
   }
   
-  .page-container {
-    // padding: 18px;
-  }
-  
   .page-header .page-title {
-    font-size: 22px;
+    font-size: 20px;
   }
 }
 
 @media screen and (max-width: 1600px) {
   body {
     font-size: 14px;
-  }
-  
-  .page-container {
-    // padding: 16px;
   }
   
   .page-header .page-title {
@@ -94,10 +107,6 @@ body {
     font-size: 13px;
   }
   
-  .page-container {
-    // padding: 14px;
-  }
-  
   .page-header .page-title {
     font-size: 18px;
   }
@@ -106,10 +115,6 @@ body {
 @media screen and (max-width: 1366px) {
   body {
     font-size: 13px;
-  }
-  
-  .page-container {
-    // padding: 12px;
   }
   
   .page-header .page-title {
@@ -122,10 +127,6 @@ body {
     font-size: 13px;
   }
   
-  .page-container {
-    // padding: 12px;
-  }
-  
   .page-header .page-title {
     font-size: 16px;
   }
@@ -134,10 +135,6 @@ body {
 @media screen and (max-width: 1024px) {
   body {
     font-size: 12px;
-  }
-  
-  .page-container {
-    // padding: 10px;
   }
   
   .page-header .page-title {
@@ -152,10 +149,6 @@ body {
 @media screen and (max-width: 768px) {
   body {
     font-size: 12px;
-  }
-  
-  .page-container {
-    // padding: 8px;
   }
   
   .page-header {
@@ -178,10 +171,6 @@ body {
     font-size: 11px;
   }
   
-  .page-container {
-    // padding: 6px;
-  }
-  
   .page-header .page-title {
     font-size: 14px;
   }
@@ -190,4 +179,45 @@ body {
     padding: 10px;
     border-radius: 4px;
   }
+}
+// 统一弹窗布局。弹窗本身固定在视口中央，超出视口时只滚动内容区。
+.el-overlay-dialog {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  overflow: hidden;
+}
+
+.el-overlay-dialog .el-dialog {
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 40px);
+  margin: 0 !important;
+  overflow: hidden;
+}
+
+.el-overlay-dialog .el-dialog__header,
+.el-overlay-dialog .el-dialog__footer {
+  flex: 0 0 auto;
+}
+
+.el-overlay-dialog .el-dialog__body {
+  min-height: 0;
+  overflow: auto;
+}
+
+// 自定义弹窗沿用与 Element Plus 弹窗相同的居中和滚动约束。
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100vw;
+  height: 100vh;
+  padding: 20px;
+  overflow: hidden;
+  box-sizing: border-box;
 }

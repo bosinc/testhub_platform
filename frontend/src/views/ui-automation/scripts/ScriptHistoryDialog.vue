@@ -1,6 +1,6 @@
 <template>
   <el-dialog v-model="dialogVisible" :title="$t('uiAutomation.history.title')" width="900px" destroy-on-close>
-    <div class="history-layout">
+    <div class="history-layout page-container">
       <el-table :data="records" v-loading="recordsLoading" size="small" stripe height="360" @row-click="selectRecord">
         <el-table-column prop="id" label="ID" width="70" />
         <el-table-column prop="status" :label="$t('uiAutomation.common.status')" width="100">
