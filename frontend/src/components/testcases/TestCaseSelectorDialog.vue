@@ -59,7 +59,7 @@
         <section class="testcase-library-list">
           <div class="testcase-search-bar">
             <el-form :inline="true">
-              <el-form-item :label="$t('execution.testcaseKeyword')">
+              <el-form-item>
                 <el-input
                   v-model="filters.keyword"
                   :placeholder="$t('execution.testcaseKeywordPlaceholder')"
@@ -88,6 +88,15 @@
               </el-form-item>
               <el-form-item>
                 <el-button @click="resetFilters">{{ $t('execution.resetSearch') }}</el-button>
+                <el-button
+                  type="danger"
+                  link
+                  :icon="Delete"
+                  :disabled="tempSelectedIds.length === 0"
+                  @click="clearSelectedCases"
+                >
+                  {{ $t('execution.clearSelectedTestcases') }}
+                </el-button>
               </el-form-item>
             </el-form>
           </div>
@@ -133,7 +142,7 @@
 import { ref, reactive, computed, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
-import { Search, Folder, FolderOpened } from '@element-plus/icons-vue'
+import { Search, Folder, FolderOpened, Delete } from '@element-plus/icons-vue'
 import ResizableSplitPane from '@/components/ResizableSplitPane.vue'
 import api from '@/utils/api'
 import { buildTestCaseLibraryTree, updatePageSelection } from '@/utils/testCaseSelector.mjs'
@@ -340,6 +349,11 @@ const resetFilters = async () => {
   await syncTableSelection()
 }
 
+const clearSelectedCases = async () => {
+  tempSelectedIds.value = []
+  await syncTableSelection()
+}
+
 const confirm = () => {
   emit('confirm', [...new Set(tempSelectedIds.value)])
   emit('update:modelValue', false)
@@ -439,7 +453,6 @@ watch(pageRows, syncTableSelection)
   flex: 0 0 auto;
   min-width: 0;
   padding: 0 10px;
-  background: #f8f9fa;
   border-radius: 4px;
 }
 

@@ -3,24 +3,25 @@
     <div class="page-header">
       <h1 class="page-title">{{ $t('testcase.title') }}</h1>
       <div class="header-actions">
+        <el-button v-if="selectedTestCases.length > 0" @click="openLinkPlanDialog">
+          {{ $t('testcase.linkTestPlan') }}
+        </el-button>
         <el-button v-if="selectedTestCases.length > 0" @click="openMoveDialog">
-          <el-icon><FolderOpened /></el-icon>{{ $t('testcase.moveCases') }} ({{ selectedCount }})
+          {{ $t('testcase.moveCases') }}
+        </el-button>
+        <el-button v-if="selectedTestCases.length > 0" @click="openCopyDialog">
+          {{ $t('testcase.copyCases') }}
         </el-button>
         <el-button
           v-if="selectedTestCases.length > 0"
-          type="danger"
+          type="danger" plain
           @click="batchDeleteTestCases"
           :disabled="isDeleting">
-          <el-icon><Delete /></el-icon>
-          {{ $t('testcase.batchDelete') }} ({{ selectedCount }})
+          {{ $t('testcase.batchDelete') }}
         </el-button>
         <el-button type="success" @click="exportToExcel">
           <el-icon><Download /></el-icon>
           {{ $t('testcase.exportExcel') }}
-        </el-button>
-        <el-button @click="downloadImportTemplate">
-          <el-icon><Download /></el-icon>
-          {{ $t('testcase.downloadImportTemplate') }}
         </el-button>
         <el-button type="warning" @click="openImportDialog">
           <el-icon><Upload /></el-icon>
@@ -289,9 +290,69 @@
       <template #footer><el-button @click="moduleDialogVisible = false">{{ $t('common.cancel') }}</el-button><el-button type="primary" @click="saveModule">{{ $t('common.confirm') }}</el-button></template>
     </el-dialog>
 
-    <el-dialog v-model="moveDialogVisible" :title="movingModule ? $t('testcase.moveModule') : $t('testcase.moveCases')" width="460px">
-      <el-form label-width="100px"><el-form-item :label="$t('testcase.targetModule')"><el-tree-select v-model="moveTargetModule" :data="moveModuleOptions" node-key="id" check-strictly default-expand-all :render-after-expand="false" style="width: 100%" :placeholder="$t('testcase.selectTargetModule')" /></el-form-item></el-form>
+    <el-dialog v-model="moveDialogVisible" :title="movingModule ? $t('testcase.moveModule') : $t('testcase.moveCases')" width="620px">
+      <el-form label-position="top">
+        <el-form-item :label="$t('testcase.selectModule')">
+          <el-tree
+            class="move-module-tree"
+            :data="moveModuleOptions"
+            :props="{ label: 'name', children: 'children' }"
+            node-key="id"
+            :current-node-key="moveTargetModule"
+            :default-expanded-keys="moveModuleExpandedKeys"
+            highlight-current
+            @node-click="handleMoveModuleSelect"
+          />
+        </el-form-item>
+      </el-form>
       <template #footer><el-button @click="moveDialogVisible = false">{{ $t('common.cancel') }}</el-button><el-button type="primary" :loading="isMoving" @click="confirmMove">{{ movingModule ? $t('testcase.moveModule') : $t('testcase.moveCases') }}</el-button></template>
+    </el-dialog>
+
+    <el-dialog v-model="copyDialogVisible" :title="$t('testcase.copyCases')" width="620px">
+      <el-form label-position="top">
+        <el-form-item :label="$t('testcase.selectModule')">
+          <el-tree
+            class="move-module-tree"
+            :data="moveModuleOptions"
+            :props="{ label: 'name', children: 'children' }"
+            node-key="id"
+            :current-node-key="copyTargetModule"
+            :default-expanded-keys="moveModuleExpandedKeys"
+            highlight-current
+            @node-click="handleCopyModuleSelect"
+          />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="copyDialogVisible = false">{{ $t('common.cancel') }}</el-button>
+        <el-button type="primary" :loading="isCopying" @click="confirmCopy">{{ $t('common.confirm') }}</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="linkPlanDialogVisible" :title="$t('testcase.linkTestPlan')" width="520px">
+      <el-form label-position="top">
+        <el-form-item :label="$t('testcase.selectTestPlan')">
+          <el-select
+            v-model="selectedPlanId"
+            filterable
+            clearable
+            style="width: 100%"
+            :loading="loadingPlans"
+            :placeholder="$t('testcase.selectTestPlan')"
+          >
+            <el-option
+              v-for="plan in availablePlans"
+              :key="plan.id"
+              :label="plan.name"
+              :value="plan.id"
+            />
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="linkPlanDialogVisible = false">{{ $t('common.cancel') }}</el-button>
+        <el-button type="primary" :loading="isLinkingPlan" @click="confirmLinkPlan">{{ $t('common.confirm') }}</el-button>
+      </template>
     </el-dialog>
 
     <!-- 新建 / 编辑用例：共用弹窗组件，不再跳转到独立页面 -->
@@ -299,6 +360,9 @@
       v-model="formDialogVisible"
       :test-case-id="editingCaseId"
       :project-id="formDialogProjectId"
+      :module-id="formDialogModuleId"
+      :initial-modules="moduleTree"
+      :initial-modules-project-id="moduleProjectId"
       :navigation-cases="formNavigationCases"
       :current-case-index="formCurrentCaseIndex"
       :initial-automation-links="formEditingCase?.automation_links"
@@ -312,12 +376,20 @@
       width="560px"
     >
       <el-alert
-        :title="$t('testcase.uploadTip')"
         type="info"
         :closable="false"
         show-icon
         class="import-alert"
-      />
+      >
+        <template #title>
+          <div class="import-alert-content">
+            <span>{{ $t('testcase.uploadTip') }}</span>
+            <el-button link type="primary" @click="downloadImportTemplate">
+              {{ $t('testcase.downloadImportTemplate') }}
+            </el-button>
+          </div>
+        </template>
+      </el-alert>
 
       <el-form label-width="100px">
         <el-form-item :label="$t('testcase.importProject')">
@@ -364,9 +436,6 @@
 
       <template #footer>
         <el-button @click="importDialogVisible = false">{{ $t('common.cancel') }}</el-button>
-        <el-button @click="downloadImportTemplate">
-          {{ $t('testcase.downloadImportTemplate') }}
-        </el-button>
         <el-button type="primary" :loading="isCreatingImport" @click="submitImport">
           {{ isCreatingImport ? $t('testcase.uploading') : $t('common.confirm') }}
         </el-button>
@@ -401,6 +470,7 @@ const formDialogVisible = ref(false)
 const editingCaseId = ref(null)
 const formNavigationCases = ref([])
 const formDialogProjectId = ref(null)
+const formDialogModuleId = ref(null)
 const loading = ref(false)
 // 左侧模块树及其统计数据的加载状态，页面进入时先展示，直到首轮数据请求完成
 const moduleTreeLoading = ref(true)
@@ -421,6 +491,14 @@ const moveDialogVisible = ref(false)
 const moveTargetModule = ref(null)
 const isMoving = ref(false)
 const movingModule = ref(null)
+const copyDialogVisible = ref(false)
+const copyTargetModule = ref(null)
+const isCopying = ref(false)
+const linkPlanDialogVisible = ref(false)
+const selectedPlanId = ref(null)
+const availablePlans = ref([])
+const loadingPlans = ref(false)
+const isLinkingPlan = ref(false)
 const isReorderingModules = ref(false)
 // 列表滚动加载的 IntersectionObserver 实例（哨兵元素进入视口时加载下一页）
 let sentinelObserver = null
@@ -668,9 +746,15 @@ const handleSortChange = ({ prop, order }) => {
 }
 
 const moveModuleOptions = computed(() => {
-  const addLabels = (nodes) => nodes.map(node => ({ ...node, label: node.name, children: addLabels(node.children || []) }))
-  return [{ id: '__root__', label: t('testcase.noParentModule'), children: addLabels(moduleTree.value) }]
+  return [{ id: '__root__', name: t('testcase.noParentModule'), children: moduleTree.value }]
 })
+const moveModuleExpandedKeys = computed(() => ['__root__', ...expandedModuleKeys.value])
+const handleMoveModuleSelect = node => {
+  moveTargetModule.value = node.id
+}
+const handleCopyModuleSelect = node => {
+  copyTargetModule.value = node.id
+}
 const loadModuleTree = async () => {
   if (!moduleProjectId.value) {
     moduleTree.value = []
@@ -777,6 +861,15 @@ const openMoveDialog = () => {
   if (projectsSelected.size !== 1) { ElMessage.warning(t('testcase.moveSameProject')); return }
   movingModule.value = null; moduleProjectId.value = [...projectsSelected][0]; loadModuleTree(); moveTargetModule.value = null; moveDialogVisible.value = true
 }
+const openCopyDialog = async () => {
+  const projectsSelected = new Set(selectedTestCases.value.map(item => item.project?.id))
+  if (projectsSelected.size !== 1) { ElMessage.warning(t('testcase.moveSameProject')); return }
+  movingModule.value = null
+  moduleProjectId.value = [...projectsSelected][0]
+  copyTargetModule.value = null
+  await loadModuleTree()
+  copyDialogVisible.value = true
+}
 const confirmMove = () => movingModule.value ? moveSelectedModule() : moveSelectedCases()
 const moveSelectedModule = async () => {
   isMoving.value = true
@@ -794,6 +887,81 @@ const moveSelectedCases = async () => {
   }
   catch (error) { ElMessage.error(error.response?.data?.detail || t('testcase.moveFailed')) }
   finally { isMoving.value = false }
+}
+const confirmCopy = async () => {
+  if (!copyTargetModule.value) {
+    ElMessage.warning(t('testcase.selectModule'))
+    return
+  }
+  isCopying.value = true
+  try {
+    const targets = await resolveSelectedForAction()
+    await api.post('/testcases/copy/', {
+      testcase_ids: targets.map(item => item.id),
+      module_id: copyTargetModule.value === '__root__' ? null : copyTargetModule.value
+    })
+    copyDialogVisible.value = false
+    selectedTestCases.value = []
+    selectAllMode.value = false
+    await fetchTestCases()
+    ElMessage.success(t('testcase.copyCasesSuccess'))
+  } catch (error) {
+    ElMessage.error(error.response?.data?.detail || t('testcase.copyCasesFailed'))
+  } finally {
+    isCopying.value = false
+  }
+}
+const fetchAvailablePlans = async () => {
+  loadingPlans.value = true
+  try {
+    const plans = []
+    let page = 1
+    while (true) {
+      const { data } = await api.get('/executions/plans/', {
+        params: { page, page_size: 100, is_active: 'true' }
+      })
+      const rows = data.results || data || []
+      plans.push(...rows.filter(plan => plan.execution_status !== 'completed'))
+      if (!data.results || rows.length === 0 || page * rows.length >= (data.count || rows.length)) break
+      page += 1
+    }
+    availablePlans.value = plans
+  } catch (error) {
+    availablePlans.value = []
+    ElMessage.error(t('testcase.fetchTestPlansFailed'))
+  } finally {
+    loadingPlans.value = false
+  }
+}
+const openLinkPlanDialog = async () => {
+  selectedPlanId.value = null
+  linkPlanDialogVisible.value = true
+  await fetchAvailablePlans()
+}
+const confirmLinkPlan = async () => {
+  if (!selectedPlanId.value) {
+    ElMessage.warning(t('testcase.selectTestPlan'))
+    return
+  }
+  isLinkingPlan.value = true
+  try {
+    const targets = await resolveSelectedForAction()
+    const { data: planDetail } = await api.get(`/executions/plans/${selectedPlanId.value}/`)
+    const existingIds = (planDetail.test_runs || [])
+      .flatMap(run => (run.run_cases || []).map(runCase => runCase.testcase?.id))
+      .filter(Boolean)
+    await api.post(`/executions/plans/${selectedPlanId.value}/link_testcases/`, {
+      testcases: [...new Set([...existingIds, ...targets.map(item => item.id)])]
+    })
+    linkPlanDialogVisible.value = false
+    selectedTestCases.value = []
+    selectAllMode.value = false
+    ElMessage.success(t('testcase.linkTestPlanSuccess'))
+  } catch (error) {
+    ElMessage.error(error.response?.data?.error || t('testcase.linkTestPlanFailed'))
+  } finally {
+    isLinkingPlan.value = false
+  }
 }
 
 const goToTestCase = (id) => {
@@ -829,6 +997,8 @@ const saveDetailNavigationContext = (items = testcases.value) => {
 
 const goToCreateTestCase = () => {
   formDialogProjectId.value = projectFilter.value || moduleProjectId.value || getPreferredProjectId(projects.value) || null
+  const selectedModuleId = Number(selectedModule.value)
+  formDialogModuleId.value = selectedModuleId > 0 ? selectedModuleId : null
   editingCaseId.value = null
   formDialogVisible.value = true
 }
@@ -841,6 +1011,7 @@ const editTestCase = (testcase) => {
     automation_links: item.automation_links || []
   }))
   saveDetailNavigationContext(testcases.value)
+  formDialogModuleId.value = null
   editingCaseId.value = testcase.id
   formDialogVisible.value = true
 }
@@ -1311,6 +1482,10 @@ onMounted(async () => {
 
 .page-header {
   flex-shrink: 0;
+
+  .header-actions {
+    gap: 0;
+  }
 }
 
 .card-container {
@@ -1328,6 +1503,14 @@ onMounted(async () => {
 .sidebar-title-row .el-input { flex: 1; min-width: 0; }
 .sidebar-title-row .el-button { flex: 0 0 36px; width: 36px; }
 .collection-tree { flex: 1; min-width: 0; overflow: auto; padding: 10px; }
+.move-module-tree {
+  width: 100%;
+  max-height: 360px;
+  overflow-y: auto;
+  padding: 8px 10px;
+  border: 1px solid var(--el-border-color);
+  border-radius: 4px;
+}
 .collection-tree :deep(.el-tree-node__content) { min-width: 0; overflow: hidden; }
 .collection-tree :deep(.el-tree-node__content > .el-tree-node__label) { display: none; }
 .tree-node { position: relative; display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; overflow: hidden; padding: 4px 0; }
@@ -1475,6 +1658,14 @@ onMounted(async () => {
 
 .import-alert {
   margin-bottom: 20px;
+}
+
+.import-alert-content {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
 }
 
 .import-upload {

@@ -139,6 +139,7 @@ export default {
   allPriorities: 'All Priorities',
   testcaseCode: 'ID',
   resetSearch: 'Reset',
+  clearSelectedTestcases: 'Clear',
   confirmSelectTestcases: 'Confirm ({count})',
 
   // Filters

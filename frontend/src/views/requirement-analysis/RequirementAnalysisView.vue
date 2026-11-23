@@ -1520,13 +1520,14 @@ export default {
   text-align: center;
   background: none;
   border-bottom: none;
+  padding: 0;
   gap: 0;
 }
 
 .page-header h1 {
   font-size: 2rem;
   color: #2c3e50;
-  margin-bottom: 10px;
+  margin: 0;
 }
 
 .page-header p {

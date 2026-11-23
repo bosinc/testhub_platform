@@ -139,6 +139,7 @@ export default {
   allPriorities: '全部优先级',
   testcaseCode: '编号',
   resetSearch: '重置',
+  clearSelectedTestcases: '清空',
   confirmSelectTestcases: '确认选择({count})',
 
   // Filters

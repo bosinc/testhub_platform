@@ -284,6 +284,64 @@ class TestCaseMoveView(APIView):
         return Response({'updated': len(case_list)})
 
 
+class TestCaseCopyView(APIView):
+    """将选中的测试用例复制到同项目的目标模块。"""
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        ids = request.data.get('testcase_ids', [])
+        module_id = request.data.get('module_id')
+        if not isinstance(ids, list) or not ids:
+            return Response({'testcase_ids': '请选择至少一个用例'}, status=status.HTTP_400_BAD_REQUEST)
+
+        cases = list(
+            TestCase.objects.filter(
+                pk__in=ids,
+                project__in=get_user_accessible_projects(request.user),
+            ).prefetch_related('versions', 'step_details')
+        )
+        if len(cases) != len(set(ids)):
+            return Response({'testcase_ids': '包含不存在或无权访问的用例'}, status=status.HTTP_404_NOT_FOUND)
+
+        projects = {case.project_id for case in cases}
+        if len(projects) != 1:
+            return Response({'testcase_ids': '批量复制的用例必须属于同一项目'}, status=status.HTTP_400_BAD_REQUEST)
+
+        module = validate_module_for_project(module_id, cases[0].project) if module_id is not None else None
+        copied_ids = []
+        with transaction.atomic():
+            for case in cases:
+                copied_case = TestCase.objects.create(
+                    project=case.project,
+                    module=module,
+                    title=case.title,
+                    description=case.description,
+                    notes=case.notes,
+                    preconditions=case.preconditions,
+                    priority=case.priority,
+                    status=case.status,
+                    test_type=case.test_type,
+                    automatability=case.automatability,
+                    tags=case.tags,
+                    author=request.user,
+                    assignee=case.assignee,
+                )
+                copied_case.versions.set(case.versions.all())
+                TestCaseStep.objects.bulk_create([
+                    TestCaseStep(
+                        testcase=copied_case,
+                        sort_order=step.sort_order,
+                        action=step.action,
+                        expected=step.expected,
+                    )
+                    for step in case.step_details.all()
+                ])
+                copied_ids.append(copied_case.id)
+
+        return Response({'created': len(copied_ids), 'testcase_ids': copied_ids}, status=status.HTTP_201_CREATED)
+
+
 class TestCaseBulkDeleteView(APIView):
     """批量删除测试用例。
 

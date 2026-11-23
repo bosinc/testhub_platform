@@ -44,6 +44,9 @@
       ref="panelRef"
       :test-case-id="testCaseId"
       :project-id="projectId"
+      :module-id="moduleId"
+      :initial-modules="initialModules"
+      :initial-modules-project-id="initialModulesProjectId"
       :initial-automation-links="initialAutomationLinks"
       @busy-change="busy = $event"
       @saved="handleSaved"
@@ -64,6 +67,11 @@ const props = defineProps({
   testCaseId: { type: [Number, String], default: null },
   // 新建时的默认归属项目
   projectId: { type: [Number, String], default: null },
+  // 新建时的默认模块，由用例列表当前选中的模块传入。
+  moduleId: { type: [Number, String], default: null },
+  // 列表页已加载的模块树，优先用于编辑表单，避免重复请求。
+  initialModules: { type: Array, default: () => [] },
+  initialModulesProjectId: { type: [Number, String], default: null },
   // 编辑详情页传入当前列表快照，用于弹窗顶部前后切换。
   navigationCases: { type: Array, default: () => [] },
   currentCaseIndex: { type: Number, default: -1 },

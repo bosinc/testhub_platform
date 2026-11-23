@@ -218,7 +218,7 @@ export default {
 
     // Test plan selection
     testPlans: '测试计划',
-    selectTestPlans: '可按测试计划自动选择用例',
+    selectTestPlans: '按测试计划自动选择用例',
 
     // Testcase Selection
     selectTestcases: '选择用例',

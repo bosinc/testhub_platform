@@ -113,6 +113,7 @@
               :render-after-expand="false"
               :disabled="!form.project_id"
               :placeholder="$t('testcase.selectModule')"
+              :render-content="renderModuleNode"
             />
           </div>
 
@@ -182,7 +183,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted, watch, nextTick } from 'vue'
+import { ref, reactive, computed, h, onMounted, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 import dayjs from 'dayjs'
@@ -200,6 +201,11 @@ const props = defineProps({
   testCaseId: { type: [Number, String], default: null },
   // 新建时的默认归属项目（一般由列表页当前项目传入）
   projectId: { type: [Number, String], default: null },
+  // 新建时的默认模块（一般由列表页当前选中模块传入）
+  moduleId: { type: [Number, String], default: null },
+  // 列表页已加载的模块树，项目一致时直接复用。
+  initialModules: { type: Array, default: () => [] },
+  initialModulesProjectId: { type: [Number, String], default: null },
   // 列表页已返回的自动化关联，编辑切换用例时直接复用，避免重复请求。
   initialAutomationLinks: { type: Array, default: null }
 })
@@ -266,6 +272,9 @@ const expandedModuleKeys = computed(() => {
   return path ? path.slice(0, -1) : []
 })
 
+// 下拉树节点保留简短名称，已选项则使用节点 label 中保存的完整路径。
+const renderModuleNode = (_h, { data }) => h('span', data.name)
+
 const validateSteps = (_rule, value, callback) => {
   if (!normalizeSteps(value).length) {
     callback(new Error(t('testcase.stepsRequired')))
@@ -308,10 +317,14 @@ const fetchProjectVersions = async projectId => {
 
 const fetchModules = async projectId => {
   if (!projectId) { moduleOptions.value = []; moduleTreeKey.value += 1; return }
+  if (String(props.initialModulesProjectId) === String(projectId)) {
+    moduleOptions.value = addModuleLabels(props.initialModules)
+    moduleTreeKey.value += 1
+    return
+  }
   try {
     const { data } = await api.get('/testcases/modules/', { params: { project: projectId } })
-    const addLabels = nodes => nodes.map(node => ({ ...node, label: node.name, children: addLabels(node.children || []) }))
-    moduleOptions.value = addLabels(Array.isArray(data) ? data : data.results || [])
+    moduleOptions.value = addModuleLabels(Array.isArray(data) ? data : data.results || [])
   } catch {
     moduleOptions.value = []
     ElMessage.error(t('testcase.fetchModulesFailed'))
@@ -319,6 +332,15 @@ const fetchModules = async projectId => {
     moduleTreeKey.value += 1
   }
 }
+
+const addModuleLabels = (nodes, parentPath = []) => nodes.map(node => {
+  const path = [...parentPath, node.name]
+  return {
+    ...node,
+    label: path.join(' / '),
+    children: addModuleLabels(node.children || [], path)
+  }
+})
 
 const fetchProjectMembers = async projectId => {
   projectMembers.value = []
@@ -400,6 +422,10 @@ const init = async () => {
       // 新建时保留一条空白步骤，便于直接输入
       form.steps = [{ action: '', expected: '' }]
       await loadProjectOptions(form.project_id)
+      // 当前列表选中了模块时，打开新建弹窗后自动回填该模块。
+      if (props.moduleId && findModulePath(moduleOptions.value, props.moduleId)) {
+        form.module_id = Number(props.moduleId)
+      }
     }
   } catch (error) {
     console.error('Load test case failed:', error)
@@ -451,7 +477,17 @@ const submit = async () => {
 defineExpose({ submit, loading })
 
 onMounted(init)
-watch(() => [props.testCaseId, props.projectId], () => { init() })
+watch(() => [props.testCaseId, props.projectId, props.moduleId], () => { init() })
+watch(
+  () => [props.initialModules, props.initialModulesProjectId],
+  () => {
+    if (form.project_id && String(props.initialModulesProjectId) === String(form.project_id)) {
+      moduleOptions.value = addModuleLabels(props.initialModules)
+      moduleTreeKey.value += 1
+    }
+  },
+  { deep: true }
+)
 </script>
 
 <style lang="scss" scoped>
