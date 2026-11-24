@@ -172,6 +172,10 @@ def _run_task(task_id, suite_execution_id, case_execution_ids, config):
             for execution_id in case_execution_ids:
                 execution = TestCaseExecution.objects.select_related('test_case__project', 'created_by').get(
                     pk=execution_id)
+                if not execution.test_case.steps.exists():
+                    # 零步骤会被执行器判为通过：不启动浏览器，直接记为失败，其余用例照常执行。
+                    _fail_unfinished(None, [execution_id], '用例没有定义任何步骤，未执行')
+                    continue
                 execution.status = 'running'
                 execution.started_at = timezone.now()
                 execution.save(update_fields=['status', 'started_at'])

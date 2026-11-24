@@ -629,7 +629,7 @@ const handleRerun = async () => {
     }
   } catch (error) {
     showRerunDialogVisible.value = false
-    ElMessage.error(t('uiAutomation.execution.messages.rerunFailed') + ': ' + (error.response?.data?.message || error.message || t('uiAutomation.messages.error.unknown')))
+    ElMessage.error(t('uiAutomation.execution.messages.rerunFailed') + ': ' + (error.response?.data?.error || error.response?.data?.message || error.message || t('uiAutomation.messages.error.unknown')))
     console.error('重跑失败:', error)
     // 即使失败也刷新列表，因为可能已经创建了执行记录
     setTimeout(async () => {

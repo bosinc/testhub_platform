@@ -19,8 +19,8 @@ TEMPLATE_VARIABLES = {
         'task_name', 'status_text', 'run_time', 'task_type', 'summary', 'error_message',
     },
     'ui_automation.scheduled_task': {
-        'task_name', 'status_text', 'run_time', 'task_type', 'engine', 'browser',
-        'result_message', 'success_count', 'failed_count', 'error_message', 'error_summary',
+        'task_name', 'status_text', 'pass_rate', 'success_count', 'total_count', 'failed_count',
+        'failed_cases', 'detail_url', 'error_message', 'error_summary',
     },
     'app_automation.scheduled_task': {
         'task_name', 'status_text', 'run_time', 'task_type', 'device_name', 'result_message',
@@ -44,6 +44,8 @@ TEXT_VARIABLES = {
     'monitor.duration.minutes': {'minutes'},
     'monitor.duration.hours': {'hours', 'minutes'},
     'perf_testing.sla_failed_items.item': {'label', 'actual', 'comparator', 'threshold'},
+    'ui_automation.failed_cases.item': {'name'},
+    'ui_automation.failed_cases.more': {'shown', 'total'},
 }
 
 

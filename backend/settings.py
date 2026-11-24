@@ -317,6 +317,9 @@ CSRF_TRUSTED_ORIGINS = config(
     cast=parse_csv,
 )
 
+# 平台对外访问地址，用于拼接通知里的链接；未配置时通知不带链接
+TESTHUB_BASE_URL = config('TESTHUB_BASE_URL', default='').rstrip('/')
+
 # Spectacular Settings
 SPECTACULAR_SETTINGS = {
     'TITLE': 'TestHub API',

@@ -51,7 +51,7 @@ from .serializers import (
 )
 from .operation_logger import log_operation
 from apps.projects.services import ensure_workspace_project_for_module, soft_delete_module_project, sync_project_members_from_module, sync_workspace_project_from_module
-from apps.core.notification_templates import render_notification, render_text, status_text
+from apps.core.notification_templates import render_notification, render_text
 from .script_security import MAX_SCRIPT_BYTES, ScriptSecurityError, analyze_script
 from .recording_import import import_recorded_script
 from .recording_sync import UnsupportedRecordingCode, generate_code, parse_recording
@@ -2089,7 +2089,8 @@ class TestCaseViewSet(viewsets.ModelViewSet):
                 description=test_case.description,
                 folder=test_case.folder,
                 priority=test_case.priority,
-                status=test_case.status,
+                # 副本尚未运行过，从草稿开始，不沿用源用例的就绪状态。
+                status='draft',
                 created_by=request.user
             )
 
@@ -2371,6 +2372,11 @@ class TestCaseViewSet(viewsets.ModelViewSet):
         engine_type = request.data.get('engine', 'playwright')
         browser = request.data.get('browser', 'chrome')
         headless = _request_bool(request.data.get('headless'), False)
+
+        # 执行的是已保存的步骤；零步骤会被执行器判为通过，与 MCP 执行一致直接拒绝。
+        if not test_case.steps.exists():
+            return Response({'error': '用例没有已保存的步骤，请先添加步骤并保存后再运行'},
+                            status=status.HTTP_400_BAD_REQUEST)
 
         if engine_type == 'selenium' and test_case.steps.filter(
                 action_type='storageState').exists():
@@ -2787,33 +2793,80 @@ class UiScheduledTaskViewSet(viewsets.ModelViewSet):
         except Exception as e:
             logger.error(f"发送通知失败: {str(e)}", exc_info=True)
 
+    # 通知里最多列出的失败用例条数、单条用例名的最大长度（机器人消息有长度上限）
+    NOTIFICATION_FAILED_CASE_LIMIT = 10
+    NOTIFICATION_CASE_NAME_LENGTH = 80
+
+    def _task_detail_url(self, task, last_result):
+        """运行详情链接：套件任务指向本次测试报告，用例任务指向该任务的执行记录列表"""
+        from django.conf import settings
+        from urllib.parse import urlencode
+
+        base_url = settings.TESTHUB_BASE_URL
+        if not base_url:
+            return None
+        # 与定时任务页"查看执行记录"的跳转参数一致，报告详情页返回时可回到该任务的列表
+        query = urlencode({'project': task.project_id, 'scheduled_task': task.id, 'task_name': task.name})
+        if task.task_type != 'TEST_SUITE':
+            return f'{base_url}/ui-automation/executions?{query}'
+        suite_execution_id = last_result.get('suite_execution_id')
+        if suite_execution_id:
+            return f'{base_url}/ui-automation/reports/{suite_execution_id}?{query}'
+        return f'{base_url}/ui-automation/reports?{query}'
+
+    def _failed_case_text(self, last_result):
+        """本次运行失败用例的文案：标题行加逐条用例名，没有失败用例时为空"""
+        executions = TestCaseExecution.objects.filter(status__in=['failed', 'error'])
+        if last_result.get('suite_execution_id'):
+            executions = executions.filter(suite_execution_id=last_result['suite_execution_id'])
+        elif last_result.get('case_execution_ids'):
+            executions = executions.filter(pk__in=last_result['case_execution_ids'])
+        else:
+            return ''
+        names = list(executions.order_by('id').values_list('test_case__name', flat=True))
+        if not names:
+            return ''
+
+        limit, length = self.NOTIFICATION_FAILED_CASE_LIMIT, self.NOTIFICATION_CASE_NAME_LENGTH
+        lines = [render_text('ui_automation.failed_cases.header')]
+        for name in names[:limit]:
+            lines.append(render_text(
+                'ui_automation.failed_cases.item',
+                name=name[:length] + '...' if len(name) > length else name))
+        if len(names) > limit:
+            lines.append(render_text('ui_automation.failed_cases.more', shown=limit, total=len(names)))
+        return '\n'.join(lines)
+
     def _render_task_notification(self, task, success):
         """渲染定时任务通知文案，模板见 apps/core/notification_templates.py"""
         # 获取最后执行结果的详细信息
         last_result = task.last_result or {}
-        success_count = last_result.get('success_count', 0)
-        failed_count = last_result.get('failed_count', 0)
-        # 成功、失败数都为 0 时不展示这一行
-        has_counts = success_count > 0 or failed_count > 0
-        # 机器人消息有长度上限，Webhook 正文里的错误信息只取前 200 个字符，邮件仍用全文
+        success_count = last_result.get('success_count') or 0
+        failed_count = last_result.get('failed_count') or 0
+        total_count = last_result.get('test_case_count') or success_count + failed_count
+        # 没有任何用例结果说明任务本身出错没跑起来，此时不展示通过率这一行
+        has_results = total_count > 0
+
         error_message = task.error_message or ''
+        if has_results:
+            # 用例跑完时任务上的错误信息只是"N个测试用例执行失败"之类的汇总，与通过率重复；
+            # 只展示套件执行记录自身的错误（如浏览器环境异常导致整个套件失败）
+            error_message = TestExecution.objects.filter(
+                pk=last_result.get('suite_execution_id')).values_list('error_message', flat=True).first() or ''
+        # 机器人消息有长度上限，Webhook 正文里的错误信息只取前 200 个字符，邮件仍用全文
         error_summary = error_message[:200] + '...' if len(error_message) > 200 else error_message
 
         return render_notification(
             'ui_automation.scheduled_task',
             task_name=task.name,
-            status_text=status_text(success),
-            # 转换执行时间到本地时区
-            run_time=timezone.localtime(task.last_run_time).strftime(
-                '%Y-%m-%d %H:%M:%S') if task.last_run_time else None,
-            task_type=render_text(
-                'ui_automation.task_type.suite' if task.task_type == 'TEST_SUITE'
-                else 'ui_automation.task_type.case'),
-            engine=task.engine.upper(),
-            browser=task.browser.capitalize(),
-            result_message=last_result.get('message', ''),
-            success_count=success_count if has_counts else None,
-            failed_count=failed_count if has_counts else None,
+            status_text=render_text(
+                'ui_automation.run_status.completed' if has_results else 'ui_automation.run_status.error'),
+            pass_rate=f'{success_count / total_count * 100:.1f}%' if has_results else None,
+            success_count=success_count,
+            total_count=total_count,
+            failed_count=failed_count,
+            failed_cases=self._failed_case_text(last_result),
+            detail_url=self._task_detail_url(task, last_result),
             error_message=error_message,
             error_summary=error_summary,
         )
@@ -2864,7 +2917,8 @@ class UiScheduledTaskViewSet(viewsets.ModelViewSet):
             # 准备通知内容
             notification = self._render_task_notification(task, success)
             title = notification.title
-            detail_content = notification.body('\n\n')
+            # markdown 需要空行才换行，失败用例这类多行变量内部也要补上空行
+            detail_content = notification.body().replace('\n', '\n\n')
 
             # 为不同的机器人平台准备消息格式
             for bot in all_webhook_bots:
@@ -2935,9 +2989,9 @@ class UiScheduledTaskViewSet(viewsets.ModelViewSet):
                         else:
                             webhook_url += f'?timestamp={timestamp}&sign={sign}'
                 elif bot_type == 'slack':  # Slack Incoming Webhook
-                    # Slack Incoming Webhook 接收简单的 text 载荷。
+                    # Slack Incoming Webhook 接收简单的 text 载荷，单个换行即可换行，不需要空行。
                     message_data = {
-                        "text": f"{title}\n\n{detail_content}"
+                        "text": f"{title}\n{notification.body()}"
                     }
                 else:
                     logger.warning(f"未知的机器人类型: {bot_type}")

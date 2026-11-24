@@ -105,6 +105,14 @@
                       <el-button size="small" text type="danger" :title="t('uiAutomation.testCase.delete.title')" @click.stop="deleteTestCase(data)"><el-icon><Delete /></el-icon></el-button>
                     </div>
                     <span v-if="data.type === 'testCase'" class="case-step-count">{{ data.steps_count }}</span>
+                    <el-tag
+                      v-if="data.type === 'testCase'"
+                      class="case-status-tag"
+                      size="small"
+                      :type="getStatusTag(data.status)"
+                    >
+                      {{ getStatusText(data.status) }}
+                    </el-tag>
                   </div>
                 </div>
               </div>
@@ -1496,8 +1504,10 @@ const saveTestCase = async () => {
   if (!selectedTestCase.value) return
 
   try {
+    // 状态由运行结果流转，保存时不回传打开用例时加载的旧值，否则会把就绪改回草稿。
+    const { status, ...caseData } = selectedTestCase.value
     const updateData = {
-      ...selectedTestCase.value,
+      ...caseData,
       // 提交项目主键，避免把序列化后的项目对象传回步骤更新接口。
       project: projectId.value,
       steps: currentSteps.value.map(({ expanded, element_page, ...step }) => step)
@@ -1929,9 +1939,10 @@ const resetForm = () => {
 
 // 辅助方法
 const getStatusTag = (status) => {
+  // 与套件选择用例树的状态标签配色保持一致。
   const tagMap = {
     'draft': 'info',
-    'ready': 'success',
+    'ready': 'primary',
     'running': 'warning',
     'passed': 'success',
     'failed': 'danger'
@@ -2164,6 +2175,10 @@ onMounted(async () => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.case-status-tag {
+  flex: 0 0 auto;
 }
 
 .case-step-count {

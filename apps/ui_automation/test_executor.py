@@ -2913,6 +2913,20 @@ def _persist_case_execution(execution, case_result, started):
         logger.exception('[UiSingleCase] 执行记录落库失败 execution_id=%s', execution.id)
 
 
+def _mark_case_ready(case, case_result):
+    """单用例运行通过后把草稿用例置为就绪；失败不回退，其他状态保持不变。"""
+    # 没有步骤的用例也会得到 passed，但没有执行任何操作，不能据此流转。
+    if case_result.get('status') != 'passed' or not case_result.get('steps'):
+        return
+    try:
+        # 条件更新只命中仍是草稿的记录，不会用内存中的旧对象覆盖执行期间的修改。
+        if TestCase.objects.filter(pk=case.pk, status='draft').update(
+                status='ready', updated_at=timezone.now()):
+            case.status = 'ready'
+    except Exception:  # noqa: BLE001 - 状态流转失败不掩盖执行结论
+        logger.exception('[UiSingleCase] 用例状态更新失败 case_id=%s', case.id)
+
+
 def run_single_case(case, *, engine='playwright', browser='chrome', headless=False,
                     executed_by=None, execution=None, storage_state_id=None, desktop=None):
     """执行单个 UI 用例并把结果写入执行记录。
@@ -2920,6 +2934,9 @@ def run_single_case(case, *, engine='playwright', browser='chrome', headless=Fal
     与套件执行共用 ``execute_test_case_*_no_db``，因此 storageState、navigate、
     urlContains 轮询等待等步骤语义完全一致；页面「运行用例」与 MCP 异步执行
     都调用本函数，不再各自维护一份步骤循环。
+
+    运行通过且至少执行了一个步骤时，草稿用例转为就绪；套件执行不经过本函数，
+    不改用例状态。
 
     Args:
         case: TestCase 实例（调用方已完成权限与前置校验）
@@ -2965,4 +2982,5 @@ def run_single_case(case, *, engine='playwright', browser='chrome', headless=Fal
             pass
 
     _persist_case_execution(execution, case_result, started)
+    _mark_case_ready(case, case_result)
     return case_result

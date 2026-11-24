@@ -11,7 +11,7 @@ from rest_framework.test import APIClient
 from apps.core.management.commands.run_all_scheduled_tasks import Command
 from apps.ui_automation import scheduled_tasks
 from apps.ui_automation.models import (
-    TestCase as UiTestCase, TestCaseExecution, TestExecution, TestSuite,
+    TestCase as UiTestCase, TestCaseExecution, TestCaseStep, TestExecution, TestSuite,
     TestSuiteTestCase, UiProject, UiScheduledTask,
 )
 from apps.ui_automation.test_executor import TestExecutor
@@ -26,6 +26,8 @@ class ScheduledTaskExecutionTests(TestCase):
         ) for index in range(2)]
         self.suite = TestSuite.objects.create(name='Suite', project=self.project)
         for index, case in enumerate(self.cases):
+            # 没有步骤的用例不会被执行，夹具用例各带一个步骤。
+            TestCaseStep.objects.create(test_case=case, step_number=1, action_type='wait', input_value='1')
             TestSuiteTestCase.objects.create(test_suite=self.suite, test_case=case, order=index)
         self.task = self.make_task('TEST_CASE')
         self.client = APIClient()
@@ -127,6 +129,48 @@ class ScheduledTaskExecutionTests(TestCase):
         self.assertEqual(self.task.last_result['status'], 'partial')
         self.assertEqual(self.task.last_result['success_count'], 1)
         self.assertEqual(self.task.last_result['failed_count'], 1)
+
+    def test_passed_case_task_marks_draft_cases_ready(self):
+        args = self.start()
+        with patch('apps.ui_automation.test_executor._run_case_playwright',
+                   side_effect=lambda executor, case: self.case_result(case)):
+            scheduled_tasks._run_task(*args)
+        self.assertEqual(set(UiTestCase.objects.values_list('status', flat=True)), {'ready'})
+
+    def test_case_without_steps_is_failed_without_running_and_batch_continues(self):
+        """零步骤会被执行器判为通过：该用例不启动浏览器直接记失败，后面的用例照常执行。"""
+        runnable, empty = self.cases  # 任务按逆序执行，空用例排在前面
+        TestCaseStep.objects.filter(test_case=empty).delete()
+        args = self.start()
+        with patch('apps.ui_automation.test_executor._run_case_playwright',
+                   side_effect=lambda executor, case: self.case_result(case)) as browser_run:
+            scheduled_tasks._run_task(*args)
+        self.assertEqual([call.args[1]['id'] for call in browser_run.call_args_list], [runnable.id])
+        record = TestCaseExecution.objects.get(scheduled_task=self.task, test_case=empty)
+        self.assertEqual(record.status, 'failed')
+        self.assertIn('没有定义任何步骤', record.error_message)
+        self.assertIsNone(record.started_at)
+        self.assertIsNotNone(record.finished_at)
+        self.assertEqual(
+            TestCaseExecution.objects.get(scheduled_task=self.task, test_case=runnable).status, 'passed')
+        self.task.refresh_from_db()
+        self.assertEqual(self.task.last_result['status'], 'partial')
+        self.assertEqual(self.task.last_result['success_count'], 1)
+        self.assertEqual(self.task.last_result['failed_count'], 1)
+
+    def test_passed_suite_run_keeps_case_status(self):
+        """套件执行不经过单用例入口，通过后用例状态保持不变。"""
+        parent = TestExecution.objects.create(
+            project=self.project, test_suite=self.suite, executed_by=self.user,
+            engine='playwright', status='RUNNING')
+        executor = TestExecutor(
+            test_suite=self.suite, engine='playwright', executed_by=self.user, execution=parent)
+        executor.get_test_cases()
+        with patch('apps.ui_automation.test_executor.sync_playwright', return_value=MagicMock()), \
+                patch.object(executor, 'execute_test_case_playwright_no_db', side_effect=self.case_result):
+            executor.run_with_playwright()
+        self.assertEqual(parent.case_executions.filter(status='passed').count(), 2)
+        self.assertEqual(set(UiTestCase.objects.values_list('status', flat=True)), {'draft'})
 
     def test_thread_start_failure_finishes_prebuilt_records(self):
         with patch.object(scheduled_tasks.threading, 'Thread') as thread:

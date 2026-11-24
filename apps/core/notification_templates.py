@@ -51,36 +51,28 @@ TEMPLATES = {
     ),
 
     # UI 自动化 - 定时任务执行结果
-    # 可用变量：task_name、status_text、run_time、task_type、engine 执行引擎、browser 浏览器、
-    #          result_message 执行结果、success_count / failed_count 成功、失败数、
+    # 可用变量：task_name、status_text 已完成/执行异常、pass_rate 通过率（如 89.7%）、
+    #          success_count / total_count / failed_count 通过、总、失败用例数、
+    #          failed_cases 失败用例（标题行加逐条用例名）、detail_url 运行详情链接、
     #          error_message 错误信息全文、error_summary 错误信息摘要（过长时截断，用于 Webhook）
     'ui_automation.scheduled_task': NotificationTemplate(
-        title='UI自动化定时任务执行{status_text}',
+        title='【Testhub-UI Automation 每日报告】',
         body='''\
 任务名称: {task_name}
 执行状态: {status_text}
-执行时间: {run_time|未知}
-任务类型: {task_type}
-执行引擎: {engine}
-浏览器: {browser}
-执行结果: {result_message}
-成功: {success_count} 个，失败: {failed_count} 个
+通过率: {pass_rate}（{success_count}/{total_count}）· 失败 {failed_count} 条
+{failed_cases}
 错误信息: {error_summary}
+运行详情: {detail_url}
 ''',
-        email_subject='UI自动化定时任务执行{status_text}: {task_name}',
+        email_subject='【Testhub-UI Automation 每日报告】{task_name}',
         email_body='''\
 任务名称: {task_name}
 执行状态: {status_text}
-执行时间: {run_time|未知}
-任务类型: {task_type}
-执行引擎: {engine}
-浏览器: {browser}
-
-执行结果:
-{result_message|无详细信息}
-
-错误信息:
-{error_message|无错误信息}
+通过率: {pass_rate}（{success_count}/{total_count}）· 失败 {failed_count} 条
+{failed_cases}
+错误信息: {error_message}
+运行详情: {detail_url}
 ''',
     ),
 
@@ -184,9 +176,14 @@ TEXTS = {
     'common.status.success': '成功',
     'common.status.failed': '失败',
 
-    # UI 自动化任务类型，对应 {task_type}
-    'ui_automation.task_type.suite': '测试套件执行',
-    'ui_automation.task_type.case': '测试用例执行',
+    # UI 自动化执行状态，对应 {status_text}：有用例结果为已完成，任务本身出错没有结果为执行异常
+    'ui_automation.run_status.completed': '已完成',
+    'ui_automation.run_status.error': '执行异常',
+
+    # UI 自动化失败用例：标题行加逐条用例名，超出条数上限时加一行说明，整体对应 {failed_cases}
+    'ui_automation.failed_cases.header': '失败用例:',
+    'ui_automation.failed_cases.item': '• {name}',
+    'ui_automation.failed_cases.more': '… 仅列出前 {shown} 条，共 {total} 条',
 
     # 监控恢复通知的异常时长，对应 {duration}
     'monitor.duration.under_minute': '不足 1 分钟',

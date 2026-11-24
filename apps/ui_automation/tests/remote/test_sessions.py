@@ -14,7 +14,7 @@ from rest_framework.test import APIClient
 from ...remote import sessions as remote
 from ...remote.consumers import UiDesktopConsumer
 from ...remote.views import TICKET_SALT
-from ...models import TestCase as UiCase, TestCaseExecution, TestScript, TestSuite, TestSuiteTestCase, UiRemoteSession, UiProject
+from ...models import TestCase as UiCase, TestCaseExecution, TestCaseStep, TestScript, TestSuite, TestSuiteTestCase, UiRemoteSession, UiProject
 from ...test_executor import _launch_playwright_browser
 
 
@@ -46,6 +46,8 @@ class SessionTests(TestCase):
         self.project = UiProject.objects.create(name='远程桌面', base_url='https://example.test', owner=self.user)
         self.project.members.add(self.other)
         self.case = UiCase.objects.create(name='登录', project=self.project, created_by=self.user)
+        # 没有步骤的用例在运行入口就会被拒绝，夹具用例带一个步骤。
+        TestCaseStep.objects.create(test_case=self.case, step_number=1, action_type='wait', input_value='1')
         self.client = APIClient()
         self.client.force_authenticate(self.user)
         self.tools = patch('apps.ui_automation.remote.sessions.shutil.which', return_value='/usr/bin/tool')
@@ -148,6 +150,16 @@ class SessionTests(TestCase):
             response = self.client.post(f'/api/ui-automation/test-cases/{self.case.pk}/run/', {'headless': False}, format='json')
         self.assertEqual(response.status_code, 400)
         self.assertEqual(TestCaseExecution.objects.latest('pk').status, 'failed')
+
+    @patch('apps.ui_automation.remote.sessions.launch_case')
+    def test_case_without_steps_is_rejected_before_allocating_a_desktop(self, launch):
+        empty = UiCase.objects.create(name='空用例', project=self.project, created_by=self.user)
+        response = self.client.post(f'/api/ui-automation/test-cases/{empty.pk}/run/', {'headless': False}, format='json')
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('没有已保存的步骤', response.data['error'])
+        launch.assert_not_called()
+        self.assertEqual(UiRemoteSession.objects.count(), 0)
+        self.assertFalse(TestCaseExecution.objects.filter(test_case=empty).exists())
 
     @patch('apps.ui_automation.views.start_script_execution')
     def test_saved_and_unsaved_replays_both_bind_private_session(self, start):

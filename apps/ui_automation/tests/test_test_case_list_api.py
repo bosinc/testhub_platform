@@ -151,3 +151,10 @@ class TestCaseListApiTests(TestCase):
         counts = {item['id']: item['steps_count'] for item in self.client.get(self.url, self.params).data['results']}
         self.assertEqual(counts[case_id], 0)
         self.assertEqual(counts[copied.data['id']], 3)
+
+    def test_copy_starts_as_draft_and_keeps_source_status(self):
+        copied = self.client.post(reverse('testcase-copy-case', args=[self.case.pk]))
+        self.assertEqual(copied.status_code, 201)
+        self.assertEqual(copied.data['status'], 'draft')
+        self.case.refresh_from_db()
+        self.assertEqual(self.case.status, 'ready')
