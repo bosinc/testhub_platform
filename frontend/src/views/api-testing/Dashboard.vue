@@ -62,11 +62,8 @@
     <el-row :gutter="20" class="content-section">
       <!-- 最近活动 -->
       <el-col :span="12">
-      <el-card class="recent-activities" :title="$t('apiTesting.dashboard.operationLogs')" shadow="hover">
-        <div v-if="loading" class="loading-container">
-          <el-empty :description="$t('apiTesting.dashboard.loading')" />
-        </div>
-        <div v-else-if="operationLogs.length === 0" class="activities-list">
+      <el-card class="recent-activities" :title="$t('apiTesting.dashboard.operationLogs')" shadow="hover" v-loading="operationLogsLoading">
+        <div v-if="operationLogs.length === 0" class="activities-list">
           <el-empty :description="$t('apiTesting.dashboard.noLogs')" />
         </div>
         <div v-else class="activities-list">
@@ -203,35 +200,43 @@ const interfaceCount = ref(0)
 const scenarioCaseCount = ref(0)
 const historyCount = ref(0)
 
-const loading = ref(false)
+// 操作历史卡片只依赖本卡片自己的接口，统计数据接口返回与否不影响它的 loading
+const operationLogsLoading = ref(false)
 const operationLogs = ref([])
 
-// 加载数据
-const loadDashboardData = async () => {
-  loading.value = true
+// 加载统计数据（独立于操作日志，不互相阻塞）
+const loadStats = async () => {
   try {
-    // 并行加载统计数据和操作日志
-    const [statsRes, logsRes] = await Promise.all([
-      getDashboardStats(),
-      getOperationLogs({ page_size: 20, ordering: '-created_at' })
-    ])
-
-    // 更新统计数据
+    const statsRes = await getDashboardStats()
     const stats = statsRes.data
     projectCount.value = stats.project_count || 0
     interfaceCount.value = stats.interface_count || 0
     scenarioCaseCount.value = stats.scenario_case_count || 0
     historyCount.value = stats.history_count || 0
-    
-    // 更新操作日志
-    operationLogs.value = logsRes.data.results || []
-
   } catch (error) {
-    // ElMessage.error('加载仪表板数据失败')
-    console.error('加载仪表板数据失败:', error)
-  } finally {
-    loading.value = false
+    console.error('加载统计数据失败:', error)
   }
+}
+
+// 加载操作历史：loading 只等操作日志接口响应
+const loadOperationLogs = async () => {
+  operationLogsLoading.value = true
+  try {
+    const logsRes = await getOperationLogs({ page_size: 20, ordering: '-created_at' })
+    operationLogs.value = logsRes.data.results || []
+  } catch (error) {
+    console.error('加载操作日志失败:', error)
+  } finally {
+    operationLogsLoading.value = false
+  }
+}
+
+// 加载数据：两个接口各自独立，操作历史卡片无需等待统计数据
+const loadDashboardData = async () => {
+  await Promise.all([
+    loadStats(),
+    loadOperationLogs()
+  ])
 }
 
 // 导航到各功能页面

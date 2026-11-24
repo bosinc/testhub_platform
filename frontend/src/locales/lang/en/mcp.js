@@ -14,6 +14,8 @@ export default {
   catApproval: 'Approval',
   domainProject: 'Projects',
   domainTestcases: 'Test Cases',
+  domainReviews: 'Case Reviews',
+  domainExecutions: 'Test Plans',
   domainApi: 'API Testing',
   domainUi: 'UI Automation',
   domainPerf: 'Perf Testing',

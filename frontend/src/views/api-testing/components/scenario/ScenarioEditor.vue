@@ -314,7 +314,7 @@ import {
 } from '@/utils/scenarioDefinition'
 import {
   cancelExecution, deleteScenarioExecution, executeScenarioCase, getAllApiCollections, getAllApiRequests, getApiRequest,
-  getEnvironments, getExecutionSteps, getScenarioCaseExecutions,
+  getExecutionSteps, getScenarioCaseExecutions,
   getScenarioDefinition, patchScenarioCase, saveScenarioDefinition, saveScenarioStep
 } from '@/api/api-testing'
 import AddStepMenu from './AddStepMenu.vue'
@@ -327,6 +327,8 @@ const props = defineProps({
   scenarioCase: { type: Object, required: true },
   // 当前项目的场景列表（场景树的轻量数据），由页面传入，编辑器不再重复请求
   projectScenarios: { type: Array, default: () => [] },
+  // 环境列表由页面加载并统一维护，编辑器直接复用，不再重复请求
+  environments: { type: Array, default: () => [] },
   // 环境由页面顶部统一选择，编辑器不再单独维护
   environmentId: { type: [Number, String], default: null }
 })
@@ -363,7 +365,6 @@ const secondPaneMinWidth = computed(() => (editorMainWidth.value
   ? Math.max(240, Math.round(editorMainWidth.value * 0.3) - 8)
   : 420))
 let editorResizeObserver = null
-const environments = ref([])
 // 可引用/导入的其他场景：排除当前场景自身。
 const scenarios = computed(() => props.projectScenarios.filter(
   item => String(item.id) !== String(props.scenarioCase?.id)))
@@ -407,7 +408,7 @@ const selectedHasElse = computed(() => {
   return node?.type === 'condition' && Boolean(pairedElse(steps.value, node.id))
 })
 const selectedEnvironment = computed(() => {
-  const env = environments.value.find(item => String(item.id) === String(props.environmentId))
+  const env = props.environments.find(item => String(item.id) === String(props.environmentId))
   return env ? { base_url: env.base_url, variables: env.variables || {} } : null
 })
 // 把集合与接口组装成与接口树一致的层级结构，供单选导入使用。
@@ -499,25 +500,10 @@ async function reload() {
     if (!steps.value.some(step => step.id === selectedId.value)) {
       selectedId.value = steps.value[0]?.id || null
     }
-    await loadSupport()
   } catch (error) {
     ElMessage.error(errorMessage(error))
   } finally {
     loading.value = false
-  }
-}
-
-async function loadSupport() {
-  const projectId = props.scenarioCase?.project
-  try {
-    // 不能按项目过滤：后端的 project 过滤会把 project 为空的全局环境也过滤掉，
-    // 导致已选环境匹配不到选项、下拉框只显示 ID。这里取全量后在前端筛选。
-    const envResponse = await getEnvironments({})
-    const allEnvironments = envResponse.data?.results || envResponse.data || []
-    environments.value = allEnvironments.filter(env =>
-      env.scope === 'GLOBAL' || String(env.project) === String(projectId))
-  } catch {
-    // Support data is optional; the editor still works without it.
   }
 }
 

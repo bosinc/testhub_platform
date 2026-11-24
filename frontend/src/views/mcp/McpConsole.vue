@@ -63,7 +63,7 @@
           <el-table-column :label="$t('mcp.colCalls')" width="100" align="center">
             <template #default="{ row }">{{ row.stats?.calls || 0 }}</template>
           </el-table-column>
-          <el-table-column :label="$t('common.actions')" width="80" fixed="right">
+          <el-table-column :label="$t('common.operation')" width="80" fixed="right">
             <template #default="{ row }">
               <el-button link type="primary" size="small" @click="openToolDetail(row)">{{ $t('mcp.detail') }}</el-button>
             </template>
@@ -107,7 +107,7 @@
           <el-table-column prop="created_at" :label="$t('mcp.colCreated')" width="160">
             <template #default="{ row }">{{ formatTime(row.created_at) }}</template>
           </el-table-column>
-          <el-table-column :label="$t('common.actions')" width="140" fixed="right">
+          <el-table-column :label="$t('common.operation')" width="140" fixed="right">
             <template #default="{ row }">
               <template v-if="row.status === 'pending'">
                 <el-button link type="success" size="small" @click="doApprove(row)">{{ $t('mcp.approve') }}</el-button>
@@ -297,6 +297,8 @@ const categoryOptions = computed(() => [
 const domainOptions = computed(() => [
   { value: 'project', label: t('mcp.domainProject') },
   { value: 'testcases', label: t('mcp.domainTestcases') },
+  { value: 'reviews', label: t('mcp.domainReviews') },
+  { value: 'executions', label: t('mcp.domainExecutions') },
   { value: 'api-testing', label: t('mcp.domainApi') },
   { value: 'ui-automation', label: t('mcp.domainUi') },
   { value: 'perf-testing', label: t('mcp.domainPerf') },
@@ -304,7 +306,7 @@ const domainOptions = computed(() => [
 ])
 const categoryTagType = (c) => ({ read: 'success', preview: 'warning', confirm: 'danger', approval: 'info' }[c] || 'info')
 const categoryLabel = (c) => ({ read: t('mcp.catRead'), preview: t('mcp.catPreview'), confirm: t('mcp.catConfirm'), approval: t('mcp.catApproval') }[c] || c)
-const domainLabel = (d) => ({ project: t('mcp.domainProject'), testcases: t('mcp.domainTestcases'), 'api-testing': t('mcp.domainApi'), 'ui-automation': t('mcp.domainUi'), 'perf-testing': t('mcp.domainPerf'), platform: t('mcp.domainPlatform') }[d] || d)
+const domainLabel = (d) => ({ project: t('mcp.domainProject'), testcases: t('mcp.domainTestcases'), reviews: t('mcp.domainReviews'), executions: t('mcp.domainExecutions'), 'api-testing': t('mcp.domainApi'), 'ui-automation': t('mcp.domainUi'), 'perf-testing': t('mcp.domainPerf'), platform: t('mcp.domainPlatform') }[d] || d)
 
 const filteredTools = computed(() => {
   const kw = toolFilter.keyword.trim().toLowerCase()

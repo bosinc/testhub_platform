@@ -9,6 +9,7 @@ from django.shortcuts import get_object_or_404
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import filters
 from django.db import models
+from django.db.models import Exists, OuterRef
 from django.db import transaction
 from django.utils import timezone
 from django.http import HttpResponse, FileResponse, Http404, HttpResponseNotFound
@@ -146,10 +147,19 @@ class ApiProjectViewSet(viewsets.ModelViewSet):
     
     def get_queryset(self):
         user = self.request.user
-        return ApiProject.objects.filter(is_deleted=False).filter(
-            models.Q(owner=user) | models.Q(members=user)
-        ).distinct()
-    
+        # 成员关系用 EXISTS 子查询判断，避免 Q(owner)|Q(members) 带来的
+        # M2M JOIN + DISTINCT：分页 count 会物化整个 DISTINCT 结果集，
+        # 数据量大时非常慢。ApiProject.objects 已由 ActiveProjectManager
+        # 过滤软删除项目，无需重复加 is_deleted 条件。
+        member_projects = ApiProject.members.through.objects.filter(
+            apiproject_id=OuterRef('pk'), user=user
+        )
+        return ApiProject.objects.alias(
+            is_project_member=Exists(member_projects)
+        ).filter(
+            models.Q(owner=user) | models.Q(is_project_member=True)
+        ).select_related('owner').prefetch_related('members')
+
     def perform_create(self, serializer):
         """创建项目时记录日志"""
         instance = serializer.save()

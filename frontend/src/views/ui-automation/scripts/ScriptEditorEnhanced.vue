@@ -61,7 +61,7 @@
         </template>
 
         <template #second>
-          <ResizableSplitPane v-model="detailsPanelWidth" resize-target="second" :min-size="280" :max-size="520" :first-min-size="480" :second-min-size="480" :storage-key="'ui-automation.script-editor.details-width'">
+          <ResizableSplitPane v-model="detailsPanelWidth" resize-target="second" :min-size="280" :max-size="520" :max-ratio="0" :first-min-size="480" :second-min-size="480" :storage-key="'ui-automation.script-editor.details-width'">
             <template #first>
               <!-- 中间:代码编辑器 -->
               <div class="center-panel">

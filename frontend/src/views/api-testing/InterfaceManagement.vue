@@ -41,7 +41,7 @@
           </div>
         </div>
 
-        <div class="collection-tree">
+        <div class="collection-tree" v-loading="treeLoading">
           <el-tree
             ref="treeRef"
             :data="visibleCollections"
@@ -591,6 +591,8 @@ const selectedProject = ref(null)
 useRememberedProject(selectedProject, projects)
 const collections = ref([])
 const flatCollections = ref([])
+// 接口树 loading 只依赖树数据接口，不必等其他非必要接口
+const treeLoading = ref(false)
 const environments = ref([])
 const selectedEnvironment = ref('')
 const selectedRequest = ref(null)
@@ -940,6 +942,7 @@ const loadProjects = async () => {
 }
 
 const loadCollections = async (projectId) => {
+  treeLoading.value = true
   try {
     const [collectionsData, requests] = await Promise.all([
       fetchAllPages('/api-testing/collections/', { project: projectId, tree: 1 }),
@@ -955,6 +958,9 @@ const loadCollections = async (projectId) => {
   } catch (error) {
     ElMessage.error(t('apiTesting.interface.loadCollectionsFailed'))
     console.error('加载集合失败:', error)
+  } finally {
+    // 快速切换项目时，避免旧请求关闭新项目的 loading
+    if (selectedProject.value === projectId) treeLoading.value = false
   }
 }
 

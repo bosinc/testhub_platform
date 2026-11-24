@@ -14,6 +14,8 @@ export default {
   catApproval: '审批查询',
   domainProject: '项目管理',
   domainTestcases: '测试用例',
+  domainReviews: '用例评审',
+  domainExecutions: '测试计划',
   domainApi: '接口测试',
   domainUi: 'UI 自动化',
   domainPerf: '性能测试',

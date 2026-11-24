@@ -217,7 +217,7 @@
                 </template>
 
                 <template #second>
-                    <ResizableSplitPane v-model="configWidth" resize-target="second" :min-size="300" :max-size="560" :first-min-size="520" :second-min-size="360" :storage-key="'app-automation.scene-builder.config-width'">
+                    <ResizableSplitPane v-model="configWidth" resize-target="second" :min-size="300" :max-size="560" :max-ratio="0" :first-min-size="520" :second-min-size="360" :storage-key="'app-automation.scene-builder.config-width'">
                         <template #first>
                             <div class="scene-pane steps-pane">
                 <el-card class="scene-card" shadow="never">

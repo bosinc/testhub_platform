@@ -73,7 +73,7 @@
           </div>
         </div>
 
-        <div class="scenario-tree">
+        <div class="scenario-tree" v-loading="treeLoading">
           <el-tree
             ref="scenarioCaseTreeRef"
             :data="scenarioCaseTree"
@@ -150,6 +150,7 @@
           <ScenarioEditor
             :scenario-case="selectedScenarioCase"
             :project-scenarios="scenarioCases"
+            :environments="environments"
             :environment-id="pageEnvironment"
             @updated="onScenarioEdited"
           />
@@ -341,6 +342,8 @@ const selectedScenarioCase = ref(null)
 const loadingScenarioCaseId = ref(null)
 let scenarioCaseDetailRequestToken = 0
 const environments = ref([])
+// 场景树 loading 只依赖树数据接口，不必等其他非必要接口
+const treeLoading = ref(false)
 const pageEnvironment = ref(null)
 const running = ref(false)
 const scenarioCaseTreeRef = ref(null)
@@ -531,9 +534,11 @@ const loadScenarioCases = async () => {
   if (!projectId) {
     scenarioCases.value = []
     scenarioCaseFolders.value = []
+    treeLoading.value = false
     return
   }
 
+  treeLoading.value = true
   try {
     const response = await getScenarioCaseTree({ project: projectId })
     // 快速切换项目时先发出的请求可能后返回，不能用它覆盖当前项目的场景树。
@@ -547,6 +552,9 @@ const loadScenarioCases = async () => {
   } catch (error) {
     if (projectId !== selectedProject.value) return
     ElMessage.error(t('apiTesting.messages.error.loadScenarioCases'))
+  } finally {
+    // 快速切换项目时，避免旧请求关闭新项目的 loading
+    if (projectId === selectedProject.value) treeLoading.value = false
   }
 }
 

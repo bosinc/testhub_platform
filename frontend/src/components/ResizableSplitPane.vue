@@ -44,6 +44,11 @@ const props = defineProps({
     type: Number,
     default: 560
   },
+  // 按容器宽度的比例放宽上限（0~1），maxSize 作为保底值；传 0 则只按固定的 maxSize 限制
+  maxRatio: {
+    type: Number,
+    default: 0.4
+  },
   secondMinSize: {
     type: Number,
     default: 320
@@ -80,7 +85,11 @@ const dragStartWidth = ref(0)
 const effectiveMaxSize = computed(() => {
   const availableWidth = containerWidth.value || Number.POSITIVE_INFINITY
   const otherMinSize = props.resizeTarget === 'first' ? props.secondMinSize : props.firstMinSize
-  return Math.max(props.minSize, Math.min(props.maxSize, availableWidth - otherMinSize))
+  const ratioMaxSize = props.maxRatio > 0 && containerWidth.value
+    ? Math.round(containerWidth.value * props.maxRatio)
+    : 0
+  const maxSize = Math.max(props.maxSize, ratioMaxSize)
+  return Math.max(props.minSize, Math.min(maxSize, availableWidth - otherMinSize))
 })
 
 const clampWidth = (value) => Math.round(Math.max(props.minSize, Math.min(effectiveMaxSize.value, value)))
@@ -143,9 +152,14 @@ watch(effectiveMaxSize, () => {
 })
 
 onMounted(() => {
+  // 先量出容器宽度再恢复，否则按比例拖宽后保存的宽度会被截回 maxSize
+  containerWidth.value = containerRef.value?.clientWidth || 0
   restoreWidth()
   resizeObserver = new ResizeObserver(([entry]) => {
+    const measuredFirstTime = !containerWidth.value && entry.contentRect.width > 0
     containerWidth.value = entry.contentRect.width
+    // 挂载时容器不可见（宽度为 0）的情况，首次量到宽度后再恢复一次
+    if (measuredFirstTime && !dragging.value) restoreWidth()
   })
   if (containerRef.value) resizeObserver.observe(containerRef.value)
   window.addEventListener('pointermove', handlePointerMove)
