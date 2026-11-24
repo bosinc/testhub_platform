@@ -77,7 +77,7 @@
         </el-table-column>
         <el-table-column :label="$t('reviewList.testcaseCount')" width="100">
           <template #default="{ row }">
-            {{ row.testcases?.length || 0 }}
+            {{ row.testcase_count || 0 }}
           </template>
         </el-table-column>
         <el-table-column :label="$t('reviewList.progress')" width="120">
@@ -99,7 +99,7 @@
             {{ formatDate(row.created_at) }}
           </template>
         </el-table-column>
-        <el-table-column :label="$t('reviewList.actions')" width="200" fixed="right" class-name="action-col">
+        <el-table-column :label="$t('reviewList.actions')" :width="actionColumnWidth" fixed="right" class-name="action-col">
           <template #default="{ row }">
             <el-button link type="primary" @click="viewReview(row.id)">{{ $t('reviewList.detail') }}</el-button>
             <el-button v-if="canReview(row)" link type="success" @click="submitReview(row)">{{ $t('reviewList.review') }}</el-button>
@@ -166,7 +166,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -178,7 +178,7 @@ import { useUserStore } from '@/stores/user'
 
 const router = useRouter()
 const userStore = useUserStore()
-const { t } = useI18n()
+const { t, locale } = useI18n()
 
 const reviews = ref([])
 const projects = ref([])
@@ -369,6 +369,20 @@ const canEdit = (review) => {
 const canDelete = (review) => {
   return review.creator.id === userStore.user?.id && review.status === 'pending'
 }
+
+// 操作列以原 200px 为上限，按当前列表中实际可见的按钮数量计算宽度；
+// 被 v-if 隐藏的按钮不再占用列宽。
+const actionColumnWidth = computed(() => {
+  const maxButtons = reviews.value.reduce((max, row) => {
+    const count = 1
+      + Number(canReview(row) || isReviewOpen(row))
+      + Number(canEdit(row))
+      + Number(canDelete(row))
+    return Math.max(max, count)
+  }, 1)
+  const buttonWidth = String(locale.value).startsWith('zh') ? 40 : 52
+  return Math.min(200, 24 + maxButtons * buttonWidth + (maxButtons - 1) * 6)
+})
 
 const formatDate = (dateString) => {
   return dayjs(dateString).format('YYYY-MM-DD HH:mm')

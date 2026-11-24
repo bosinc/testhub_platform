@@ -5,8 +5,8 @@
 - 读工具同步即时返回；写工具 preview 同步、confirm 后异步执行返回 ID
 - 每次调用写 McpCallLog（写失败不阻断响应），7 天日志节流清理
 
-覆盖范围：项目 / 功能用例 / 接口测试（请求·场景用例·套件）/ UI 自动化
-（用例·套件·元素库）/ 压测，写操作统一 preview → confirm 两段式。
+覆盖范围：项目 / 功能用例 / 测试计划 / 用例评审 / 接口测试（请求·场景用例·套件）/
+UI 自动化（用例·套件·元素库）/ 压测，写操作统一 preview → confirm 两段式。
 """
 import json
 import logging
@@ -301,6 +301,269 @@ def list_projects(ctx: Context, limit: int = 20, offset: int = 0) -> dict:
         return _cache_get_or_set(key, build)
 
     return _run_tool(ctx, 'list_projects', {'limit': limit, 'offset': offset}, run)
+
+
+def list_test_plans(ctx: Context, project_id: int = 0, is_active: bool | None = None,
+                    keyword: str = '', limit: int = 20, offset: int = 0) -> dict:
+    """列出当前用户可访问的测试计划（本人创建、被指派，或关联项目里有本人）。
+
+    返回 {total, items: [{id, name, description, creator_id, version_id, is_active,
+    created_at, updated_at, testcase_count}]}，testcase_count 为计划下的执行用例数。
+    project_id 传 0 不限项目；is_active 传 true / false 按启用状态过滤，不传则不过滤；
+    keyword 模糊匹配计划名称。支持 limit/offset 分页（limit 上限 100），60 秒缓存。
+    拿到的 id 可传给 get_test_plan 查看执行记录与执行用例。
+    """
+    limit, offset = _clamp_page(limit, offset)
+
+    def run(user):
+        from django.db.models import Count
+        from apps.executions.models import TestRunCase
+        from apps.executions.services import accessible_test_plans
+
+        qs = accessible_test_plans(user).order_by('-created_at')
+        if project_id:
+            qs = qs.filter(projects__id=project_id)
+        if is_active is not None:
+            qs = qs.filter(is_active=bool(is_active))
+        if keyword:
+            qs = qs.filter(name__icontains=keyword)
+        key = (f'mcp:tool:list_test_plans:{user.id}:{_list_epoch(user.id)}:'
+               f'{project_id}:{is_active}:{keyword}:{limit}:{offset}')
+
+        def build():
+            total = qs.count()
+            rows = list(qs[offset:offset + limit].values(
+                'id', 'name', 'description', 'creator_id', 'version_id',
+                'is_active', 'created_at', 'updated_at'))
+            plan_ids = [row['id'] for row in rows]
+            counts = {
+                row['test_run__test_plan_id']: row['count']
+                for row in TestRunCase.objects.filter(
+                    test_run__test_plan_id__in=plan_ids
+                ).order_by().values('test_run__test_plan_id').annotate(count=Count('id'))
+            }
+            for row in rows:
+                row['testcase_count'] = counts.get(row['id'], 0)
+            return {'total': total, 'items': rows}
+        return _cache_get_or_set(key, build)
+
+    return _run_tool(ctx, 'list_test_plans', {
+        'project_id': project_id, 'is_active': is_active, 'keyword': keyword,
+        'limit': limit, 'offset': offset,
+    }, run)
+
+
+def get_test_plan(ctx: Context, plan_id: int, case_limit: int = 50,
+                  case_offset: int = 0) -> dict:
+    """获取测试计划详情：基本信息、各项目执行记录的进度，以及分页的执行用例。
+
+    返回 {id, name, description, is_active, version: {id, name} | null,
+    creator: {id, username}, assignees: [{id, username}], projects: [{id, name}],
+    created_at, updated_at, progress（整个计划的执行进度）,
+    test_runs: [{id, name, status, project_id, project_name, progress}],
+    run_cases: {total, items: [{run_case_id, test_run_id, project_id, testcase_id, title,
+    status（untested/passed/failed/blocked/skipped）, priority, actual_result, comments,
+    executed_by: {id, username} | null, executed_at}]}}。
+    progress 含 total/untested/passed/failed/blocked/skipped/tested 计数与 progress 百分比。
+    执行用例按 case_limit/case_offset 分页（默认 50，上限 100），只带轻量字段，
+    actual_result / comments 各截断到 500 字符；用例的步骤与预期结果请用 get_testcase 读取。
+    """
+    case_limit, case_offset = _clamp_page(case_limit or 50, case_offset)
+
+    def run(user):
+        from apps.executions.models import TestRun, TestRunCase
+        from apps.executions.services import accessible_test_plans
+
+        plan = accessible_test_plans(user).filter(id=plan_id).select_related(
+            'creator', 'version').first()
+        if not plan:
+            raise ToolError(f'测试计划 {plan_id} 不存在或无权限')
+
+        counters = ('total', 'untested', 'passed', 'failed', 'blocked', 'skipped', 'tested')
+        overall = dict.fromkeys(counters, 0)
+        test_runs = []
+        for test_run in TestRun.objects.filter(test_plan=plan).select_related(
+                'project').order_by('id'):
+            stats = test_run.progress_stats
+            for name in counters:
+                overall[name] += stats[name]
+            test_runs.append({
+                'id': test_run.id,
+                'name': test_run.name,
+                'status': test_run.status,
+                'project_id': test_run.project_id,
+                'project_name': test_run.project.name,
+                'progress': stats,
+            })
+        overall['progress'] = (round(overall['tested'] / overall['total'] * 100, 1)
+                               if overall['total'] else 0)
+
+        run_cases = TestRunCase.objects.filter(test_run__test_plan=plan)
+        rows = run_cases.order_by('test_run_id', 'testcase_id').values(
+            'id', 'test_run_id', 'test_run__project_id', 'testcase_id',
+            'testcase__title', 'status', 'priority', 'actual_result', 'comments',
+            'executed_by_id', 'executed_by__username', 'executed_at',
+        )[case_offset:case_offset + case_limit]
+        items = [{
+            'run_case_id': row['id'],
+            'test_run_id': row['test_run_id'],
+            'project_id': row['test_run__project_id'],
+            'testcase_id': row['testcase_id'],
+            'title': row['testcase__title'],
+            'status': row['status'],
+            'priority': row['priority'],
+            'actual_result': (row['actual_result'] or '')[:500],
+            'comments': (row['comments'] or '')[:500],
+            'executed_by': ({'id': row['executed_by_id'],
+                             'username': row['executed_by__username']}
+                            if row['executed_by_id'] else None),
+            'executed_at': row['executed_at'],
+        } for row in rows]
+
+        return {
+            'id': plan.id,
+            'name': plan.name,
+            'description': plan.description,
+            'is_active': plan.is_active,
+            'version': ({'id': plan.version_id, 'name': plan.version.name}
+                        if plan.version_id else None),
+            'creator': {'id': plan.creator_id, 'username': plan.creator.username},
+            'assignees': list(plan.assignees.order_by('id').values('id', 'username')),
+            'projects': list(plan.projects.order_by('id').values('id', 'name')),
+            'created_at': plan.created_at,
+            'updated_at': plan.updated_at,
+            'progress': overall,
+            'test_runs': test_runs,
+            'run_cases': {'total': run_cases.count(), 'items': items},
+        }
+
+    return _run_tool(ctx, 'get_test_plan', {
+        'plan_id': plan_id, 'case_limit': case_limit, 'case_offset': case_offset,
+    }, run)
+
+
+def list_reviews(ctx: Context, project_id: int = 0, status: str = '',
+                 reviewer_id: int = 0, keyword: str = '',
+                 limit: int = 20, offset: int = 0) -> dict:
+    """列出当前用户可访问的用例评审（本人创建、被指派为评审人，或关联项目里有本人）。
+
+    返回 {total, items: [{id, title, description, creator_id, status, priority, deadline,
+    created_at, updated_at, testcase_count, reviewer_count}]}。
+    project_id / reviewer_id 传 0 不过滤；status 可选 pending（待评审）/ in_progress（评审中）/
+    approved（已通过）/ rejected（已拒绝）/ cancelled（已取消）；keyword 模糊匹配评审标题。
+    支持 limit/offset 分页（limit 上限 100），60 秒缓存。
+    拿到的 id 可传给 get_review / get_review_comments。
+    """
+    limit, offset = _clamp_page(limit, offset)
+
+    def run(user):
+        from django.db.models import Count
+        from apps.reviews.models import ReviewAssignment, TestCaseReview
+        from apps.reviews.services import accessible_reviews
+
+        statuses = dict(TestCaseReview.STATUS_CHOICES)
+        if status and status not in statuses:
+            raise ToolError(f'status 不合法，可选: {" / ".join(statuses)}')
+        qs = accessible_reviews(user).order_by('-created_at')
+        if project_id:
+            qs = qs.filter(projects__id=project_id)
+        if status:
+            qs = qs.filter(status=status)
+        if reviewer_id:
+            qs = qs.filter(reviewers__id=reviewer_id)
+        if keyword:
+            qs = qs.filter(title__icontains=keyword)
+        key = (f'mcp:tool:list_reviews:{user.id}:{_list_epoch(user.id)}:'
+               f'{project_id}:{status}:{reviewer_id}:{keyword}:{limit}:{offset}')
+
+        def build():
+            total = qs.count()
+            rows = list(qs[offset:offset + limit].values(
+                'id', 'title', 'description', 'creator_id', 'status',
+                'priority', 'deadline', 'created_at', 'updated_at'))
+            review_ids = [row['id'] for row in rows]
+            # 数量按评审单独聚合：直接在 qs 上 Count 会复用过滤条件产生的 JOIN，
+            # 按评审人过滤、或仅因评审人身份可见时会把数量算少
+            testcase_counts = dict(
+                TestCaseReview.testcases.through.objects.filter(
+                    testcasereview_id__in=review_ids
+                ).order_by().values_list('testcasereview_id').annotate(count=Count('id')))
+            reviewer_counts = dict(
+                ReviewAssignment.objects.filter(
+                    review_id__in=review_ids
+                ).order_by().values_list('review_id').annotate(count=Count('id')))
+            for row in rows:
+                row['testcase_count'] = testcase_counts.get(row['id'], 0)
+                row['reviewer_count'] = reviewer_counts.get(row['id'], 0)
+            return {'total': total, 'items': rows}
+        return _cache_get_or_set(key, build)
+
+    return _run_tool(ctx, 'list_reviews', {
+        'project_id': project_id, 'status': status, 'reviewer_id': reviewer_id,
+        'keyword': keyword, 'limit': limit, 'offset': offset,
+    }, run)
+
+
+def get_review(ctx: Context, review_id: int) -> dict:
+    """获取评审详情：基本信息、关联项目、评审用例、评审人分配与结论、全部评审意见。
+
+    返回 {id, title, description, status, priority, deadline, created_at, updated_at,
+    completed_at, creator, template, projects: [{id, name, description}],
+    testcases: [{id, title, test_type, priority, status, author}],
+    assignments: [{id, reviewer, status（pending/approved/rejected/abstained）, comment,
+    checklist_results, reviewed_at, assigned_at}],
+    comments: [{id, testcase, author, comment_type, content, step_number, is_resolved,
+    created_at, updated_at}]}，与页面评审详情接口的结构一致。
+    意见较多时可改用 get_review_comments 分页读取。
+    """
+    def run(user):
+        from apps.reviews.serializers import TestCaseReviewSerializer
+        from apps.reviews.services import accessible_reviews, review_detail_queryset
+
+        if not accessible_reviews(user).filter(id=review_id).exists():
+            raise ToolError(f'评审 {review_id} 不存在或无权限')
+        review = review_detail_queryset().get(id=review_id)
+        return TestCaseReviewSerializer(review).data
+
+    return _run_tool(ctx, 'get_review', {'review_id': review_id}, run)
+
+
+def get_review_comments(ctx: Context, review_id: int, testcase_id: int = 0,
+                        is_resolved: bool | None = None,
+                        limit: int = 20, offset: int = 0) -> dict:
+    """分页获取指定评审的评审意见（按发布时间倒序）。
+
+    返回 {total, items: [{id, testcase: {id, title, test_type, priority, status, author} | null,
+    author, comment_type（general 整体意见 / testcase 用例意见 / step 步骤意见）, content,
+    step_number, is_resolved（是否已解决）, created_at, updated_at}]}。
+    testcase_id 传 0 返回全部意见，传用例 ID 只返回针对该用例的意见；
+    is_resolved 传 true / false 只返回已解决 / 未解决的意见，不传不过滤。
+    支持 limit/offset 分页（limit 上限 100）。
+    items 里的 id 可传给 preview_update_review_comment 修改意见或其解决状态。
+    """
+    limit, offset = _clamp_page(limit, offset)
+
+    def run(user):
+        from apps.reviews.models import TestCaseReviewComment
+        from apps.reviews.serializers import TestCaseReviewCommentSerializer
+        from apps.reviews.services import accessible_reviews
+
+        if not accessible_reviews(user).filter(id=review_id).exists():
+            raise ToolError(f'评审 {review_id} 不存在或无权限')
+        qs = TestCaseReviewComment.objects.filter(review_id=review_id)
+        if testcase_id:
+            qs = qs.filter(testcase_id=testcase_id)
+        if is_resolved is not None:
+            qs = qs.filter(is_resolved=bool(is_resolved))
+        total = qs.count()
+        comments = qs.select_related('author', 'testcase__author')[offset:offset + limit]
+        return {'total': total,
+                'items': TestCaseReviewCommentSerializer(comments, many=True).data}
+
+    return _run_tool(ctx, 'get_review_comments', {
+        'review_id': review_id, 'testcase_id': testcase_id, 'is_resolved': is_resolved,
+        'limit': limit, 'offset': offset,
+    }, run)
 
 
 def list_testcases(ctx: Context, project_id: int, module_id: int = 0,
@@ -1635,6 +1898,153 @@ def confirm_create_testcase(ctx: Context, confirm_token: str) -> dict:
                      lambda user: consume_pending(verify_pending(confirm_token, user), user))
 
 
+def _checked_preview(confirm_tool: str, arguments: dict, user) -> dict:
+    """先做业务校验再生成预览：参数或权限有问题时直接报错，不留下无法确认的待确认记录。"""
+    act.validate_preview(confirm_tool, arguments, user)
+    return create_preview(confirm_tool, arguments, user)
+
+
+def preview_create_test_plan(ctx: Context, data: dict) -> dict:
+    """预览创建测试计划（危险操作第一步）。
+
+    校验参数并返回影响预览与 confirm_token（5 分钟有效），本步骤不落库；
+    确认创建请调用 confirm_create_test_plan。
+    data：{name（必填）, description?, projects: [项目 ID]（必填，至少一个，须有访问权限）,
+    testcases?: [功能用例 ID]（须属于所选项目）, assignees?: [用户 ID],
+    version?: 版本 ID, is_active?（默认 true）}。
+    创建后每个关联项目生成一条执行记录，用例按所属项目归入对应执行记录；
+    assignees 恰好一人时，该人自动成为各执行用例的默认执行人。
+    """
+    arguments = {'data': data or {}}
+    return _run_tool(ctx, 'preview_create_test_plan', arguments,
+                     lambda user: _checked_preview('confirm_create_test_plan', arguments, user))
+
+
+def confirm_create_test_plan(ctx: Context, confirm_token: str) -> dict:
+    """确认创建测试计划（危险操作第二步），返回 plan_id、test_run_ids 与用例数。
+
+    令牌一次性消费且 5 分钟内有效；人工审批模式下返回 awaiting_approval，
+    需轮询 get_approval_status。创建后可用 get_test_plan 查看详情。
+    """
+    return _run_tool(ctx, 'confirm_create_test_plan', {'confirm_token': '<token>'},
+                     lambda user: consume_pending(verify_pending(confirm_token, user), user))
+
+
+def preview_update_test_plan(ctx: Context, plan_id: int, data: dict) -> dict:
+    """预览修改测试计划（危险操作第一步）。
+
+    校验参数并返回影响预览（含将被移除的执行用例数）与 confirm_token（5 分钟有效），
+    本步骤不修改数据；确认修改请调用 confirm_update_test_plan。
+    data 只需包含要改的字段，未传的保持原样：{name?, description?, is_active?,
+    version?（版本 ID，null 表示不关联版本）, assignees?: [用户 ID]（整体替换，[] 清空）,
+    projects?: [项目 ID]（整体替换，至少一个；被移除项目的执行记录与结果会一并删除）,
+    testcases?: [功能用例 ID]（整体替换：不在数组里的执行用例及其执行结果会被删除）,
+    add_testcases? / remove_testcases?: [功能用例 ID]（增量增删，不能与 testcases 同时使用）}。
+    只想增删个别用例时请用 add_testcases / remove_testcases，其余用例的执行结果不受影响；
+    新增的用例须属于计划关联项目。
+    """
+    arguments = {'plan_id': plan_id, 'data': data or {}}
+    return _run_tool(ctx, 'preview_update_test_plan', arguments,
+                     lambda user: _checked_preview('confirm_update_test_plan', arguments, user))
+
+
+def confirm_update_test_plan(ctx: Context, confirm_token: str) -> dict:
+    """确认修改测试计划（危险操作第二步），返回变更字段与实际增删的项目、执行用例数。
+
+    令牌一次性消费且 5 分钟内有效；人工审批模式下返回 awaiting_approval，
+    需轮询 get_approval_status。
+    """
+    return _run_tool(ctx, 'confirm_update_test_plan', {'confirm_token': '<token>'},
+                     lambda user: consume_pending(verify_pending(confirm_token, user), user))
+
+
+def preview_update_review(ctx: Context, review_id: int, data: dict) -> dict:
+    """预览修改用例评审（危险操作第一步）。
+
+    校验参数并返回影响预览与 confirm_token（5 分钟有效），本步骤不修改数据；
+    确认修改请调用 confirm_update_review。仅评审创建人可修改，且评审须处于
+    待评审 / 评审中（已通过、已拒绝、已取消的评审不能再改）。
+    data 只需包含要改的字段，未传的保持原样：{title?, description?,
+    priority?（low/medium/high/urgent）, deadline?（ISO 8601 时间，null 清空）,
+    template?（评审模板 ID，null 清空）, projects?: [项目 ID]（整体替换，至少一个）,
+    testcases?: [功能用例 ID]（整体替换，至少一个；新增的用例须属于评审关联项目）,
+    reviewers?: [用户 ID]（整体替换，至少一个）}。
+    reviewers 按差量同步：留在名单里的评审人保留已提交的结论，被移除的评审人其结论一并删除。
+    评审状态由评审人提交结论后自动流转，不支持直接修改。
+    """
+    arguments = {'review_id': review_id, 'data': data or {}}
+    return _run_tool(ctx, 'preview_update_review', arguments,
+                     lambda user: _checked_preview('confirm_update_review', arguments, user))
+
+
+def confirm_update_review(ctx: Context, confirm_token: str) -> dict:
+    """确认修改用例评审（危险操作第二步），返回变更字段与实际增删的项目、用例、评审人。
+
+    令牌一次性消费且 5 分钟内有效；人工审批模式下返回 awaiting_approval，
+    需轮询 get_approval_status。
+    """
+    return _run_tool(ctx, 'confirm_update_review', {'confirm_token': '<token>'},
+                     lambda user: consume_pending(verify_pending(confirm_token, user), user))
+
+
+def preview_add_review_comment(ctx: Context, review_id: int, content: str,
+                               comment_type: str = 'general', testcase_id: int = 0,
+                               step_number: int = 0) -> dict:
+    """预览添加评审意见（危险操作第一步）。
+
+    校验参数并返回预览与 confirm_token（5 分钟有效），本步骤不落库；
+    确认添加请调用 confirm_add_review_comment。
+    comment_type：general（整体意见，不能传 testcase_id）/ testcase（用例意见）/
+    step（步骤意见，可用 step_number 指明步骤序号）；用例意见与步骤意见必须传
+    testcase_id，且该用例须属于这个评审。content 不能为空。
+    评审须处于待评审 / 评审中：评审结束后不能再添加意见。
+    """
+    arguments = {'review_id': review_id, 'content': content,
+                 'comment_type': comment_type, 'testcase_id': testcase_id or None,
+                 'step_number': step_number or None}
+    return _run_tool(ctx, 'preview_add_review_comment', arguments,
+                     lambda user: _checked_preview('confirm_add_review_comment', arguments, user))
+
+
+def confirm_add_review_comment(ctx: Context, confirm_token: str) -> dict:
+    """确认添加评审意见（危险操作第二步），返回 comment_id。
+
+    令牌一次性消费且 5 分钟内有效；人工审批模式下返回 awaiting_approval，
+    需轮询 get_approval_status。
+    """
+    return _run_tool(ctx, 'confirm_add_review_comment', {'confirm_token': '<token>'},
+                     lambda user: consume_pending(verify_pending(confirm_token, user), user))
+
+
+def preview_update_review_comment(ctx: Context, comment_id: int, data: dict) -> dict:
+    """预览修改评审意见（危险操作第一步）。
+
+    校验参数并返回预览与 confirm_token（5 分钟有效），本步骤不修改数据；
+    确认修改请调用 confirm_update_review_comment。
+    data 只需包含要改的字段：{content?, comment_type?（general/testcase/step）,
+    testcase?（功能用例 ID，须属于该评审；null 解除关联）, step_number?,
+    is_resolved?（true 标记已解决 / false 重新打开）}。
+    权限：内容类字段（content/comment_type/testcase/step_number）只有意见作者能改；
+    is_resolved 意见作者和评审创建人都能改。
+    评审须处于待评审 / 评审中：评审结束后意见及其解决状态都不能再改。
+    改成整体意见（general）时会自动解除用例关联；意见不能移动到其他评审。
+    """
+    arguments = {'comment_id': comment_id, 'data': data or {}}
+    return _run_tool(ctx, 'preview_update_review_comment', arguments,
+                     lambda user: _checked_preview(
+                         'confirm_update_review_comment', arguments, user))
+
+
+def confirm_update_review_comment(ctx: Context, confirm_token: str) -> dict:
+    """确认修改评审意见（危险操作第二步），返回变更字段与最新的意见类型、关联用例、解决状态。
+
+    令牌一次性消费且 5 分钟内有效；人工审批模式下返回 awaiting_approval，
+    需轮询 get_approval_status。
+    """
+    return _run_tool(ctx, 'confirm_update_review_comment', {'confirm_token': '<token>'},
+                     lambda user: consume_pending(verify_pending(confirm_token, user), user))
+
+
 def get_approval_status(ctx: Context, confirm_token: str) -> dict:
     """查询危险操作的人工审批状态（只读，供 Agent 轮询）
 
@@ -1707,8 +2117,10 @@ def get_ui_execution(ctx: Context, execution_id: int) -> dict:
 
 #: 所有工具（供 server.py 批量注册）
 ALL_TOOLS = [
-    # 只读：项目 / 用例 / 场景 / 套件 / 元素库 / 执行结果
-    list_projects, list_testcases, list_testcase_modules, get_testcase,
+    # 只读：项目 / 测试计划 / 评审 / 用例 / 场景 / 套件 / 元素库 / 执行结果
+    list_projects, list_test_plans, get_test_plan,
+    list_reviews, get_review, get_review_comments,
+    list_testcases, list_testcase_modules, get_testcase,
     list_api_requests, get_api_request, list_api_collections, list_api_scenarios,
     list_scenario_case_folders, list_api_suites,
     list_ui_cases, list_ui_case_folders, list_ui_suites, list_ui_elements,
@@ -1732,6 +2144,11 @@ ALL_TOOLS = [
     preview_update_api_scenario_case, confirm_update_api_scenario_case,
     preview_update_ui_element, confirm_update_ui_element,
     preview_import_recorded_script, confirm_import_recorded_script,
+    preview_create_test_plan, confirm_create_test_plan,
+    preview_update_test_plan, confirm_update_test_plan,
+    preview_update_review, confirm_update_review,
+    preview_add_review_comment, confirm_add_review_comment,
+    preview_update_review_comment, confirm_update_review_comment,
     # 审批状态查询
     get_approval_status,
 ]

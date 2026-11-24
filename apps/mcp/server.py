@@ -94,8 +94,8 @@ def get_mcp():
         mcp = FastMCP(
             'TestHub',
             instructions=(
-                'TestHub AI 测试平台 MCP Server，覆盖功能用例、接口测试（请求/场景用例/套件）、'
-                'UI 自动化（用例/套件/元素库）与压测。'
+                'TestHub AI 测试平台 MCP Server，覆盖功能用例、测试计划、用例评审、'
+                '接口测试（请求/场景用例/套件）、UI 自动化（用例/套件/元素库）与压测。'
                 '读工具（list_*/get_*）即时返回，用于先获取项目、用例、元素等 ID；'
                 'list_projects 返回的 ui_project_id / api_project_id 即 UI、API 自动化项目 ID，'
                 '可直接传给 list_ui_*/list_api_* 与 preview_create_ui_case 等工具。'
@@ -110,6 +110,13 @@ def get_mcp():
                 '缺元素用 preview_create_ui_element 新建、缺接口用 preview_create_api_request 新建，'
                 '再分别用 preview_create_ui_case / preview_create_api_scenario_case 建关联用例；'
                 '功能用例已有关联时创建会被拒绝，确需替换要显式传 replace_link=true。'
+                '测试计划用 list_test_plans / get_test_plan 查看，'
+                'preview_create_test_plan / preview_update_test_plan 创建与修改；'
+                '只增删个别用例时传 data.add_testcases / remove_testcases，'
+                'data.testcases 是整体替换，不在数组里的执行用例及其结果会被删除。'
+                '用例评审用 list_reviews / get_review / get_review_comments 查看，'
+                'preview_update_review 修改评审，'
+                'preview_add_review_comment / preview_update_review_comment 添加、修改评审意见。'
                 '写与执行工具需先调用 preview_* 获取 confirm_token，再调用对应 confirm_* 确认执行。'
                 '若平台开启了人工审批模式，confirm_* 会返回 awaiting_approval，'
                 '此时请用同一 confirm_token 轮询 get_approval_status 直至 approved/rejected/expired。'

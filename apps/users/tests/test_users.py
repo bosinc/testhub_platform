@@ -197,6 +197,13 @@ class UserAdminOnlyWriteTests(APITestCase):
         response = self.client.get(self.list_url)
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
 
+    def test_user_list_is_only_served_under_auth_prefix(self):
+        """用户列表只保留 /api/auth/users/，重复挂载的 /api/users/ 前缀及根路径别名已下线"""
+        self.client.force_authenticate(self.normal)
+        for removed_url in ('/api/users/', '/api/users/users/', '/api/users/me/', '/api/auth/'):
+            response = self.client.get(removed_url)
+            self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND, removed_url)
+
     def test_normal_user_cannot_create_user(self):
         self.client.force_authenticate(self.normal)
         response = self.client.post(

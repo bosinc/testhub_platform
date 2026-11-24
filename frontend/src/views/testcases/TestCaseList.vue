@@ -763,13 +763,12 @@ const loadModuleTree = async () => {
   }
   moduleTreeLoading.value = true
   try {
-    const { data } = await api.get('/testcases/modules/', { params: { project: moduleProjectId.value } })
-    moduleTree.value = data
-    // 全部用例数量由未筛选列表请求复用，模块树这里只需查询未分配模块数量。
-    const unassigned = await api.get('/testcases/', {
-      params: { project: moduleProjectId.value, module: 'none', page_size: 1 }
+    // 全部用例数量由未筛选列表请求复用，未分配模块数量随模块树一并返回，无需再请求用例列表。
+    const { data } = await api.get('/testcases/modules/', {
+      params: { project: moduleProjectId.value, include_unassigned: 'true' }
     })
-    unassignedCount.value = unassigned.data.count || 0
+    moduleTree.value = data.modules || []
+    unassignedCount.value = data.unassigned_count || 0
   } catch (error) { ElMessage.error(t('testcase.fetchModulesFailed')) }
   finally { moduleTreeLoading.value = false }
 }
@@ -1463,9 +1462,9 @@ onMounted(async () => {
   moduleProjectId.value = preferredProjectId ?? (projects.value[0]?.id ?? '')
   if (moduleProjectId.value) rememberSelectedProject(moduleProjectId.value, projects.value)
   if (preferredProjectId) projectFilter.value = preferredProjectId
-  await fetchMaintainers()
-  await fetchTestCases()
-  await loadModuleTree()
+  // 维护人只用于筛选下拉，不阻塞首屏；列表与模块树互不依赖，并行加载。
+  fetchMaintainers()
+  await Promise.all([fetchTestCases(), loadModuleTree()])
 })
 </script>
 

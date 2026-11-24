@@ -77,6 +77,21 @@ class TestCaseApiTests(APITestCase):
         self.assertEqual(len(response.data['results']), 5)
         self.assertEqual(response.data['count'], 15)
 
+    def test_list_summary_counts_each_case_once(self):
+        """负责人同时是成员时用例不重复，自动化统计总数与分页总数一致"""
+        ProjectMember.objects.create(project=self.project, user=self.other_user, role='tester')
+        for i in range(3):
+            TCModel.objects.create(
+                title=f'用例{i}', project=self.project, author=self.user, automatability=i != 0,
+            )
+
+        response = self.client.get(self.list_url, {'page': 1, 'page_size': 2})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['count'], 3)
+        self.assertEqual(response.data['automation_summary']['total'], 3)
+        self.assertEqual(response.data['automation_summary']['automatable_total'], 2)
+        self.assertEqual(len({case['id'] for case in response.data['results']}), 2)
+
     def test_retrieve_testcase_detail(self):
         """获取用例详情"""
         tc = TCModel.objects.create(
@@ -274,6 +289,27 @@ class TestCaseModuleApiTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         case.refresh_from_db()
         self.assertIsNone(case.module_id)
+
+    def test_module_tree_can_include_unassigned_count(self):
+        parent = self.create_module(name='父模块')
+        child = self.create_module(parent=parent, name='子模块')
+        TCModel.objects.create(title='子模块用例', project=self.project, author=self.user, module=child)
+        TCModel.objects.create(title='未分配用例1', project=self.project, author=self.user)
+        TCModel.objects.create(title='未分配用例2', project=self.project, author=self.user)
+        TCModel.objects.create(title='其他项目用例', project=self.other_project, author=self.user)
+
+        # 默认仍返回模块树数组，兼容只需要模块树的调用方
+        response = self.client.get('/api/testcases/modules/', {'project': self.project.id})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual([(module['name'], module['count']) for module in response.data], [('父模块', 1)])
+
+        response = self.client.get('/api/testcases/modules/', {
+            'project': self.project.id, 'include_unassigned': 'true',
+        })
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['unassigned_count'], 2)
+        self.assertEqual(response.data['modules'][0]['count'], 1)
+        self.assertEqual(response.data['modules'][0]['children'][0]['count'], 1)
 
 
 class TestCaseImportTemplateTests(APITestCase):

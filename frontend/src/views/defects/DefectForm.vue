@@ -252,7 +252,7 @@ const fetchVersions = async (projectId = form.project_id) => {
 
 const fetchUsers = async () => {
   try {
-    const response = await api.get('/users/')
+    const response = await api.get('/auth/users/')
     users.value = normalizeList(response.data)
   } catch (error) {
     users.value = []

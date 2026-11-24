@@ -139,7 +139,7 @@
           <el-table-column :label="$t('reviewList.actions')" width="140" class-name="action-col">
             <template #default="{ row }">
               <el-button link type="primary" @click="viewTestcase(row.id)">{{ $t('reviewDetail.view') }}</el-button>
-              <el-button link type="success" @click="addComment(row)">{{ $t('reviewDetail.comment') }}</el-button>
+              <el-button v-if="isReviewOpen" link type="success" @click="addComment(row)">{{ $t('reviewDetail.comment') }}</el-button>
             </template>
           </el-table-column>
         </el-table>
@@ -150,7 +150,7 @@
         <template #header>
           <div class="card-header-with-action">
             <span class="card-header">{{ $t('reviewDetail.reviewComments') }}</span>
-            <el-button type="primary" size="small" @click="showAddCommentDialog">{{ $t('reviewDetail.addComment') }}</el-button>
+            <el-button v-if="isReviewOpen" type="primary" size="small" @click="showAddCommentDialog">{{ $t('reviewDetail.addComment') }}</el-button>
           </div>
         </template>
         <div class="comments-list">
@@ -168,7 +168,20 @@
                 <el-tag size="small" :type="getCommentTypeColor(comment.comment_type)">
                   {{ getCommentTypeText(comment.comment_type) }}
                 </el-tag>
-                <span v-if="isCommentAuthor(comment)" class="comment-actions">
+                <!-- 解决状态：意见作者和评审创建人可切换，评审结束后只读 -->
+                <span :title="commentStatusTip(comment)">
+                  <el-switch
+                    style="--el-switch-on-color: #13ce66"
+                    :model-value="comment.is_resolved"
+                    :disabled="!canChangeCommentStatus(comment)"
+                    :loading="togglingCommentId === comment.id"
+                    inline-prompt
+                    :active-text="$t('reviewDetail.commentResolved')"
+                    :inactive-text="$t('reviewDetail.commentUnresolved')"
+                    @change="value => toggleCommentResolved(comment, value)"
+                  />
+                </span>
+                <span v-if="isReviewOpen && isCommentAuthor(comment)" class="comment-actions">
                   <el-button link type="primary" :title="$t('reviewDetail.editComment')" @click="editComment(comment)">
                     <el-icon><Edit /></el-icon>
                   </el-button>
@@ -177,7 +190,9 @@
                   </el-button>
                 </span>
               </div>
-              <div class="comment-time">{{ formatDate(comment.created_at) }}</div>
+              <div class="comment-meta">
+                <span class="comment-time">{{ formatDate(comment.created_at) }}</span>
+              </div>
             </div>
             <div class="comment-content">{{ comment.content }}</div>
             <div v-if="comment.testcase" class="comment-testcase">
@@ -302,6 +317,7 @@ const review = ref(null)
 const reviewDialogVisible = ref(false)
 const commentDialogVisible = ref(false)
 const editingCommentId = ref(null)
+const togglingCommentId = ref(null)
 
 const reviewForm = reactive({
   status: 'approved',
@@ -336,9 +352,11 @@ const progressColor = computed(() => {
   return '#f56c6c'
 })
 
+// 评审是否仍在进行中：结束后评审意见整体冻结（不能新增、修改、删除或变更状态）
+const isReviewOpen = computed(() => ['pending', 'in_progress'].includes(review.value?.status))
+
 const canEdit = computed(() => {
-  return review.value?.creator?.id === userStore.user?.id &&
-         ['pending', 'in_progress'].includes(review.value?.status)
+  return review.value?.creator?.id === userStore.user?.id && isReviewOpen.value
 })
 
 const canReview = computed(() => {
@@ -404,8 +422,54 @@ const isCommentAuthor = (comment) => {
   return String(comment.author?.id) === String(userStore.user?.id)
 }
 
+// 后端返回的业务提示（{detail} 或 {字段: [提示]}），取不到时用兜底文案
+const backendMessage = (error, fallback) => {
+  const data = error?.response?.data
+  if (data && typeof data === 'object') {
+    const first = data.detail ?? Object.values(data)[0]
+    const message = Array.isArray(first) ? first[0] : first
+    if (typeof message === 'string' && message) return message
+  }
+  return fallback
+}
+
+// 解决状态只有意见作者和评审创建人能改，且评审未结束
+const isCommentStatusEditor = (comment) => {
+  return isCommentAuthor(comment) ||
+         String(review.value?.creator?.id) === String(userStore.user?.id)
+}
+
+const canChangeCommentStatus = (comment) => {
+  return isReviewOpen.value && isCommentStatusEditor(comment)
+}
+
+const commentStatusTip = (comment) => {
+  if (!isReviewOpen.value) return t('reviewDetail.commentFrozenTip')
+  if (!isCommentStatusEditor(comment)) return t('reviewDetail.commentStatusNoPermissionTip')
+  return ''
+}
+
+const toggleCommentResolved = async (comment, value) => {
+  if (!canChangeCommentStatus(comment)) return
+  togglingCommentId.value = comment.id
+  try {
+    const response = await api.patch(
+      `/reviews/review-comments/${comment.id}/update_status/`,
+      { is_resolved: value }
+    )
+    comment.is_resolved = response.data.is_resolved
+    ElMessage.success(t('reviewDetail.commentStatusUpdated'))
+  } catch (error) {
+    ElMessage.error(backendMessage(error, t('reviewDetail.commentStatusUpdateFailed')))
+    // 评审可能已在别处结束，重新拉取以刷新冻结状态
+    await fetchReview()
+  } finally {
+    togglingCommentId.value = null
+  }
+}
+
 const editComment = (comment) => {
-  if (!isCommentAuthor(comment)) return
+  if (!isReviewOpen.value || !isCommentAuthor(comment)) return
   editingCommentId.value = comment.id
   commentForm.comment_type = comment.comment_type
   commentForm.testcase = comment.testcase?.id || ''
@@ -414,7 +478,7 @@ const editComment = (comment) => {
 }
 
 const deleteComment = async (comment) => {
-  if (!isCommentAuthor(comment)) return
+  if (!isReviewOpen.value || !isCommentAuthor(comment)) return
   try {
     await ElMessageBox.confirm(
       t('reviewDetail.deleteCommentConfirm'),
@@ -426,7 +490,7 @@ const deleteComment = async (comment) => {
     await fetchReview()
   } catch (error) {
     if (error !== 'cancel' && error !== 'close') {
-      ElMessage.error(t('reviewDetail.deleteCommentFailed'))
+      ElMessage.error(backendMessage(error, t('reviewDetail.deleteCommentFailed')))
     }
   }
 }
@@ -442,6 +506,11 @@ const addComment = (testcase) => {
 const addCommentSubmit = async () => {
   if (!commentForm.content) {
     ElMessage.warning(t('reviewDetail.commentRequired'))
+    return
+  }
+  // 用例意见必须关联用例，后端同样会校验，这里提前提示
+  if (commentForm.comment_type === 'testcase' && !commentForm.testcase) {
+    ElMessage.warning(t('reviewDetail.selectTestcase'))
     return
   }
 
@@ -468,7 +537,7 @@ const addCommentSubmit = async () => {
     await fetchReview()
   } catch (error) {
     console.error('Add comment failed:', error)
-    ElMessage.error(t('reviewDetail.addCommentFailed'))
+    ElMessage.error(backendMessage(error, t('reviewDetail.addCommentFailed')))
   }
 }
 
@@ -689,6 +758,13 @@ onMounted(() => {
             margin-left: 0;
           }
         }
+      }
+
+      .comment-meta {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        flex-shrink: 0;
       }
 
       .comment-time {

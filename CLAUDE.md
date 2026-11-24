@@ -122,7 +122,7 @@ The Django project uses a modular app structure under `apps/`:
 ## API Structure
 
 All API endpoints are prefixed with `/api/`:
-- `/api/auth/` and `/api/users/`: User authentication
+- `/api/auth/`: User authentication and user list (`/api/auth/users/`)
 - `/api/projects/`: Project management
 - `/api/testcases/`: Test case CRUD
 - `/api/testsuites/`: Test suite management

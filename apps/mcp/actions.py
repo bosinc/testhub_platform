@@ -1555,6 +1555,583 @@ def import_recorded_script_action(arguments: dict, user) -> dict:
     }
 
 
+# --------------------------------------------------------------------- #
+# 测试计划 / 用例评审
+#   _resolve_*：校验并归一化参数、算出影响面。preview 阶段先跑一遍
+#   （validate_preview），confirm 阶段再跑一遍后落库，两处规则一致。
+#   落库一律走各域的 services / 序列化器，与页面接口共用同一套写入逻辑。
+# --------------------------------------------------------------------- #
+
+def _data_dict(arguments, allowed):
+    """取 arguments.data：必须是非空对象，且不含未知字段。"""
+    data = arguments.get('data')
+    if not isinstance(data, dict):
+        raise McpActionError('data 必须是对象')
+    if not data:
+        raise McpActionError('data 不能为空，请提供需要写入的字段')
+    unknown = sorted(set(data) - set(allowed))
+    if unknown:
+        raise McpActionError(
+            f'data 不支持的字段: {", ".join(unknown)}（支持: {", ".join(sorted(allowed))}）')
+    return data
+
+
+def _id_list(value, label, allow_empty=True):
+    """校验 ID 数组并去重（保持顺序）；不接受 null、字符串或非整数元素。"""
+    if not isinstance(value, list):
+        raise McpActionError(f'{label} 必须是 ID 数组')
+    if any(isinstance(item, bool) or not isinstance(item, int) for item in value):
+        raise McpActionError(f'{label} 只能包含整数 ID')
+    ids = list(dict.fromkeys(value))
+    if not ids and not allow_empty:
+        raise McpActionError(f'{label} 至少包含一个 ID')
+    return ids
+
+
+def _fmt_ids(ids):
+    return ', '.join(str(item) for item in ids)
+
+
+def _accessible_project_ids(user, project_ids):
+    return set(accessible_projects(user).filter(id__in=project_ids).values_list('id', flat=True))
+
+
+def _check_project_changes(user, current_ids, new_ids, label='data.projects'):
+    """新增或移除的项目都要求当前用户可访问，原样保留的不重复校验。
+
+    返回 (新增的项目 ID 列表, 移除的项目 ID 列表)。
+    """
+    current, new = set(current_ids), set(new_ids)
+    added = [project_id for project_id in new_ids if project_id not in current]
+    removed = sorted(current - new)
+    touched = set(added) | set(removed)
+    denied = sorted(touched - _accessible_project_ids(user, touched))
+    if denied:
+        raise McpActionError(f'{label} 涉及不存在或无权限的项目: {_fmt_ids(denied)}')
+    return added, removed
+
+
+def _require_active_users(user_ids, label):
+    from django.contrib.auth import get_user_model
+    found = set(get_user_model().objects.filter(
+        id__in=user_ids, is_active=True).values_list('id', flat=True))
+    missing = [user_id for user_id in user_ids if user_id not in found]
+    if missing:
+        raise McpActionError(f'{label} 包含不存在或已停用的用户: {_fmt_ids(missing)}')
+
+
+def _project_names(project_ids):
+    from apps.projects.models import Project
+    names = dict(Project.objects.filter(id__in=project_ids).values_list('id', 'name'))
+    return '、'.join(f'「{names.get(project_id, project_id)}」' for project_id in project_ids)
+
+
+_PLAN_CREATE_FIELDS = {'name', 'description', 'is_active', 'version',
+                       'projects', 'assignees', 'testcases'}
+_PLAN_UPDATE_FIELDS = _PLAN_CREATE_FIELDS | {'add_testcases', 'remove_testcases'}
+
+
+def _plan_scalar_fields(data, creating):
+    """校验 name / description / is_active，返回可直接交给 services 的普通字段。"""
+    fields = {}
+    if creating or 'name' in data:
+        name = data.get('name')
+        if not isinstance(name, str) or not name.strip():
+            raise McpActionError('data.name 不能为空')
+        if len(name.strip()) > 200:
+            raise McpActionError('data.name 不能超过 200 个字符')
+        fields['name'] = name.strip()
+    if 'description' in data:
+        description = data['description']
+        if description is not None and not isinstance(description, str):
+            raise McpActionError('data.description 必须是字符串')
+        fields['description'] = description or ''
+    if 'is_active' in data:
+        if not isinstance(data['is_active'], bool):
+            raise McpActionError('data.is_active 必须是布尔值 true / false')
+        fields['is_active'] = data['is_active']
+    return fields
+
+
+def _resolve_plan_version(version_id, user, current_id=None):
+    """版本须存在且属于当前用户可访问的项目；null / 0 表示不关联版本。"""
+    from apps.versions.models import Version
+
+    if version_id in (None, 0):
+        return None
+    if isinstance(version_id, bool) or not isinstance(version_id, int):
+        raise McpActionError('data.version 必须是版本 ID 或 null')
+    queryset = Version.objects.filter(id=version_id)
+    if version_id != current_id:
+        queryset = queryset.filter(projects__in=accessible_projects(user))
+    version = queryset.first()
+    if not version:
+        raise McpActionError(f'版本 {version_id} 不存在或无权限')
+    return version
+
+
+def _case_project_map(testcase_ids):
+    """{用例 ID: 所属项目 ID}，只包含真实存在的用例。"""
+    from apps.testcases.models import TestCase
+    return dict(TestCase.objects.filter(id__in=testcase_ids).values_list('id', 'project_id'))
+
+
+def _resolve_test_plan_create(arguments: dict, user) -> dict:
+    data = _data_dict(arguments, _PLAN_CREATE_FIELDS)
+    fields = _plan_scalar_fields(data, creating=True)
+
+    if 'projects' not in data:
+        raise McpActionError('data.projects 必填：至少关联一个项目')
+    project_ids = _id_list(data['projects'], 'data.projects', allow_empty=False)
+    _check_project_changes(user, [], project_ids)
+
+    testcase_ids = _id_list(data.get('testcases') or [], 'data.testcases')
+    case_projects = _case_project_map(testcase_ids)
+    invalid = [case_id for case_id in testcase_ids
+               if case_projects.get(case_id) not in set(project_ids)]
+    if invalid:
+        raise McpActionError(f'data.testcases 包含不存在或不属于所选项目的用例: {_fmt_ids(invalid)}')
+
+    assignee_ids = _id_list(data.get('assignees') or [], 'data.assignees')
+    _require_active_users(assignee_ids, 'data.assignees')
+
+    return {
+        'fields': fields,
+        'project_ids': project_ids,
+        'testcase_ids': testcase_ids,
+        'assignee_ids': assignee_ids,
+        'version': _resolve_plan_version(data.get('version'), user),
+    }
+
+
+def create_test_plan_action(arguments: dict, user) -> dict:
+    """创建测试计划并生成各项目的执行记录（计划、执行记录、执行用例同事务落库）。"""
+    from apps.executions import services
+    from apps.executions.models import TestRun
+
+    resolved = _resolve_test_plan_create(arguments, user)
+    version = resolved['version']
+    plan = services.create_test_plan(
+        creator=user,
+        fields=resolved['fields'],
+        version_id=version.id if version else None,
+        assignee_ids=resolved['assignee_ids'],
+        project_ids=resolved['project_ids'],
+        testcase_ids=resolved['testcase_ids'],
+    )
+    return {
+        'plan_id': plan.id,
+        'name': plan.name,
+        'is_active': plan.is_active,
+        'version_id': plan.version_id,
+        'project_ids': resolved['project_ids'],
+        'assignee_ids': resolved['assignee_ids'],
+        'test_run_ids': list(
+            TestRun.objects.filter(test_plan=plan).order_by('id').values_list('id', flat=True)),
+        'testcase_count': len(resolved['testcase_ids']),
+    }
+
+
+def _resolve_test_plan_update(arguments: dict, user, lock=False):
+    """返回 (plan, 交给 services.update_test_plan 的参数, 影响面)。"""
+    from apps.executions import services
+    from apps.executions.models import TestPlan, TestRunCase
+
+    plan_id = arguments.get('plan_id')
+    plan = services.accessible_test_plans(user).filter(id=plan_id).first()
+    if not plan:
+        raise McpActionError(f'测试计划 {plan_id} 不存在或无权限')
+    if lock:
+        plan = TestPlan.objects.select_for_update().get(id=plan.id)
+
+    data = _data_dict(arguments, _PLAN_UPDATE_FIELDS)
+    changes = {'fields': _plan_scalar_fields(data, creating=False)}
+
+    if 'version' in data:
+        version = _resolve_plan_version(data['version'], user, current_id=plan.version_id)
+        changes['version_id'] = version.id if version else None
+
+    if 'assignees' in data:
+        assignee_ids = _id_list(data['assignees'], 'data.assignees')
+        current_assignees = set(plan.assignees.values_list('id', flat=True))
+        _require_active_users(
+            [user_id for user_id in assignee_ids if user_id not in current_assignees],
+            'data.assignees')
+        changes['assignee_ids'] = assignee_ids
+
+    project_ids = list(plan.projects.values_list('id', flat=True))
+    projects_added, projects_removed = [], []
+    if 'projects' in data:
+        new_project_ids = _id_list(data['projects'], 'data.projects', allow_empty=False)
+        projects_added, projects_removed = _check_project_changes(
+            user, project_ids, new_project_ids)
+        project_ids = changes['project_ids'] = new_project_ids
+
+    # 当前执行用例：(用例 ID, 执行状态, 所在执行记录的项目 ID)
+    run_cases = list(TestRunCase.objects.filter(test_run__test_plan=plan).values_list(
+        'testcase_id', 'status', 'test_run__project_id'))
+    current_case_ids = list(dict.fromkeys(case_id for case_id, _, _ in run_cases))
+
+    incremental = [key for key in ('add_testcases', 'remove_testcases') if key in data]
+    final_case_ids = None
+    if 'testcases' in data:
+        if incremental:
+            raise McpActionError(
+                'data.testcases（全量替换）不能与 add_testcases / remove_testcases（增量）同时使用')
+        final_case_ids = _id_list(data['testcases'], 'data.testcases')
+    elif incremental:
+        add_ids = _id_list(data.get('add_testcases', []), 'data.add_testcases')
+        remove_ids = _id_list(data.get('remove_testcases', []), 'data.remove_testcases')
+        overlap = sorted(set(add_ids) & set(remove_ids))
+        if overlap:
+            raise McpActionError(f'同一用例不能既新增又移除: {_fmt_ids(overlap)}')
+        not_in_plan = [case_id for case_id in remove_ids if case_id not in current_case_ids]
+        if not_in_plan:
+            raise McpActionError(f'data.remove_testcases 包含不在计划中的用例: {_fmt_ids(not_in_plan)}')
+        final_case_ids = ([case_id for case_id in current_case_ids if case_id not in remove_ids]
+                          + [case_id for case_id in add_ids if case_id not in current_case_ids])
+    if final_case_ids is not None:
+        changes['testcase_ids'] = final_case_ids
+
+    impact = {'projects_added': projects_added, 'projects_removed': projects_removed,
+              'testcases_added': 0, 'testcases_removed': 0, 'results_removed': 0}
+    if 'project_ids' in changes or 'testcase_ids' in changes:
+        # 与 services.sync_test_runs 的取舍一致：执行用例留下的条件是所在项目仍在计划里、
+        # 用例仍在名单里，且用例没有被移到别的项目
+        project_set = set(project_ids)
+        kept_case_ids = set(current_case_ids if final_case_ids is None else final_case_ids)
+        case_projects = _case_project_map(kept_case_ids | set(current_case_ids))
+        added = [case_id for case_id in (final_case_ids or []) if case_id not in current_case_ids]
+        invalid = [case_id for case_id in added if case_projects.get(case_id) not in project_set]
+        if invalid:
+            raise McpActionError(f'新增用例不存在或不属于计划关联项目: {_fmt_ids(invalid)}')
+        removed = [
+            (case_id, status, run_project_id) for case_id, status, run_project_id in run_cases
+            if run_project_id not in project_set or case_id not in kept_case_ids
+            or case_projects.get(case_id) != run_project_id
+        ]
+        # 被整体移出的项目已在上面校验过；这里再校验增删用例所触及的项目
+        touched = ({case_projects[case_id] for case_id in added}
+                   | {run_project_id for _, _, run_project_id in removed})
+        denied = sorted(touched - _accessible_project_ids(user, touched))
+        if denied:
+            raise McpActionError(f'无权调整项目 {_fmt_ids(denied)} 下的执行用例')
+        impact.update(
+            testcases_added=len(added),
+            testcases_removed=len(removed),
+            results_removed=sum(1 for _, status, _ in removed if status != 'untested'),
+        )
+    return plan, changes, impact
+
+
+def update_test_plan_action(arguments: dict, user) -> dict:
+    """更新测试计划：只改传入的字段，校验与落库在同一事务内完成。"""
+    from django.db import transaction
+    from apps.executions import services
+
+    with transaction.atomic():
+        plan, changes, impact = _resolve_test_plan_update(arguments, user, lock=True)
+        services.update_test_plan(plan, **changes)
+    return {
+        'plan_id': plan.id,
+        'name': plan.name,
+        'updated_fields': sorted(arguments.get('data') or {}),
+        **impact,
+    }
+
+
+def _accessible_review(review_id, user):
+    from apps.reviews.services import accessible_reviews
+    review = accessible_reviews(user).filter(id=review_id).first()
+    if not review:
+        raise McpActionError(f'评审 {review_id} 不存在或无权限')
+    return review
+
+
+def _flatten_errors(errors) -> str:
+    """把 DRF 序列化器的校验错误压成一行，供 Agent 阅读。"""
+    if isinstance(errors, dict):
+        return '；'.join(f'{key}: {_flatten_errors(value)}' for key, value in errors.items())
+    if isinstance(errors, (list, tuple)):
+        return '、'.join(_flatten_errors(item) for item in errors)
+    return str(errors)
+
+
+_REVIEW_UPDATE_FIELDS = {'title', 'description', 'priority', 'deadline',
+                         'projects', 'testcases', 'reviewers', 'template'}
+_COMMENT_UPDATE_FIELDS = {'content', 'comment_type', 'testcase', 'step_number', 'is_resolved'}
+_COMMENT_TYPE_LABELS = {'general': '整体意见', 'testcase': '用例意见', 'step': '步骤意见'}
+
+
+def _resolve_review_update(arguments: dict, user):
+    """返回 (review, 已通过校验的序列化器, 影响面)；落库由序列化器转给 reviews.services。"""
+    from apps.reviews import services
+    from apps.reviews.models import ReviewAssignment, ReviewTemplate
+    from apps.reviews.serializers import TestCaseReviewCreateSerializer
+    from apps.testcases.models import TestCase
+
+    review = _accessible_review(arguments.get('review_id'), user)
+    if review.creator_id != user.id:
+        raise McpActionError('只有评审创建人可以修改评审')
+    if review.status not in services.OPEN_STATUSES:
+        raise McpActionError(f'评审已结束（{review.get_status_display()}），不能再修改')
+
+    data = _data_dict(arguments, _REVIEW_UPDATE_FIELDS)
+    payload = dict(data)
+    impact = {}
+
+    project_ids = list(review.projects.values_list('id', flat=True))
+    if 'projects' in data:
+        new_project_ids = _id_list(data['projects'], 'data.projects', allow_empty=False)
+        impact['projects_added'], impact['projects_removed'] = _check_project_changes(
+            user, project_ids, new_project_ids)
+        project_ids = payload['projects'] = new_project_ids
+
+    if 'testcases' in data:
+        testcase_ids = _id_list(data['testcases'], 'data.testcases', allow_empty=False)
+        current = set(review.testcases.values_list('id', flat=True))
+        added = [case_id for case_id in testcase_ids if case_id not in current]
+        # 新增的用例须属于评审关联项目，且当前用户对该项目有访问权限；已在评审里的不重复校验
+        allowed_projects = _accessible_project_ids(user, project_ids)
+        valid = set(TestCase.objects.filter(
+            id__in=added, project_id__in=allowed_projects).values_list('id', flat=True))
+        invalid = [case_id for case_id in added if case_id not in valid]
+        if invalid:
+            raise McpActionError(
+                f'data.testcases 新增的用例不存在，或不属于评审关联且你有权限的项目: {_fmt_ids(invalid)}')
+        payload['testcases'] = testcase_ids
+        impact['testcases_added'] = len(added)
+        impact['testcases_removed'] = len(current - set(testcase_ids))
+
+    if 'reviewers' in data:
+        reviewer_ids = _id_list(data['reviewers'], 'data.reviewers', allow_empty=False)
+        assignments = dict(ReviewAssignment.objects.filter(
+            review=review).values_list('reviewer_id', 'status'))
+        added = [user_id for user_id in reviewer_ids if user_id not in assignments]
+        _require_active_users(added, 'data.reviewers')
+        removed = [user_id for user_id in assignments if user_id not in reviewer_ids]
+        payload['reviewers'] = reviewer_ids
+        impact['reviewers_added'] = added
+        impact['reviewers_removed'] = removed
+        impact['verdicts_removed'] = sum(
+            1 for user_id in removed if assignments[user_id] != 'pending')
+
+    serializer = TestCaseReviewCreateSerializer(review, data=payload, partial=True)
+    if not serializer.is_valid():
+        raise McpActionError(f'data 校验失败：{_flatten_errors(serializer.errors)}')
+
+    template_id = serializer.validated_data.get('template')
+    if (template_id and template_id != review.template_id
+            and not ReviewTemplate.objects.filter(pk=template_id, is_active=True).exists()):
+        raise McpActionError(f'评审模板 {template_id} 不存在或已停用')
+    return review, serializer, impact
+
+
+def update_review_action(arguments: dict, user) -> dict:
+    """修改评审：字段与关联经评审序列化器校验后由 reviews.services 同事务落库。"""
+    review, serializer, impact = _resolve_review_update(arguments, user)
+    serializer.save()
+    return {
+        'review_id': review.id,
+        'title': review.title,
+        'updated_fields': sorted(arguments.get('data') or {}),
+        **impact,
+    }
+
+
+def _resolve_review_comment_create(arguments: dict, user):
+    """返回 (review, 已通过校验的序列化器)；意见规则由评审意见序列化器统一校验。"""
+    from apps.reviews.serializers import TestCaseReviewCommentCreateSerializer
+
+    review = _accessible_review(arguments.get('review_id'), user)
+    serializer = TestCaseReviewCommentCreateSerializer(data={
+        'review': review.id,
+        'comment_type': str(arguments.get('comment_type') or 'general').strip().lower(),
+        'content': arguments.get('content'),
+        'testcase': arguments.get('testcase_id') or None,
+        'step_number': arguments.get('step_number') or None,
+    })
+    if not serializer.is_valid():
+        raise McpActionError(f'评审意见校验失败：{_flatten_errors(serializer.errors)}')
+    return review, serializer
+
+
+def add_review_comment_action(arguments: dict, user) -> dict:
+    review, serializer = _resolve_review_comment_create(arguments, user)
+    comment = serializer.save(author=user)
+    return {
+        'comment_id': comment.id,
+        'review_id': review.id,
+        'comment_type': comment.comment_type,
+        'testcase_id': comment.testcase_id,
+        'step_number': comment.step_number,
+    }
+
+
+def _resolve_review_comment_update(arguments: dict, user):
+    """返回 (comment, 内容字段的序列化器或 None, 新的解决状态或 None)。
+
+    内容字段（content / comment_type / testcase / step_number）只有作者能改；
+    解决状态（is_resolved）作者和评审创建人都能改。评审结束后两者都冻结。
+    """
+    from apps.reviews import services
+    from apps.reviews.models import TestCaseReviewComment
+    from apps.reviews.serializers import TestCaseReviewCommentCreateSerializer
+
+    comment_id = arguments.get('comment_id')
+    comment = TestCaseReviewComment.objects.filter(
+        id=comment_id, review__in=services.accessible_reviews(user)
+    ).select_related('review', 'testcase').first()
+    if not comment:
+        raise McpActionError(f'评审意见 {comment_id} 不存在或无权限')
+
+    payload = dict(_data_dict(arguments, _COMMENT_UPDATE_FIELDS))
+    is_resolved = None
+    if 'is_resolved' in payload:
+        is_resolved = payload.pop('is_resolved')
+        if not isinstance(is_resolved, bool):
+            raise McpActionError('data.is_resolved 必须是布尔值 true / false')
+        try:
+            services.check_comment_status_changeable(comment, user)
+        except services.ReviewRuleError as exc:
+            raise McpActionError(str(exc)) from exc
+
+    serializer = None
+    if payload:
+        if not services.is_comment_author(comment, user):
+            raise McpActionError('只能修改本人发布的评审意见（评审创建人只能修改意见的解决状态）')
+        if isinstance(payload.get('comment_type'), str):
+            payload['comment_type'] = payload['comment_type'].strip().lower()
+        # 与 preview_add_review_comment 的入参约定一致：0 等同于不关联用例 / 不指定步骤
+        for key in ('testcase', 'step_number'):
+            if key in payload and not payload[key]:
+                payload[key] = None
+        serializer = TestCaseReviewCommentCreateSerializer(comment, data=payload, partial=True)
+        if not serializer.is_valid():
+            raise McpActionError(f'评审意见校验失败：{_flatten_errors(serializer.errors)}')
+    return comment, serializer, is_resolved
+
+
+def update_review_comment_action(arguments: dict, user) -> dict:
+    from django.db import transaction
+    from apps.reviews import services
+
+    comment, serializer, is_resolved = _resolve_review_comment_update(arguments, user)
+    with transaction.atomic():
+        if serializer is not None:
+            serializer.save()
+        if is_resolved is not None:
+            try:
+                services.set_comment_resolved(comment, user, is_resolved)
+            except services.ReviewRuleError as exc:
+                raise McpActionError(str(exc)) from exc
+    return {
+        'comment_id': comment.id,
+        'review_id': comment.review_id,
+        'updated_fields': sorted(arguments.get('data') or {}),
+        'comment_type': comment.comment_type,
+        'testcase_id': comment.testcase_id,
+        'step_number': comment.step_number,
+        'is_resolved': comment.is_resolved,
+    }
+
+
+#: preview 阶段先跑一遍校验的操作：参数或权限有问题时直接报错，不生成待确认记录
+PREVIEW_VALIDATORS = {
+    'confirm_create_test_plan': _resolve_test_plan_create,
+    'confirm_update_test_plan': _resolve_test_plan_update,
+    'confirm_update_review': _resolve_review_update,
+    'confirm_add_review_comment': _resolve_review_comment_create,
+    'confirm_update_review_comment': _resolve_review_comment_update,
+}
+
+
+def validate_preview(tool_name: str, arguments: dict, user):
+    """preview_* 工具在生成待确认记录前调用；校验失败抛 McpActionError。"""
+    validator = PREVIEW_VALIDATORS.get(tool_name)
+    if validator is not None:
+        validator(arguments, user)
+
+
+def _preview_create_test_plan(arguments, user) -> str:
+    resolved = _resolve_test_plan_create(arguments, user)
+    parts = [f'关联项目 {_project_names(resolved["project_ids"])}',
+             f'{len(resolved["testcase_ids"])} 条用例']
+    if resolved['assignee_ids']:
+        parts.append(f'指派给 {len(resolved["assignee_ids"])} 人')
+    if resolved['version']:
+        parts.append(f'版本「{resolved["version"].name}」')
+    return f'将创建测试计划「{resolved["fields"]["name"]}」（{"，".join(parts)}）'
+
+
+def _preview_update_test_plan(arguments, user) -> str:
+    plan, _, impact = _resolve_test_plan_update(arguments, user)
+    notes = []
+    if impact['projects_added']:
+        notes.append(f'新增项目 {_project_names(impact["projects_added"])}')
+    if impact['projects_removed']:
+        notes.append(f'移除项目 {_project_names(impact["projects_removed"])} 及其执行记录')
+    if impact['testcases_added']:
+        notes.append(f'新增 {impact["testcases_added"]} 条执行用例')
+    if impact['testcases_removed']:
+        note = f'移除 {impact["testcases_removed"]} 条执行用例'
+        if impact['results_removed']:
+            note += f'（其中 {impact["results_removed"]} 条已有执行结果，结果与执行历史将一并删除）'
+        notes.append(note)
+    return (f'将更新测试计划「{plan.name}」（ID {plan.id}）：'
+            f'字段 {", ".join(sorted(arguments.get("data") or {}))}'
+            + ''.join(f'；{note}' for note in notes))
+
+
+def _preview_update_review(arguments, user) -> str:
+    review, _, impact = _resolve_review_update(arguments, user)
+    notes = []
+    if impact.get('projects_added'):
+        notes.append(f'新增项目 {_project_names(impact["projects_added"])}')
+    if impact.get('projects_removed'):
+        notes.append(f'移除项目 {_project_names(impact["projects_removed"])}')
+    if impact.get('testcases_added') or impact.get('testcases_removed'):
+        notes.append(f'评审用例新增 {impact["testcases_added"]} 条、'
+                     f'移除 {impact["testcases_removed"]} 条')
+    if impact.get('reviewers_added'):
+        notes.append(f'新增 {len(impact["reviewers_added"])} 位评审人')
+    if impact.get('reviewers_removed'):
+        note = f'移除 {len(impact["reviewers_removed"])} 位评审人'
+        if impact['verdicts_removed']:
+            note += f'（其中 {impact["verdicts_removed"]} 位已提交的评审结论将一并删除）'
+        notes.append(note)
+    return (f'将更新评审「{review.title}」（ID {review.id}）：'
+            f'字段 {", ".join(sorted(arguments.get("data") or {}))}'
+            + ''.join(f'；{note}' for note in notes))
+
+
+def _comment_excerpt(content) -> str:
+    text = ' '.join(str(content or '').split())
+    return text if len(text) <= 60 else f'{text[:60]}…'
+
+
+def _preview_add_review_comment(arguments, user) -> str:
+    review, serializer = _resolve_review_comment_create(arguments, user)
+    validated = serializer.validated_data
+    label = _COMMENT_TYPE_LABELS.get(validated.get('comment_type', 'general'), '评审意见')
+    testcase = validated.get('testcase')
+    target = f'（用例 #{testcase.id}「{testcase.title}」）' if testcase else ''
+    return (f'将在评审「{review.title}」（ID {review.id}）添加{label}{target}：'
+            f'{_comment_excerpt(validated.get("content"))}')
+
+
+def _preview_update_review_comment(arguments, user) -> str:
+    comment, _, is_resolved = _resolve_review_comment_update(arguments, user)
+    fields = sorted(set(arguments.get('data') or {}) - {'is_resolved'})
+    notes = []
+    if fields:
+        notes.append(f'字段 {", ".join(fields)}')
+    if is_resolved is not None:
+        notes.append(f'标记为{"已解决" if is_resolved else "未解决"}')
+    return (f'将修改评审「{comment.review.title}」下的评审意见 {comment.id}：'
+            + '；'.join(notes))
+
+
 #: confirm 分发注册表：tool_name → (执行体, preview 构造函数)
 def build_preview(tool_name: str, arguments: dict, user) -> str:
     """构造 preview 文本；无法预览时给出通用描述。"""
@@ -1694,6 +2271,16 @@ def build_preview(tool_name: str, arguments: dict, user) -> str:
             return (f'将在 UI 项目「{project.name if project else arguments.get("project_id")}」'
                     f'导入录制脚本「{name}」（{len(content.encode("utf-8"))} 字节，'
                     f'内容摘要 {arguments.get("content_hash", "")[:12]}）')
+        if tool_name == 'confirm_create_test_plan':
+            return _preview_create_test_plan(arguments, user)
+        if tool_name == 'confirm_update_test_plan':
+            return _preview_update_test_plan(arguments, user)
+        if tool_name == 'confirm_update_review':
+            return _preview_update_review(arguments, user)
+        if tool_name == 'confirm_add_review_comment':
+            return _preview_add_review_comment(arguments, user)
+        if tool_name == 'confirm_update_review_comment':
+            return _preview_update_review_comment(arguments, user)
     except Exception as exc:  # noqa: BLE001 - 预览失败不阻断流程
         logger.warning('构造 preview 失败 tool=%s: %s', tool_name, exc)
     return f'即将执行危险操作 {tool_name}'
@@ -1715,4 +2302,9 @@ ACTION_REGISTRY = {
     'confirm_update_api_scenario_case': update_api_scenario_case_action,
     'confirm_update_ui_element': update_ui_element_action,
     'confirm_import_recorded_script': import_recorded_script_action,
+    'confirm_create_test_plan': create_test_plan_action,
+    'confirm_update_test_plan': update_test_plan_action,
+    'confirm_update_review': update_review_action,
+    'confirm_add_review_comment': add_review_comment_action,
+    'confirm_update_review_comment': update_review_comment_action,
 }

@@ -149,6 +149,7 @@ export default {
   // Messages
   fetchListFailed: 'Failed to fetch test plans',
   fetchDetailFailed: 'Failed to fetch test plan details',
+  fetchOptionsFailed: 'Failed to load versions and assignees. Reopen the dialog to retry.',
   fetchTestcasesFailed: 'Failed to fetch test cases',
   fetchHistoryFailed: 'Failed to fetch execution history',
   createSuccess: 'Test plan created successfully',

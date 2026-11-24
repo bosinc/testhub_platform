@@ -312,6 +312,8 @@ const isEditPlanDialogOpen = ref(false)
 const planFormRef = ref()
 const editPlanFormRef = ref()
 const currentEditingPlan = ref(null)
+// 编辑弹窗打开时，计划原有的版本是否没能在版本选项里找到
+let editVersionUnresolved = false
 const newPlanForm = reactive({
   name: '',
   description: '',
@@ -385,20 +387,41 @@ const fetchTestPlans = async () => {
   }
 }
 
-const fetchBasicData = async () => {
+const withoutEmpty = (data) => (data.results || data || []).filter(item => item !== null && item !== undefined)
+
+const fetchProjects = async () => {
   try {
-    const [projectsRes, versionsRes, usersRes] = await Promise.all([
-      api.get('/projects/'), // 只显示用户参与的项目
-      api.get('/versions/'),
-      api.get('/users/users/') // 修正用户API路径
-    ])
-    
-    projects.value = (projectsRes.data.results || projectsRes.data || []).filter(item => item !== null && item !== undefined)
-    versions.value = (versionsRes.data.results || versionsRes.data || []).filter(item => item !== null && item !== undefined)
-    users.value = (usersRes.data.results || usersRes.data || []).filter(item => item !== null && item !== undefined)
+    const response = await api.get('/projects/') // 只显示用户参与的项目
+    projects.value = withoutEmpty(response.data)
   } catch (error) {
-    console.error('获取基础数据失败:', error)
+    console.error('获取项目列表失败:', error)
   }
+}
+
+// 版本、用户只在新建/编辑弹窗里用到：首次打开弹窗时才请求，之后复用同一份结果。
+// 返回是否加载成功，不抛错，加载失败不应阻止弹窗打开
+let dialogOptionsPromise = null
+const ensureDialogOptions = () => {
+  if (!dialogOptionsPromise) {
+    dialogOptionsPromise = Promise.all([
+      api.get('/versions/'),
+      api.get('/auth/users/')
+    ]).then(([versionsRes, usersRes]) => {
+      versions.value = withoutEmpty(versionsRes.data)
+      users.value = withoutEmpty(usersRes.data)
+      return true
+    }).catch(error => {
+      // 加载失败不缓存，下次打开弹窗时重试
+      dialogOptionsPromise = null
+      console.error('获取版本、用户列表失败:', error)
+      return false
+    })
+  }
+  return dialogOptionsPromise
+}
+
+const warnIfDialogOptionsFailed = (loaded) => {
+  if (!loaded) ElMessage.warning(t('execution.fetchOptionsFailed'))
 }
 
 // 处理项目选择变化
@@ -466,9 +489,18 @@ const viewPlan = (id) => {
 
 const editPlan = async (plan) => {
   try {
-    // 获取完整的测试计划详情
-    const response = await api.get(`/executions/plans/${plan.id}/`)
+    // 获取完整的测试计划详情；回填版本、执行人依赖下拉选项，等选项请求结束（成功与否）再回填
+    const [response, optionsLoaded] = await Promise.all([
+      api.get(`/executions/plans/${plan.id}/`),
+      ensureDialogOptions()
+    ])
     const planDetail = response.data
+
+    // 详情接口只给版本名，需在选项里反查 id；选项没加载到或查不到时记下来，保存时不动原版本
+    const versionId = planDetail.version
+      ? versions.value.find(v => v.name === planDetail.version)?.id ?? null
+      : null
+    editVersionUnresolved = Boolean(planDetail.version) && versionId === null
 
     // 设置当前编辑的计划
     currentEditingPlan.value = planDetail
@@ -483,7 +515,7 @@ const editPlan = async (plan) => {
       description: planDetail.description || '',
       // 详情接口给的是 [{ id, name }] 和 run_cases，直接取 id
       projects: (planDetail.projects || []).map(project => project.id),
-      version: planDetail.version ? versions.value.find(v => v.name === planDetail.version)?.id : null,
+      version: versionId,
       testcases: (planDetail.test_runs || [])
         .flatMap(run => (run.run_cases || []).map(runCase => runCase.testcase?.id))
         .filter(Boolean),
@@ -493,6 +525,7 @@ const editPlan = async (plan) => {
 
     isEditPlanDialogOpen.value = true
     nextTick(() => { suppressProjectWatch.value = false })
+    warnIfDialogOptionsFailed(optionsLoaded)
   } catch (error) {
     suppressProjectWatch.value = false
     ElMessage.error(t('execution.fetchDetailFailed'))
@@ -508,10 +541,13 @@ const updatePlan = async () => {
       name: editPlanForm.name,
       description: editPlanForm.description,
       projects: editPlanForm.projects,
-      version: editPlanForm.version,
       testcases: editPlanForm.testcases,
       assignees: editPlanForm.assignees,
       is_active: editPlanForm.is_active
+    }
+    // 原版本没能回填且用户也没重新选时不提交 version，后端对未携带的字段保持原值
+    if (!editVersionUnresolved || editPlanForm.version !== null) {
+      updateData.version = editPlanForm.version
     }
 
     await api.put(`/executions/plans/${editPlanForm.id}/`, updateData)
@@ -566,6 +602,8 @@ const togglePlanStatus = async (plan) => {
 const openCreatePlanDialog = () => {
   resetPlanForm()
   isCreatePlanDialogOpen.value = true
+  // 新建表单没有需要回填的值，弹窗先打开，选项加载完自动出现
+  ensureDialogOptions().then(warnIfDialogOptionsFailed)
 }
 
 const resetPlanForm = () => {
@@ -706,7 +744,7 @@ watch(
 
 onMounted(() => {
   fetchTestPlans()
-  fetchBasicData()
+  fetchProjects()
 })
 </script>
 

@@ -78,8 +78,9 @@ def get_user_accessible_projects(user):
 
 
 def serialize_module_tree(project_id):
+    """返回 (模块树, 未分配模块的用例数量)，两者共用同一条按模块分组的统计查询。"""
     modules = list(TestCaseModule.objects.filter(project_id=project_id).order_by('sort_order', 'name', 'id'))
-    counts = dict(TestCase.objects.filter(project_id=project_id, module__isnull=False)
+    counts = dict(TestCase.objects.filter(project_id=project_id)
                   .values_list('module_id').annotate(count=models.Count('id')))
     nodes = {module.id: {'id': module.id, 'name': module.name, 'project_id': module.project_id,
                          'parent_id': module.parent_id, 'count': counts.get(module.id, 0), 'children': []}
@@ -94,7 +95,7 @@ def serialize_module_tree(project_id):
 
     for node in roots:
         add_descendant_counts(node)
-    return roots
+    return roots, counts.get(None, 0)
 
 
 def validate_module_for_project(module_id, project):
@@ -144,7 +145,12 @@ class TestCaseModuleListCreateView(APIView):
         project_id = request.query_params.get('project')
         if not project_id or not project_id.isdigit() or not get_user_accessible_projects(request.user).filter(pk=project_id).exists():
             return Response({'detail': '项目不存在或无权访问'}, status=status.HTTP_404_NOT_FOUND)
-        return Response(serialize_module_tree(int(project_id)))
+        roots, unassigned_count = serialize_module_tree(int(project_id))
+        # 默认仍返回模块树数组；include_unassigned=true 时附带未分配模块的用例数量，
+        # 避免前端为这一个数字再请求一次用例列表。
+        if request.query_params.get('include_unassigned') == 'true':
+            return Response({'modules': roots, 'unassigned_count': unassigned_count})
+        return Response(roots)
 
     def post(self, request):
         project_id = request.data.get('project_id')
@@ -423,13 +429,15 @@ class TestCaseListCreateView(generics.ListCreateAPIView):
     def get_queryset(self):
         user = self.request.user
         accessible_projects = get_user_accessible_projects(user)
+        # 权限通过 project__in 子查询过滤，不会产生重复行，无需 distinct()
+        # （distinct 会让 MySQL 对含 TEXT 的全部列做临时表去重，COUNT 和取页都明显变慢）。
         queryset = TestCase.objects.filter(
             project__in=accessible_projects
         ).select_related(
             'author', 'assignee', 'project'
         ).prefetch_related(
             'versions', 'module', 'step_details'
-        ).distinct()
+        )
         # 支持多项目过滤：project=1,2,3（单值 project=1 同样兼容）
         project_param = self.request.query_params.get('project')
         if project_param:
@@ -472,8 +480,10 @@ class TestCaseListCreateView(generics.ListCreateAPIView):
     def list(self, request, *args, **kwargs):
         """Serialize the current page with its typed automation links in bulk."""
         queryset = self.filter_queryset(self.get_queryset())
-        automation_summary = get_automation_summary(queryset)
         page = self.paginate_queryset(queryset)
+        # 分页器已统计过总数，直接复用，避免对同一结果集重复 COUNT。
+        total = self.paginator.page.paginator.count if page is not None else None
+        automation_summary = get_automation_summary(queryset, total=total)
         cases = list(page if page is not None else queryset)
         links_by_case = get_automation_links_for_cases(cases, request.user)
         serializer = self.get_serializer(
@@ -657,8 +667,13 @@ def get_automation_links_for_cases(cases, user):
     return result
 
 
-def get_automation_summary(queryset):
-    """统计当前筛选结果中的自动化关联情况，分母排除不可自动化用例。"""
+def get_automation_summary(queryset, total=None):
+    """统计当前筛选结果中的自动化关联情况，分母排除不可自动化用例。
+
+    total 为调用方已知的结果总数（如分页器的 count），传入后不再重复统计。
+    """
+    if total is None:
+        total = queryset.count()
     automatable_total = queryset.filter(automatability=True).count()
     linked_counts = {
         case_type: TestCaseAutomationLink.objects.filter(
@@ -672,7 +687,7 @@ def get_automation_summary(queryset):
         return round(linked_count / automatable_total * 100, 1) if automatable_total else 0
 
     return {
-        'total': queryset.count(),
+        'total': total,
         'automatable_total': automatable_total,
         'ui_linked': linked_counts['ui_test_case'],
         'api_linked': linked_counts['api_scenario_case'],

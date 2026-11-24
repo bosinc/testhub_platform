@@ -149,6 +149,7 @@ export default {
   // Messages
   fetchListFailed: '获取测试计划失败',
   fetchDetailFailed: '获取测试计划详情失败',
+  fetchOptionsFailed: '版本、指派人列表加载失败，重新打开弹窗可重试',
   fetchTestcasesFailed: '获取测试用例失败',
   fetchHistoryFailed: '获取历史记录失败',
   createSuccess: '测试计划创建成功',

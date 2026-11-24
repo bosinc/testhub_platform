@@ -117,6 +117,54 @@ _TOOLS = [
                     '生成 UI/接口自动化用例前用它读取步骤与预期结果。',
         examples=({'testcase_id': 101},),
     ),
+    # ------------------------- 只读：测试计划与评审 ------------------------- #
+    ToolMeta(
+        name='list_test_plans', title='测试计划列表', category=CATEGORY_READ,
+        domain='executions',
+        summary='列出当前用户可访问的测试计划',
+        description='列出当前用户创建、被指派或所在项目关联的测试计划。'
+                    'project_id 传 0 不限项目；is_active 传 true / false 按启用状态过滤，不传不过滤；'
+                    'keyword 模糊匹配计划名称。返回计划基本信息与执行用例数量（testcase_count），'
+                    '支持 limit/offset 分页（上限 100），结果带 60 秒缓存。',
+        examples=({'project_id': 1, 'is_active': True, 'limit': 20, 'offset': 0},),
+    ),
+    ToolMeta(
+        name='get_test_plan', title='测试计划详情', category=CATEGORY_READ,
+        domain='executions',
+        summary='获取测试计划详情、执行进度与分页的执行用例',
+        description='获取指定测试计划的详情：基本信息、关联项目、指派人、版本、整体执行进度、'
+                    '各项目执行记录的进度（test_runs），以及分页的执行用例（run_cases: {total, items}）。'
+                    '执行用例按 case_limit/case_offset 分页（默认 50，上限 100），只带轻量字段'
+                    '（run_case_id/testcase_id/title/status/priority/actual_result/comments/'
+                    'executed_by/executed_at），用例的步骤与预期结果请用 get_testcase 读取。',
+        examples=({'plan_id': 42}, {'plan_id': 42, 'case_limit': 100, 'case_offset': 100}),
+    ),
+    ToolMeta(
+        name='list_reviews', title='评审列表', category=CATEGORY_READ,
+        domain='reviews',
+        summary='列出当前用户可访问的用例评审',
+        description='列出当前用户创建、参与项目或被指派的用例评审。支持按项目、状态、评审人和标题关键词过滤，'
+                    '返回评审基本信息、用例数量和评审人数量，支持 limit/offset 分页（上限 100），结果带 60 秒缓存。',
+        examples=({'project_id': 1, 'status': 'pending', 'limit': 20, 'offset': 0},),
+    ),
+    ToolMeta(
+        name='get_review', title='评审详情', category=CATEGORY_READ,
+        domain='reviews',
+        summary='获取评审详情及评审意见',
+        description='获取指定评审的完整详情，包括关联项目、测试用例、评审人分配、评审结论和全部评审意见。',
+        examples=({'review_id': 42},),
+    ),
+    ToolMeta(
+        name='get_review_comments', title='获取评审意见', category=CATEGORY_READ,
+        domain='reviews',
+        summary='分页获取指定评审的评审意见',
+        description='分页获取指定评审的评审意见（按发布时间倒序）。testcase_id 传 0 返回全部意见，'
+                    '传用例 ID 只返回针对该用例的意见；is_resolved 传 true / false 只返回已解决 / '
+                    '未解决的意见，不传不过滤；支持 limit/offset 分页（上限 100）。'
+                    'items 里的 id 可传给 preview_update_review_comment 修改意见或其解决状态。',
+        examples=({'review_id': 42, 'testcase_id': 101, 'limit': 20},
+                  {'review_id': 42, 'is_resolved': False}),
+    ),
 
     # ------------------------- 只读：接口测试 ------------------------- #
     ToolMeta(
@@ -694,6 +742,142 @@ _TOOLS = [
                     '令牌一次性消费且 5 分钟内有效；人工审批模式下需轮询 get_approval_status。',
         read_only=False, idempotent=False, destructive=True,
         paired_with='preview_update_ui_element',
+        examples=({'confirm_token': 'cf_xxxxxxxx'},),
+    ),
+
+    # ------------------------- 测试计划（preview → confirm） ------------------------- #
+    ToolMeta(
+        name='preview_create_test_plan', title='预览创建测试计划', category=CATEGORY_PREVIEW,
+        domain='executions',
+        summary='预览创建测试计划（危险操作第一步）',
+        description='危险操作第一步：校验参数并返回影响预览与 confirm_token（5 分钟有效），本步骤不落库。'
+                    'data：{name（必填）, description?, projects: [项目 ID]（必填，至少一个，须有访问权限）, '
+                    'testcases?: [功能用例 ID]（须属于所选项目）, assignees?: [用户 ID], '
+                    'version?: 版本 ID, is_active?（默认 true）}。'
+                    '创建后每个关联项目生成一条执行记录，用例按所属项目归入对应执行记录；'
+                    'assignees 恰好一人时，该人自动成为各执行用例的默认执行人。'
+                    '参数或权限有问题时本步骤直接报错，不生成待确认记录。',
+        read_only=False, idempotent=False, paired_with='confirm_create_test_plan',
+        examples=({'data': {'name': '版本回归计划', 'projects': [1],
+                            'testcases': [101, 102], 'assignees': [2]}},),
+    ),
+    ToolMeta(
+        name='confirm_create_test_plan', title='确认创建测试计划', category=CATEGORY_CONFIRM,
+        domain='executions',
+        summary='确认创建测试计划（危险操作第二步）',
+        description='危险操作第二步：校验令牌后创建测试计划并生成各项目的执行记录'
+                    '（计划、执行记录、执行用例同事务落库），返回 plan_id、test_run_ids 与用例数。'
+                    '令牌一次性消费且 5 分钟内有效；人工审批模式下需轮询 get_approval_status。',
+        read_only=False, idempotent=False, paired_with='preview_create_test_plan',
+        examples=({'confirm_token': 'cf_xxxxxxxx'},),
+    ),
+    ToolMeta(
+        name='preview_update_test_plan', title='预览修改测试计划', category=CATEGORY_PREVIEW,
+        domain='executions',
+        summary='预览修改测试计划（危险操作第一步）',
+        description='危险操作第一步：校验参数并返回影响预览（含将被移除的执行用例数、'
+                    '其中已有执行结果的条数）与 confirm_token（5 分钟有效），本步骤不修改数据。'
+                    'data 只需包含要改的字段，未传的保持原样：{name?, description?, is_active?, '
+                    'version?（null 表示不关联版本）, assignees?: [用户 ID]（整体替换，[] 清空）, '
+                    'projects?: [项目 ID]（整体替换，至少一个；被移除项目的执行记录与结果一并删除）, '
+                    'testcases?: [功能用例 ID]（整体替换：不在数组里的执行用例及其结果会被删除）, '
+                    'add_testcases? / remove_testcases?: [功能用例 ID]（增量增删，不能与 testcases 同用）}。'
+                    '只想增删个别用例时用 add_testcases / remove_testcases，其余用例的执行结果不受影响。'
+                    '增删项目或用例时要求对涉及的项目有访问权限。',
+        read_only=False, idempotent=False, paired_with='confirm_update_test_plan',
+        examples=({'plan_id': 42, 'data': {'name': '回归计划-v2', 'is_active': True}},
+                  {'plan_id': 42, 'data': {'add_testcases': [105], 'remove_testcases': [101]}}),
+    ),
+    ToolMeta(
+        name='confirm_update_test_plan', title='确认修改测试计划', category=CATEGORY_CONFIRM,
+        domain='executions',
+        summary='确认修改测试计划（危险操作第二步）',
+        description='危险操作第二步：校验令牌后修改测试计划并同步各项目执行记录，'
+                    '返回变更字段与实际增删的项目、执行用例数。'
+                    '令牌一次性消费且 5 分钟内有效；人工审批模式下需轮询 get_approval_status。',
+        read_only=False, idempotent=False, destructive=True,
+        paired_with='preview_update_test_plan',
+        examples=({'confirm_token': 'cf_xxxxxxxx'},),
+    ),
+
+    # ------------------------- 用例评审（preview → confirm） ------------------------- #
+    ToolMeta(
+        name='preview_update_review', title='预览修改评审', category=CATEGORY_PREVIEW,
+        domain='reviews',
+        summary='预览修改用例评审（危险操作第一步）',
+        description='危险操作第一步：校验参数并返回影响预览与 confirm_token（5 分钟有效），本步骤不修改数据。'
+                    '仅评审创建人可修改，且评审须处于待评审 / 评审中。'
+                    'data 只需包含要改的字段，未传的保持原样：{title?, description?, '
+                    'priority?（low/medium/high/urgent）, deadline?（ISO 8601 时间，null 清空）, '
+                    'template?（评审模板 ID，null 清空）, projects?: [项目 ID]（整体替换，至少一个）, '
+                    'testcases?: [功能用例 ID]（整体替换，至少一个；新增的用例须属于评审关联项目）, '
+                    'reviewers?: [用户 ID]（整体替换，至少一个）}。'
+                    'reviewers 按差量同步：留在名单里的评审人保留已提交的结论，'
+                    '被移除的评审人其结论一并删除（预览会给出数量）。'
+                    '评审状态由评审人提交结论后自动流转，不支持直接修改。',
+        read_only=False, idempotent=False, paired_with='confirm_update_review',
+        examples=({'review_id': 42, 'data': {'title': '登录模块用例评审', 'priority': 'high'}},
+                  {'review_id': 42, 'data': {'reviewers': [2, 5]}}),
+    ),
+    ToolMeta(
+        name='confirm_update_review', title='确认修改评审', category=CATEGORY_CONFIRM,
+        domain='reviews',
+        summary='确认修改用例评审（危险操作第二步）',
+        description='危险操作第二步：校验令牌后修改评审，返回变更字段与实际增删的项目、用例、评审人。'
+                    '令牌一次性消费且 5 分钟内有效；人工审批模式下需轮询 get_approval_status。',
+        read_only=False, idempotent=False, destructive=True,
+        paired_with='preview_update_review',
+        examples=({'confirm_token': 'cf_xxxxxxxx'},),
+    ),
+    ToolMeta(
+        name='preview_add_review_comment', title='预览添加评审意见', category=CATEGORY_PREVIEW,
+        domain='reviews',
+        summary='预览添加评审意见（危险操作第一步）',
+        description='危险操作第一步：校验参数并返回预览与 confirm_token（5 分钟有效），本步骤不落库。'
+                    'comment_type：general（整体意见，不能传 testcase_id）/ testcase（用例意见）/ '
+                    'step（步骤意见，可用 step_number 指明步骤序号）；用例意见与步骤意见必须传 '
+                    'testcase_id，且该用例须属于这个评审。content 不能为空。'
+                    '能查看该评审的用户（创建人、评审人、关联项目成员）都可以添加意见；'
+                    '评审须处于待评审 / 评审中，评审结束后不能再添加。',
+        read_only=False, idempotent=False, paired_with='confirm_add_review_comment',
+        examples=(
+            {'review_id': 42, 'content': '整体方案覆盖完整'},
+            {'review_id': 42, 'comment_type': 'testcase', 'testcase_id': 101,
+             'content': '请补充异常场景'},
+        ),
+    ),
+    ToolMeta(
+        name='confirm_add_review_comment', title='确认添加评审意见', category=CATEGORY_CONFIRM,
+        domain='reviews',
+        summary='确认添加评审意见（危险操作第二步）',
+        description='危险操作第二步：校验令牌后添加评审意见，返回 comment_id。'
+                    '令牌一次性消费且 5 分钟内有效；人工审批模式下需轮询 get_approval_status。',
+        read_only=False, idempotent=False, paired_with='preview_add_review_comment',
+        examples=({'confirm_token': 'cf_xxxxxxxx'},),
+    ),
+    ToolMeta(
+        name='preview_update_review_comment', title='预览修改评审意见', category=CATEGORY_PREVIEW,
+        domain='reviews',
+        summary='预览修改评审意见或其解决状态（危险操作第一步）',
+        description='危险操作第一步：校验参数并返回预览与 confirm_token（5 分钟有效），本步骤不修改数据。'
+                    'data 只需包含要改的字段：{content?, '
+                    'comment_type?（general/testcase/step）, testcase?（功能用例 ID，须属于该评审；'
+                    'null 解除关联）, step_number?, is_resolved?（true 标记已解决 / false 重新打开）}。'
+                    '内容类字段只有意见作者能改；is_resolved 意见作者和评审创建人都能改。'
+                    '评审须处于待评审 / 评审中，评审结束后意见及其解决状态都不能再改。'
+                    '改成整体意见（general）时会自动解除用例关联；意见不能移动到其他评审。',
+        read_only=False, idempotent=False, paired_with='confirm_update_review_comment',
+        examples=({'comment_id': 9, 'data': {'content': '请补充边界条件'}},
+                  {'comment_id': 9, 'data': {'is_resolved': True}}),
+    ),
+    ToolMeta(
+        name='confirm_update_review_comment', title='确认修改评审意见', category=CATEGORY_CONFIRM,
+        domain='reviews',
+        summary='确认修改评审意见（危险操作第二步）',
+        description='危险操作第二步：校验令牌后修改评审意见，返回变更字段与最新的意见类型、关联用例、解决状态。'
+                    '令牌一次性消费且 5 分钟内有效；人工审批模式下需轮询 get_approval_status。',
+        read_only=False, idempotent=False, destructive=True,
+        paired_with='preview_update_review_comment',
         examples=({'confirm_token': 'cf_xxxxxxxx'},),
     ),
 

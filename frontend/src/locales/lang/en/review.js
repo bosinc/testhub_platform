@@ -148,6 +148,12 @@ export default {
     deleteCommentFailed: 'Failed to delete comment',
     relatedTestcase: 'Related Test Case',
     noComments: 'No review comments',
+    commentResolved: 'Resolved',
+    commentUnresolved: 'Open',
+    commentStatusUpdated: 'Comment status updated',
+    commentStatusUpdateFailed: 'Failed to update comment status',
+    commentFrozenTip: 'The review has ended; comments can no longer be changed',
+    commentStatusNoPermissionTip: 'Only the comment author and the review creator can change the status',
 
     // Comment Types
     commentTypeGeneral: 'General Comment',

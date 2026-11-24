@@ -1,4 +1,5 @@
 from rest_framework import serializers
+from . import services
 from .models import TestCaseReview, ReviewAssignment, TestCaseReviewComment, ReviewTemplate
 
 
@@ -54,6 +55,38 @@ class TestCaseReviewCommentCreateSerializer(serializers.ModelSerializer):
             'testcase': {'required': False, 'allow_null': True}
         }
 
+    def validate(self, attrs):
+        # 意见与评审、用例的关联规则；页面接口与 MCP 工具都经本序列化器写入
+        instance = self.instance
+        review = attrs.get('review') or (instance.review if instance else None)
+        if instance is not None and review.pk != instance.review_id:
+            raise serializers.ValidationError({'review': '评审意见不能移动到其他评审'})
+        # 评审结束后意见冻结：不能再新增，也不能再修改
+        try:
+            services.check_review_open(review)
+        except services.ReviewRuleError as exc:
+            raise serializers.ValidationError({'review': str(exc)})
+
+        comment_type = attrs.get('comment_type') or (instance.comment_type if instance else 'general')
+        if comment_type == 'general':
+            if attrs.get('testcase') is not None:
+                raise serializers.ValidationError({'testcase': '整体意见不能关联用例'})
+            # 从用例意见改成整体意见时，一并解除原来的用例关联
+            attrs['testcase'] = None
+            return attrs
+
+        if 'testcase' in attrs:
+            testcase = attrs['testcase']
+        else:
+            testcase = instance.testcase if instance else None
+        if testcase is None:
+            raise serializers.ValidationError({'testcase': '用例意见、步骤意见必须关联用例'})
+        # 关联用例没变时不再校验归属：用例事后被移出评审，不应导致原意见无法修改
+        unchanged = instance is not None and instance.testcase_id == testcase.pk
+        if not unchanged and not review.testcases.filter(pk=testcase.pk).exists():
+            raise serializers.ValidationError({'testcase': '该用例不属于当前评审'})
+        return attrs
+
 
 class ReviewTemplateSerializer(serializers.ModelSerializer):
     creator = SimpleUserSerializer(read_only=True)
@@ -81,6 +114,21 @@ class TestCaseReviewSerializer(serializers.ModelSerializer):
                  'completed_at', 'assignments', 'comments']
 
 
+class TestCaseReviewListSerializer(serializers.ModelSerializer):
+    """评审列表专用：不返回用例明细、评审意见和模板，用例只返回数量。"""
+    creator = SimpleUserSerializer(read_only=True)
+    projects = SimpleProjectSerializer(many=True, read_only=True)
+    assignments = ReviewAssignmentSerializer(source='reviewassignment_set', many=True, read_only=True)
+    # 由视图 queryset 注解提供，避免为统计数量加载全部用例。
+    testcase_count = serializers.IntegerField(read_only=True)
+
+    class Meta:
+        model = TestCaseReview
+        fields = ['id', 'title', 'description', 'projects', 'testcase_count', 'creator',
+                 'status', 'priority', 'deadline', 'created_at', 'updated_at',
+                 'completed_at', 'assignments']
+
+
 # 创建和更新用的简化序列化器
 class TestCaseReviewCreateSerializer(serializers.ModelSerializer):
     testcases = serializers.ListField(child=serializers.IntegerField(), write_only=True)
@@ -91,90 +139,38 @@ class TestCaseReviewCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = TestCaseReview
         fields = ['title', 'description', 'projects', 'priority', 'deadline', 'testcases', 'reviewers', 'template']
-    
+
+    # 落库统一走 services（与 MCP 工具共用）：关系字段是 write_only 的 ID 列表，
+    # 不能交给默认的 create / update 当普通属性处理
     def create(self, validated_data):
-        testcases_ids = validated_data.pop('testcases', [])
-        reviewers_ids = validated_data.pop('reviewers', [])
-        projects_ids = validated_data.pop('projects', [])
+        project_ids = validated_data.pop('projects', [])
+        testcase_ids = validated_data.pop('testcases', [])
+        reviewer_ids = validated_data.pop('reviewers', [])
         template_id = validated_data.pop('template', None)
-        
-        review = TestCaseReview.objects.create(**validated_data)
-        
-        # 添加项目关联
-        if projects_ids:
-            review.projects.set(projects_ids)
-        
-        # 添加模板关联
-        if template_id:
-            try:
-                from .models import ReviewTemplate
-                template = ReviewTemplate.objects.get(id=template_id)
-                review.template = template
-                review.save()
-            except ReviewTemplate.DoesNotExist:
-                pass
-        
-        # 添加测试用例
-        if testcases_ids:
-            review.testcases.set(testcases_ids)
-        
-        # 添加评审人员
-        if reviewers_ids:
-            from apps.users.models import User
-            for reviewer_id in reviewers_ids:
-                try:
-                    reviewer = User.objects.get(id=reviewer_id)
-                    ReviewAssignment.objects.create(review=review, reviewer=reviewer)
-                except User.DoesNotExist:
-                    continue
-        
-        return review
+        creator = validated_data.pop('creator')
+        return services.create_review(
+            creator=creator,
+            fields=validated_data,
+            project_ids=project_ids,
+            testcase_ids=testcase_ids,
+            reviewer_ids=reviewer_ids,
+            template_id=template_id,
+        )
 
     def update(self, instance, validated_data):
-        # 弹出关系字段（write_only 的 ListField / IntegerField），单独处理，
-        # 否则默认 update 会把 template 整数 id 直接赋给 FK（触发 ValueError），
-        # 也会把 testcases/projects/reviewers 当普通属性 set，无法正确更新 M2M。
-        testcases_ids = validated_data.pop('testcases', None)
-        reviewers_ids = validated_data.pop('reviewers', None)
-        projects_ids = validated_data.pop('projects', None)
-        template_id = validated_data.pop('template', None)
-
-        # 普通字段交给默认逻辑（title/description/priority/deadline）
-        instance = super().update(instance, validated_data)
-
-        # 项目关联
-        if projects_ids is not None:
-            instance.projects.set(projects_ids)
-
-        # 模板关联（id -> ReviewTemplate 实例）
-        if template_id is not None:
-            try:
-                from .models import ReviewTemplate
-                instance.template = ReviewTemplate.objects.get(id=template_id)
-            except ReviewTemplate.DoesNotExist:
-                instance.template = None
-            instance.save()
-        elif template_id is None and 'template' in self.initial_data:
-            # 显式传 null/0 时清空模板
-            instance.template = None
-            instance.save()
-
-        # 测试用例
-        if testcases_ids is not None:
-            instance.testcases.set(testcases_ids)
-
-        # 评审人员（through=ReviewAssignment，需重建）
-        if reviewers_ids is not None:
-            instance.reviewassignment_set.all().delete()
-            from apps.users.models import User
-            for reviewer_id in reviewers_ids:
-                try:
-                    reviewer = User.objects.get(id=reviewer_id)
-                    ReviewAssignment.objects.create(review=instance, reviewer=reviewer)
-                except User.DoesNotExist:
-                    continue
-
-        return instance
+        # 请求里没带的关系字段保持原样；template 显式传 null / 0 时清空模板
+        project_ids = validated_data.pop('projects', None)
+        testcase_ids = validated_data.pop('testcases', None)
+        reviewer_ids = validated_data.pop('reviewers', None)
+        template_id = validated_data.pop('template', services.UNSET)
+        return services.update_review(
+            instance,
+            fields=validated_data,
+            project_ids=project_ids,
+            testcase_ids=testcase_ids,
+            reviewer_ids=reviewer_ids,
+            template_id=template_id,
+        )
 
 
 class ReviewTemplateCreateSerializer(serializers.ModelSerializer):

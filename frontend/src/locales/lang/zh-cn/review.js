@@ -148,6 +148,12 @@ export default {
     deleteCommentFailed: '意见删除失败',
     relatedTestcase: '相关用例',
     noComments: '暂无评审意见',
+    commentResolved: '已解决',
+    commentUnresolved: '未解决',
+    commentStatusUpdated: '意见状态已更新',
+    commentStatusUpdateFailed: '意见状态修改失败',
+    commentFrozenTip: '评审已结束，评审意见不能再修改',
+    commentStatusNoPermissionTip: '只有意见作者和评审创建人可以修改状态',
 
     // Comment Types
     commentTypeGeneral: '整体意见',

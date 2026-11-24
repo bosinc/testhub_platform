@@ -1,4 +1,5 @@
 from rest_framework import serializers
+from . import services
 from .models import TestPlan, TestRun, TestRunCase, TestRunCaseHistory
 from apps.testcases.models import TestCase
 from apps.testcases.serializers import TestCaseStepSerializer, TestCaseModuleSimpleSerializer
@@ -91,9 +92,25 @@ class TestPlanSerializer(serializers.ModelSerializer):
     version = serializers.StringRelatedField()
     execution_status = serializers.SerializerMethodField()
 
+    #: 视图经 save(**kwargs) 传入的关联参数，原样转给 services（与 MCP 工具共用同一套写入逻辑）
+    RELATION_KWARGS = ('version_id', 'assignee_ids', 'project_ids', 'testcase_ids')
+
     class Meta:
         model = TestPlan
-        fields = ('id', 'name', 'projects', 'version', 'creator', 'created_at', 'is_active', 'execution_status')
+        fields = ('id', 'name', 'description', 'projects', 'version', 'creator', 'created_at',
+                  'is_active', 'execution_status')
+
+    def _pop_relations(self, validated_data):
+        return {key: validated_data.pop(key) for key in self.RELATION_KWARGS if key in validated_data}
+
+    def create(self, validated_data):
+        creator = validated_data.pop('creator')
+        relations = self._pop_relations(validated_data)
+        return services.create_test_plan(creator=creator, fields=validated_data, **relations)
+
+    def update(self, instance, validated_data):
+        relations = self._pop_relations(validated_data)
+        return services.update_test_plan(instance, fields=validated_data, **relations)
 
     def get_execution_status(self, obj):
         """按执行用例进度汇总计划状态，供列表筛选和展示使用。"""

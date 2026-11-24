@@ -4,9 +4,9 @@ from rest_framework.decorators import action
 from django.db import transaction
 from django.db.models import Exists, OuterRef, Prefetch
 from django.utils import timezone
+from . import services
 from .models import TestPlan, TestRun, TestRunCase, TestRunCaseHistory
 from apps.testcases.models import TestCase
-from apps.projects.models import Project
 from apps.users.models import User
 from .serializers import (TestPlanSerializer, TestRunSerializer, TestRunListSerializer,
                          TestRunCaseSerializer, TestPlanDetailSerializer,
@@ -15,6 +15,8 @@ from .serializers import (TestPlanSerializer, TestRunSerializer, TestRunListSeri
 class TestPlanViewSet(viewsets.ModelViewSet):
     """
     测试计划视图集
+
+    计划的创建、更新与执行记录同步在 services.py，与 MCP 工具共用。
     """
     queryset = TestPlan.objects.all().order_by('-created_at')
     serializer_class = TestPlanSerializer
@@ -23,32 +25,6 @@ class TestPlanViewSet(viewsets.ModelViewSet):
         if self.action == 'retrieve':
             return TestPlanDetailSerializer
         return TestPlanSerializer
-
-    def _detail_queryset(self):
-        """计划详情的一次性预取链。"""
-        return TestPlan.objects.select_related('creator', 'version').prefetch_related(
-            # 不预取 projects：序列化器直接 values_list('id', 'name') 读 M2M，
-            # 只取两列、不加载 Project 实例，避免把整个项目行拉回来
-            'assignees',
-            Prefetch(
-                'test_runs',
-                queryset=TestRun.objects.select_related('project', 'assignee').prefetch_related(
-                    Prefetch(
-                        'run_cases',
-                        queryset=TestRunCase.objects.select_related(
-                            'testcase__module',
-                            'testcase__author',
-                            'testcase__assignee',
-                            'testcase__project',  # 序列化 testcase.project_name 需要
-                            'executed_by',
-                        ).prefetch_related(
-                            'testcase__step_details',
-                            'testcase__automation_links',
-                        ).order_by('testcase__id')
-                    )
-                )
-            ),
-        )
 
     def get_queryset(self):
         queryset = super().get_queryset()
@@ -91,104 +67,19 @@ class TestPlanViewSet(viewsets.ModelViewSet):
                     queryset=TestRunCase.objects.only('id', 'test_run_id', 'status'),
                 )
             ).distinct()
-        return self._detail_queryset()
-
-    @staticmethod
-    def _default_executor(test_plan):
-        """
-        新增执行用例的默认执行人：仅当计划「指派给」恰好一人时取该人。
-        """
-        assignees = list(test_plan.assignees.order_by('id')[:2])
-        return assignees[0] if len(assignees) == 1 else None
-
-    def _sync_test_runs(self, test_plan, project_ids, testcase_ids):
-        if not project_ids:
-            test_plan.projects.clear()
-            test_plan.test_runs.all().delete()
-            return
-
-        valid_projects = list(Project.objects.filter(id__in=project_ids))
-        valid_project_ids = [project.id for project in valid_projects]
-        test_plan.projects.set(valid_project_ids)
-
-        default_executor = self._default_executor(test_plan)
-
-        testcase_queryset = TestCase.objects.filter(
-            id__in=testcase_ids,
-            project_id__in=valid_project_ids
-        ).select_related('project')
-        testcase_map = {testcase.id: testcase for testcase in testcase_queryset}
-
-        existing_runs = {test_run.project_id: test_run for test_run in test_plan.test_runs.all()}
-
-        for project_id, test_run in list(existing_runs.items()):
-            if project_id not in valid_project_ids:
-                test_run.delete()
-                existing_runs.pop(project_id, None)
-
-        for project in valid_projects:
-            test_run = existing_runs.get(project.id)
-            if not test_run:
-                test_run = TestRun.objects.create(
-                    name=f"{test_plan.name} - {project.name} Execution",
-                    test_plan=test_plan,
-                    project=project,
-                    version=test_plan.version,
-                    creator=test_plan.creator,
-                    assignee=test_plan.creator
-                )
-                existing_runs[project.id] = test_run
-            else:
-                test_run.name = f"{test_plan.name} - {project.name} Execution"
-                test_run.version = test_plan.version
-                test_run.save(update_fields=['name', 'version', 'updated_at'])
-
-            run_testcases = [testcase for testcase in testcase_queryset if testcase.project_id == project.id]
-            TestRunCase.objects.filter(test_run=test_run).exclude(
-                testcase_id__in=[testcase.id for testcase in run_testcases]
-            ).delete()
-
-            existing_case_ids = set(
-                TestRunCase.objects.filter(test_run=test_run).values_list('testcase_id', flat=True)
-            )
-            new_cases = [
-                TestRunCase(
-                    test_run=test_run,
-                    testcase=testcase,
-                    priority=testcase.priority,
-                    executed_by=default_executor,
-                )
-                for testcase in run_testcases
-                if testcase.id not in existing_case_ids
-            ]
-            if new_cases:
-                TestRunCase.objects.bulk_create(new_cases)
-
-            test_run.testcases.set([testcase.id for testcase in run_testcases])
+        return services.plan_detail_queryset()
 
     def perform_create(self, serializer):
-        # 在创建TestPlan时，设置creator并自动为每个项目创建TestRun和TestRunCase
-        # 获取版本信息
-        version_id = self.request.data.get('version')
-        version = None
-        if version_id:
-            from apps.versions.models import Version
-            try:
-                version = Version.objects.get(id=version_id)
-            except Version.DoesNotExist:
-                pass
-        
-        test_plan = serializer.save(creator=self.request.user, version=version)
-
-        # 「指派给」不在 TestPlanSerializer 的 fields 里，需手动写入；
-        # 且必须在 _sync_test_runs 之前，新增用例才能拿到默认执行人
-        assignee_ids = self.request.data.get('assignees') or []
-        if assignee_ids:
-            test_plan.assignees.set(assignee_ids)
-
-        project_ids = self.request.data.get('projects', [])
-        testcase_ids = self.request.data.get('testcases', [])
-        self._sync_test_runs(test_plan, project_ids, testcase_ids)
+        # 版本 / 指派人 / 项目 / 用例不在 TestPlanSerializer 的可写字段里，
+        # 从请求体取出后交给序列化器，由它转给 services.create_test_plan
+        data = self.request.data
+        serializer.save(
+            creator=self.request.user,
+            version_id=data.get('version'),
+            assignee_ids=data.get('assignees') or [],
+            project_ids=data.get('projects', []),
+            testcase_ids=data.get('testcases', []),
+        )
 
     @action(detail=True, methods=['post'])
     def link_testcases(self, request, pk=None):
@@ -211,49 +102,26 @@ class TestPlanViewSet(viewsets.ModelViewSet):
         )
 
         with transaction.atomic():
-            self._sync_test_runs(test_plan, project_ids, valid_ids)
+            services.sync_test_runs(test_plan, project_ids, valid_ids)
 
         # 用详情预取链重新取一次，避免返回时按 run_cases / testcase 逐条回查
-        test_plan = self._detail_queryset().get(pk=test_plan.pk)
+        test_plan = services.plan_detail_queryset().get(pk=test_plan.pk)
         return Response(TestPlanDetailSerializer(test_plan).data)
 
     def perform_update(self, serializer):
-        # 在更新TestPlan时，处理版本信息
-        version_id = self.request.data.get('version')
-        version = None
-        if version_id:
-            from apps.versions.models import Version
-            try:
-                version = Version.objects.get(id=version_id)
-            except Version.DoesNotExist:
-                pass
-        
-        with transaction.atomic():
-            test_plan = serializer.save(version=version)
-            data = self.request.data
-
-            # 只处理请求里真正携带的字段。列表页的状态开关是 PATCH {is_active}，
-            if 'assignees' in data:
-                # 先落「指派给」：_sync_test_runs 要用它给新增用例设置默认执行人，
-                assignee_ids = data.get('assignees') or []
-                if assignee_ids:
-                    test_plan.assignees.set(assignee_ids)
-                else:
-                    test_plan.assignees.clear()
-
-            if 'projects' in data or 'testcases' in data:
-                if 'projects' in data:
-                    project_ids = data.get('projects') or []
-                else:
-                    project_ids = list(test_plan.projects.values_list('id', flat=True))
-                if 'testcases' in data:
-                    testcase_ids = data.get('testcases') or []
-                else:
-                    testcase_ids = list(
-                        TestRunCase.objects.filter(test_run__test_plan=test_plan)
-                        .values_list('testcase_id', flat=True)
-                    )
-                self._sync_test_runs(test_plan, project_ids, testcase_ids)
+        # 只处理请求里真正携带的字段。列表页的状态开关是 PATCH {is_active}，
+        # 没带的版本 / 指派人 / 项目 / 用例一律保持原样
+        data = self.request.data
+        relations = {}
+        if 'version' in data:
+            relations['version_id'] = data.get('version')
+        if 'assignees' in data:
+            relations['assignee_ids'] = data.get('assignees') or []
+        if 'projects' in data:
+            relations['project_ids'] = data.get('projects') or []
+        if 'testcases' in data:
+            relations['testcase_ids'] = data.get('testcases') or []
+        serializer.save(**relations)
 
 
 class TestRunViewSet(viewsets.ReadOnlyModelViewSet):
