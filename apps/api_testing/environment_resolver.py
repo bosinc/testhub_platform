@@ -100,6 +100,11 @@ def build_request_url(base_url, path, path_params=None, *, request_type='HTTP'):
     unused = values.keys() - names
     if unused:
         _error('path_params', _('存在未使用的启用路径参数: %(names)s') % {'names': ', '.join(sorted(unused))})
+    # Drafts may store a blank value, but substituting one would silently
+    # address the parent path (/users/{id} -> /users/).
+    blank = sorted(key for key, value in values.items() if value is None or value == '')
+    if blank:
+        _error('path_params', _('启用路径参数必须提供非空值: %(names)s') % {'names': ', '.join(blank)})
 
     def substitute(match):
         value = str(values[match.group(1)])
@@ -116,6 +121,12 @@ def build_request_url(base_url, path, path_params=None, *, request_type='HTTP'):
     scheme = {'http': 'ws', 'https': 'wss'}[base.scheme] if request_type == 'WEBSOCKET' else base.scheme
     joined = base.path.rstrip('/') + '/' + rendered.lstrip('/')
     return urlunsplit((scheme, base.netloc, joined, '', ''))
+
+
+def _variable_value(item):
+    if isinstance(item, dict) and ('currentValue' in item or 'initialValue' in item):
+        return item.get('currentValue') or item.get('initialValue', '')
+    return item
 
 
 class EnvironmentResolver:
@@ -181,5 +192,9 @@ class EnvironmentResolver:
             _error('environment_id', _('必须提供已保存的环境'))
         EnvironmentResolver._check_access(environment, user=user, project_id=project_id)
         validate_base_url(environment.base_url)
+        # The environment page stores each variable as {initialValue, currentValue};
+        # a run reads one value per name, whichever entry point started it.
+        variables = {name: _variable_value(item)
+                     for name, item in (environment.variables or {}).items()}
         return deepcopy({'id': environment.pk, 'base_url': environment.base_url,
-                         'variables': environment.variables})
+                         'variables': variables})

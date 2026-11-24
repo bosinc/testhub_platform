@@ -153,13 +153,13 @@ class ScheduledExecutionAssociationTests(TestCase):
         self.assertEqual(validated_data['api_requests'], [self.request.id])
         self.assertEqual(validated_data['scenario_cases'], [])
 
-    @patch('apps.api_testing.utils.send_api_request')
+    @patch('requests.Session.request')
     def test_scheduled_request_supports_key_value_rows_and_saves_history(self, send):
         from ..utils import execute_api_request
 
         response = SimpleNamespace(
             status_code=200, headers={'content-type': 'application/json'},
-            text='{}', json=lambda: {})
+            text='{}', json=lambda: {}, request=None)
         send.return_value = response
         task = ScheduledTask.objects.create(
             name='请求任务', task_type='API_REQUEST', trigger_type='CRON',
@@ -172,6 +172,67 @@ class ScheduledExecutionAssociationTests(TestCase):
         self.assertEqual(RequestHistory.objects.get(pk=result['history_id']).scheduled_task_id, task.id)
         self.assertEqual(send.call_args.kwargs['url'], 'https://example.com/health')
         self.assertEqual(send.call_args.kwargs['params'], [('check', 'true')])
+
+    @patch('requests.Session.request')
+    def test_scheduled_request_is_sent_the_way_the_interface_page_sends_it(self, send):
+        """定时执行与单接口页「发送」共用一套规则：环境变量和认证配置都要生效。"""
+        from ..utils import execute_api_request
+
+        send.return_value = SimpleNamespace(status_code=200, headers={}, text='ok', request=None)
+        self.environment.variables = {
+            'token': {'initialValue': 'abc', 'currentValue': 'abc'}, 'uid': '42'}
+        self.environment.save(update_fields=['variables'])
+        self.request.url = '/users/{id}'
+        self.request.path_params = [{'key': 'id', 'value': '{{env.uid}}'}]
+        self.request.auth = {'type': 'bearer', 'token': '{{env.token}}'}
+        self.request.save()
+
+        result = execute_api_request(self.request, self.environment, self.user)
+
+        self.assertTrue(result['success'])
+        self.assertEqual(send.call_args.kwargs['url'], 'https://example.com/users/42')
+        self.assertEqual(send.call_args.kwargs['headers'], {'Authorization': 'Bearer abc'})
+
+    @patch('requests.Session.request')
+    def test_scheduled_request_reports_a_readable_reason_without_sending(self, send):
+        from ..utils import execute_api_request
+
+        self.request.headers = [{'key': 'Authorization', 'value': 'Bearer {{env.token}}'}]
+        self.request.save(update_fields=['headers'])
+
+        result = execute_api_request(self.request, self.environment, self.user)
+
+        self.assertEqual(result, {'success': False, 'error': (
+            '变量 {{ env.token }} 不存在或不可用；如需按原文发送，请在花括号前加反斜杠，例如 \\{{ name }}')})
+        send.assert_not_called()
+        self.assertFalse(RequestHistory.objects.exists())
+
+    @patch('requests.Session.request')
+    def test_scheduled_request_task_fails_when_an_assertion_does_not_pass(self, send):
+        """请求发出去不等于通过：任一断言未通过，该请求和整个任务都算失败。"""
+        from ..views import ScheduledTaskViewSet
+
+        send.return_value = SimpleNamespace(status_code=200, headers={}, text='ok', request=None)
+        self.request.assertions = [{'name': '状态码', 'type': 'status_code', 'expected': 200}]
+        self.request.save(update_fields=['assertions'])
+        failing = ApiRequest.objects.create(
+            collection=self.collection, name='创建', method='GET', url='/create',
+            assertions=[{'name': '返回创建成功', 'type': 'status_code', 'expected': 201}],
+            created_by=self.user)
+        task = ScheduledTask.objects.create(
+            name='请求任务', task_type='API_REQUEST', trigger_type='CRON',
+            cron_expression='0 * * * *', api_requests=[self.request.id, failing.id],
+            environment=self.environment, created_by=self.user)
+
+        result = ScheduledTaskViewSet()._execute_api_request(task)
+
+        self.assertFalse(result['success'])
+        self.assertEqual((result['passed_count'], result['failed_count']), (1, 1))
+        self.assertTrue(result['results'][0]['success'])
+        self.assertEqual(result['results'][1]['error'], '断言未通过：返回创建成功')
+        # 两条请求都已发出，响应和历史照常保留。
+        self.assertEqual(result['results'][1]['status_code'], 200)
+        self.assertEqual(len(result['history_ids']), 2)
 
     @patch('apps.api_testing.utils.execute_scenario_case')
     def test_scheduled_suite_associates_suite_and_scenario_records(self, execute):

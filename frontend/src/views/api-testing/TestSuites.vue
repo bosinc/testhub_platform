@@ -155,7 +155,7 @@ import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Delete, Document, Edit, Folder, Plus, Search, VideoPlay } from '@element-plus/icons-vue'
 import api from '@/utils/api'
-import { getAllScenarioCases, getEnvironments, getScenarioCaseFolders } from '@/api/api-testing'
+import { getEnvironments, getScenarioCaseTree } from '@/api/api-testing'
 import { getPreferredProjectId, useRememberedProject } from '@/utils/projectSelection'
 
 const testSuites = ref([])
@@ -305,10 +305,9 @@ async function loadScenarios(projectId = selectedProject.value) {
   }
   scenariosLoading.value = true
   try {
-    ;[scenarios.value, scenarioFolders.value] = await Promise.all([
-      getAllScenarioCases({ project: projectId }),
-      getScenarioCaseFolders({ project: projectId })
-    ])
+    const response = await getScenarioCaseTree({ project: projectId })
+    scenarios.value = response.data.scenario_cases || []
+    scenarioFolders.value = response.data.folders || []
   } catch {
     ElMessage.error(t('apiTesting.testSuiteManagement.loadScenariosFailed'))
   } finally {

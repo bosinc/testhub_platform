@@ -171,6 +171,19 @@ class ImportTests(ScenarioServiceFixture):
         self.assertEqual(steps[0].config['request']['url'], '/users')
         self.assertTrue(steps[0].config['source_meta']['content_hash'])
 
+    def test_import_api_request_keeps_unfinished_path_value_as_a_draft(self):
+        draft = ApiRequest.objects.create(
+            collection=self.collection, name='查询单个用户', method='GET', url='/users/{id}',
+            path_params=[{'key': 'id', 'value': '', 'enabled': True}], created_by=self.user)
+        import_api_request(self.scenario, draft.pk, user=self.user)
+        step = self.scenario.steps.get()
+        self.assertEqual(step.config['request']['path_params'][0]['value'], '')
+        self.assertTrue(step.config['request']['path_params'][0]['enabled'])
+        self.assertFalse(source_changed(step, user=self.user))
+        # The unfinished step must not block later saves of the same tree.
+        save_definition(self.scenario, load_definition(self.scenario), user=self.user)
+        self.assertEqual(self.scenario.steps.count(), 1)
+
     def test_import_scenario_deep_copies_with_new_ids(self):
         source = ScenarioCase.objects.create(
             project=self.project, name='来源场景', created_by=self.user)
@@ -255,6 +268,19 @@ class DefinitionApiTests(ScenarioServiceFixture):
         self.assertEqual(response.status_code, 201)
         self.assertEqual(response.data['steps'][0]['source_type'], 'api_request')
         self.assertEqual(self.scenario.steps.count(), 1)
+
+    def test_unfinished_path_value_does_not_block_saving_other_steps(self):
+        unfinished = http_node('查询单个用户', url='/users/{id}')
+        unfinished['config']['request']['path_params'] = [{'key': 'id', 'value': ''}]
+        other = http_node('另一个请求', position=1)
+        base = f'/api/api-testing/scenario-cases/{self.scenario.id}/'
+        response = self.client.put(
+            f'{base}definition/', {'steps': [unfinished, other]}, format='json')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['steps'][0]['config']['request']['path_params'][0]['value'], '')
+        response = self.client.put(f'{base}steps/{other["id"]}/', {'name': '改名'}, format='json')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.scenario.steps.get(pk=other['id']).name, '改名')
 
     def test_step_capabilities_endpoint(self):
         response = self.client.get('/api/api-testing/scenario-cases/step-capabilities/')

@@ -80,11 +80,10 @@ class RequestDTOTests(SimpleTestCase):
                 self.assert_invalid({'params': [invalid]})
         self.assertEqual(normalize_request({'params': [entry('', enabled=False)]})['params'][0]['key'], '')
 
-    def test_path_params_independent_unique_and_require_enabled_values(self):
+    def test_path_params_independent_unique_and_scalar(self):
         for rows in (
             [entry('id', 1), entry('id', 2)],
             [entry('id', 1), entry('id', '', enabled=False)],
-            [{'key': 'id'}], [entry('id', '')], [entry('id', None)],
             [entry('id', {'x': 1}, type='json')],
         ):
             with self.subTest(rows=rows):
@@ -93,6 +92,19 @@ class RequestDTOTests(SimpleTestCase):
                                  'path_params': [entry('id', '', enabled=False)]})
         self.assertEqual(dto['params'][0]['value'], 'query')
         self.assertFalse(dto['path_params'][0]['enabled'])
+
+    def test_blank_enabled_path_value_is_a_draft_until_the_url_is_built(self):
+        for row in (entry('id', ''), entry('id', None), {'key': 'id'}):
+            with self.subTest(row=row):
+                dto = normalize_request({'url': '/users/{id}', 'path_params': [row]})
+                self.assertEqual(dto['path_params'][0]['key'], 'id')
+                self.assertTrue(dto['path_params'][0]['enabled'])
+                obj = ApiRequest(name='draft', url='/users/{id}', path_params=[row])
+                self.assertEqual(request_from_model(obj)['path_params'], dto['path_params'])
+                with self.assertRaises(ValidationError) as caught:
+                    build_request_url('https://example.com', '/users/{id}', [row])
+                self.assertEqual(caught.exception.detail['errors']['path_params'],
+                                 ['启用路径参数必须提供非空值: id'])
 
     def test_relative_draft_paths_and_namespaced_variables(self):
         for path in ('', '/', '/users/{id}', 'users/{id}', '/users/{{vars.id}}',
@@ -381,6 +393,17 @@ class EnvironmentResolverTests(SimpleTestCase):
         with self.assertRaises(ValidationError):
             EnvironmentResolver.snapshot(resolved, user=self.user, project_id=10)
 
+    def test_snapshot_reads_variables_saved_by_the_environment_page_as_one_value(self):
+        stored = {'token': {'initialValue': 'old', 'currentValue': 'abc'},
+                  'uid': {'initialValue': '42', 'currentValue': ''},
+                  'blank': {'initialValue': '', 'currentValue': ''},
+                  'plain': 'acme', 'nested': {'values': [1]}}
+        self.environment.variables = deepcopy(stored)
+        snapshot = EnvironmentResolver.snapshot(self.environment, user=self.user, project_id=10)
+        self.assertEqual(snapshot['variables'], {
+            'token': 'abc', 'uid': '42', 'blank': '', 'plain': 'acme', 'nested': {'values': [1]}})
+        self.assertEqual(self.environment.variables, stored)
+
     def test_snapshot_rechecks_project_deletion_and_rejects_unsaved_or_wrong_inputs(self):
         resolved = EnvironmentResolver.resolve(7, user=self.user, project_id=10)
         self.project.is_deleted = True
@@ -438,6 +461,19 @@ class FoundationSerializerTests(SimpleTestCase):
         self.assertEqual(data['scripts'], {'pre_request': 'pre()', 'post_request': ''})
         self.assertEqual(data['settings']['timeout'], 30)
         self.assertIn('path_params', data)
+
+    def test_serializer_reads_and_updates_requests_with_unfinished_path_value(self):
+        obj = ApiRequest(name='draft', url='/users/{id}', path_params=[entry('id', '')],
+                         pre_request_script='')
+        data = ApiRequestSerializer(obj).data
+        self.assertEqual(data['path_params'][0]['value'], '')
+
+        rename = ApiRequestSerializer(obj, data={'name': 'renamed'}, partial=True)
+        self.assertTrue(rename.is_valid(), rename.errors)
+
+        update = ApiRequestSerializer(obj, data={'path_params': [entry('id', '')]}, partial=True)
+        self.assertTrue(update.is_valid(), update.errors)
+        self.assertEqual(update.validated_data['path_params'][0]['value'], '')
 
     def test_environment_serializer_blank_draft_and_nonempty_validation(self):
         serializer = EnvironmentSerializer(data={'name': 'draft', 'scope': 'GLOBAL', 'base_url': ''})

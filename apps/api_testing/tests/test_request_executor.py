@@ -10,9 +10,10 @@ from rest_framework.exceptions import ValidationError
 from rest_framework.test import APIClient
 
 from ..environment_resolver import build_request_url
-from ..models import ApiCollection, ApiProject, ApiRequest, Environment, RequestHistory
+from ..models import (
+    ApiCollection, ApiProject, ApiRequest, Environment, RequestHistory, ScenarioCase)
 from ..request_dto import normalize_request
-from ..request_executor import build_transport
+from ..request_executor import LITERAL_HINT, build_transport, resolve_request
 
 User = get_user_model()
 
@@ -102,6 +103,95 @@ class TransportTests(SimpleTestCase):
             build_transport(dto(url='/users/{{env.missing}}', path_params=[]),
                             base_url='https://example.test', variables={})
 
+    def test_variables_resolve_in_every_part_of_the_request(self):
+        transport = build_transport(dto(
+            method='POST', url='/{{env.tenant}}/users/{id}', path_params=[entry('id', '{{ env.uid }}')],
+            headers=[entry('X-Tenant', '{{tenant}}')], params=[entry('owner', '{{vars.uid}}')],
+            auth={'type': 'bearer', 'token': '{{env.token}}'},
+            body={'type': 'json', 'data': {'tenant': '{{ tenant }}'}},
+        ), base_url='https://example.test', variables={'tenant': 'acme', 'token': 'abc', 'uid': 'a/b'})
+        self.assertEqual(transport['url'], 'https://example.test/acme/users/a%2Fb')
+        self.assertEqual(transport['headers'], {'X-Tenant': 'acme', 'Authorization': 'Bearer abc'})
+        self.assertEqual(transport['params'], [('owner', 'a/b')])
+        self.assertEqual(transport['json'], {'tenant': 'acme'})
+
+    def test_placeholders_follow_scenario_rules_for_nesting_types_and_assertions(self):
+        variables = {'user': {'id': 7}, 'count': 5, 'code': 200}
+        request = dto(
+            method='POST', url='/x', path_params=[], headers=[entry('X-User', 'u-{{env.user.id}}')],
+            body={'type': 'json', 'data': {'n': '{{env.count}}', 'label': 'n={{count}}'}},
+            assertions=[{'name': '状态码', 'type': 'status_code', 'expected': '{{ vars.code }}'}])
+        transport = build_transport(request, base_url='https://example.test', variables=variables)
+        self.assertEqual(transport['headers'], {'X-User': 'u-7'})
+        # A placeholder that is the whole value keeps its JSON type.
+        self.assertEqual(transport['json'], {'n': 5, 'label': 'n=5'})
+        self.assertEqual(resolve_request(request, variables)['assertions'][0]['expected'], 200)
+
+    def test_scripts_are_not_templates_and_credentials_are_always_text(self):
+        scripts = {'pre_request': 'const t = "{{ title }}"', 'post_request': ''}
+        request = dto(url='/x', path_params=[], scripts=scripts,
+                      auth={'type': 'bearer', 'token': '{{env.token}}'})
+        self.assertEqual(resolve_request(request, {'token': 123})['scripts'], scripts)
+        transport = build_transport(request, base_url='https://example.test', variables={'token': 123})
+        self.assertEqual(transport['headers'], {'Authorization': 'Bearer 123'})
+
+    def test_body_resolves_variables_and_keeps_escaped_braces_as_text(self):
+        transport = build_transport(dto(
+            method='POST', url='/x', path_params=[],
+            body={'type': 'raw', 'data': r'Hello {{ user }}, template: \{{ user }}'},
+        ), base_url='https://example.test', variables={'user': 'Ann'})
+        self.assertEqual(transport['data'], 'Hello Ann, template: {{ user }}')
+        transport = build_transport(dto(
+            method='POST', url='/x', path_params=[],
+            body={'type': 'json', 'data': {'tpl': r'\{{ name }}', 'who': '{{env.user}}'}},
+        ), base_url='https://example.test', variables={'user': 'Ann'})
+        self.assertEqual(transport['json'], {'tpl': '{{ name }}', 'who': 'Ann'})
+
+    def test_structured_variable_needs_a_json_entry_like_in_a_scenario_step(self):
+        with self.assertRaises(ValidationError):
+            build_transport(
+                dto(url='/x', path_params=[], params=[entry('filter', '{{vars.filter}}')]),
+                base_url='https://example.test', variables={'filter': {'active': True}})
+        transport = build_transport(
+            dto(url='/x', path_params=[], params=[entry('filter', '{{vars.filter}}', kind='json')]),
+            base_url='https://example.test', variables={'filter': {'active': True}})
+        self.assertEqual(transport['params'], [('filter', '{"active": true}')])
+
+    def test_unknown_variable_is_rejected_whatever_its_form(self):
+        for value, expression in (
+                ('{{env.missing}}', 'env.missing'), ('{{ vars.missing }}', 'vars.missing'),
+                ('Hi {{ name }}', 'name'), ('{{loop.index}}', 'loop.index'),
+                ('{{steps.s1.response.body.id}}', 'steps.s1.response.body.id')):
+            with self.subTest(value=value):
+                with self.assertRaises(ValidationError) as caught:
+                    build_transport(dto(url='/x', path_params=[], headers=[entry('X-A', value)]),
+                                    base_url='https://example.test', variables={'index': 1})
+                self.assertEqual(caught.exception.detail['errors']['variables'],
+                                 [f'变量 {{{{ {expression} }}}} 不存在或不可用{LITERAL_HINT}'])
+
+    def test_resolved_dto_without_variables_is_sent_as_it_is(self):
+        transport = build_transport(
+            dto(url='/x', path_params=[], headers=[entry('X-A', '{{vars.kept}}')]),
+            base_url='https://example.test')
+        self.assertEqual(transport['headers'], {'X-A': '{{vars.kept}}'})
+
+    def test_path_variable_left_unknown_or_blank_is_rejected_before_sending(self):
+        for variables, field, message in (
+                ({}, 'variables', '变量 {{ env.uid }} 不存在或不可用' + LITERAL_HINT),
+                ({'uid': ''}, 'path_params', '启用路径参数必须提供非空值: id')):
+            with self.subTest(variables=variables):
+                with self.assertRaises(ValidationError) as caught:
+                    build_transport(dto(path_params=[entry('id', '{{env.uid}}')]),
+                                    base_url='https://example.test', variables=variables)
+                self.assertEqual(caught.exception.detail['errors'][field], [message])
+
+    def test_blank_path_value_is_rejected_instead_of_addressing_the_parent_path(self):
+        with self.assertRaises(ValidationError) as caught:
+            build_transport(dto(method='DELETE', path_params=[entry('id', '')]),
+                            base_url='https://example.test')
+        self.assertEqual(caught.exception.detail['errors']['path_params'],
+                         ['启用路径参数必须提供非空值: id'])
+
 
 class RequestViewTests(TestCase):
     def setUp(self):
@@ -117,6 +207,116 @@ class RequestViewTests(TestCase):
             variables={'token': 'abc'}, created_by=self.user)
         self.client = APIClient()
         self.client.force_authenticate(user=self.user)
+
+    def test_unfinished_path_value_is_readable_but_never_sent(self):
+        self.api_request.path_params = [entry('id', '')]
+        self.api_request.save(update_fields=['path_params'])
+
+        response = self.client.get(f'/api/api-testing/requests/{self.api_request.id}/')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['path_params'][0]['value'], '')
+        # One unfinished row must not take the whole list down with it.
+        response = self.client.get('/api/api-testing/requests/', {'project': self.project.id})
+        self.assertEqual(response.status_code, 200)
+
+        for action in ('execute', 'preview-url'):
+            with self.subTest(action=action), patch('apps.api_testing.views.execute_request') as sender:
+                response = self.client.post(
+                    f'/api/api-testing/requests/{self.api_request.id}/{action}/',
+                    {'environment_id': self.environment.id}, format='json')
+                self.assertEqual(response.status_code, 400)
+                self.assertEqual(response.data['errors']['path_params'],
+                                 ['启用路径参数必须提供非空值: id'])
+                sender.assert_not_called()
+        self.assertFalse(RequestHistory.objects.exists())
+
+    def test_unfinished_path_value_can_be_saved_and_filled_in_by_the_sent_draft(self):
+        url = f'/api/api-testing/requests/{self.api_request.id}/'
+        response = self.client.patch(url, {'path_params': [entry('id', '')]}, format='json')
+        self.assertEqual(response.status_code, 200)
+        self.api_request.refresh_from_db()
+        self.assertEqual(self.api_request.path_params, [entry('id', '')])
+
+        response = self.client.post(
+            f'{url}preview-url/',
+            {'environment_id': self.environment.id, 'path_params': [entry('id', '7')]},
+            format='json')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['url'], 'https://test.example.com/api/v1/users/7')
+
+    def test_execute_and_preview_resolve_environment_variables(self):
+        # Environments saved from the page wrap every value as initial/current.
+        self.environment.variables = {
+            'tenant': 'acme', 'token': {'initialValue': 'old', 'currentValue': 'abc'},
+            'uid': {'initialValue': '42', 'currentValue': ''}}
+        self.environment.save(update_fields=['variables'])
+        self.api_request.url = '/{{env.tenant}}/users/{id}'
+        self.api_request.path_params = [entry('id', '{{env.uid}}')]
+        self.api_request.headers = [entry('Authorization', 'Bearer {{env.token}}')]
+        self.api_request.params = [entry('tenant', '{{tenant}}')]
+        self.api_request.save()
+        url = f'/api/api-testing/requests/{self.api_request.id}/'
+        address = 'https://test.example.com/api/v1/acme/users/42'
+
+        response = self.client.post(
+            f'{url}preview-url/', {'environment_id': self.environment.id}, format='json')
+        self.assertEqual(response.data['url'], address)
+
+        answer = Mock(status_code=200, headers={}, text='ok', request=None)
+        with patch('requests.Session.request', return_value=answer) as sender:
+            response = self.client.post(
+                f'{url}execute/', {'environment_id': self.environment.id}, format='json')
+        self.assertEqual(response.status_code, 200)
+        sent = sender.call_args.kwargs
+        self.assertEqual(sent['url'], address)
+        self.assertEqual(sent['headers'], {'Authorization': 'Bearer abc'})
+        self.assertEqual(sent['params'], [('tenant', 'acme')])
+
+    def test_unknown_variable_blocks_sending_and_names_the_variable(self):
+        url = f'/api/api-testing/requests/{self.api_request.id}/execute/'
+        for value, expression in (('Bearer {{env.missing}}', 'env.missing'),
+                                  ('Bearer {{ missing }}', 'missing')):
+            self.api_request.headers = [entry('Authorization', value)]
+            self.api_request.save(update_fields=['headers'])
+            with self.subTest(value=value), patch('requests.Session.request') as sender:
+                response = self.client.post(
+                    url, {'environment_id': self.environment.id}, format='json')
+                self.assertEqual(response.status_code, 400)
+                self.assertEqual(response.data['errors']['variables'],
+                                 [f'变量 {{{{ {expression} }}}} 不存在或不可用{LITERAL_HINT}'])
+                sender.assert_not_called()
+        self.assertFalse(RequestHistory.objects.exists())
+
+    def test_execute_resolves_variables_in_assertions(self):
+        self.environment.variables = {'code': {'initialValue': 200, 'currentValue': 200}}
+        self.environment.save(update_fields=['variables'])
+        self.api_request.assertions = [
+            {'name': '状态码', 'type': 'status_code', 'expected': '{{env.code}}'}]
+        self.api_request.save(update_fields=['assertions'])
+        answer = Mock(status_code=200, headers={}, text='ok', request=None)
+        with patch('requests.Session.request', return_value=answer):
+            response = self.client.post(
+                f'/api/api-testing/requests/{self.api_request.id}/execute/',
+                {'environment_id': self.environment.id}, format='json')
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.data['assertions_results'][0]['passed'])
+
+    def test_debug_step_resolves_environment_and_initial_variables_in_the_address(self):
+        self.environment.variables = {'tenant': 'acme'}
+        self.environment.save(update_fields=['variables'])
+        scenario = ScenarioCase.objects.create(
+            project=self.project, name='场景', variables={'user_id': '42'}, created_by=self.user)
+        answer = Mock(status_code=200, headers={}, text='ok', request=None)
+        with patch('requests.Session.request', return_value=answer) as sender:
+            response = self.client.post(
+                f'/api/api-testing/scenario-cases/{scenario.id}/debug-step/',
+                {'environment_id': self.environment.id, 'request': {
+                    'url': '/{{env.tenant}}/users/{id}',
+                    'path_params': [entry('id', '{{vars.user_id}}')]}},
+                format='json')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(sender.call_args.kwargs['url'],
+                         'https://test.example.com/api/v1/acme/users/42')
 
     def test_preview_url_uses_selected_environment(self):
         response = self.client.post(

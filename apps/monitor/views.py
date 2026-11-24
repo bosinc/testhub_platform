@@ -12,6 +12,7 @@ from django.utils import timezone
 from datetime import timedelta
 from types import SimpleNamespace
 
+from apps.core.notification_templates import render_notification
 from .models import (
     MonitorTarget, MonitorCheckLog, NotificationChannel, AlertEvent,
     TargetStatus, TargetType, AlertStatus,
@@ -117,8 +118,9 @@ class NotificationChannelViewSet(viewsets.ModelViewSet):
         channel = self.get_object()
         if not channel.enabled:
             return Response({'success': False, 'detail': '渠道已禁用'}, status=400)
+        notification = render_notification('monitor.channel_test')
         ok, msg = send_via_channel(
-            channel, message='【监控中心】这是一条测试消息', subject='监控中心测试'
+            channel, message=notification.body(), subject=notification.email_subject
         )
         return Response({'success': ok, 'detail': msg})
 

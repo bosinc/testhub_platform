@@ -15,27 +15,45 @@ from rest_framework.exceptions import ValidationError
 
 from .environment_resolver import build_request_url
 from .request_dto import normalize_request
+from .scenario_variables import VariableResolutionError, VariableScope, _as_text
 from .utils import _api_request_retry
 from .variable_resolver import VariableResolver
 
 
-def _resolved(value, variables, resolver):
+LITERAL_HINT = '；如需按原文发送，请在花括号前加反斜杠，例如 \\{{ name }}'
+
+
+def resolve_request(dto, variables):
+    """Resolve ``{{...}}`` placeholders exactly as a scenario step does.
+
+    ``variables`` is a ``VariableScope``, or a plain mapping that is read as the
+    environment variables. An unknown variable stops the request.
+    """
+    scope = variables if isinstance(variables, VariableScope) else VariableScope(
+        environment=variables)
+    # Scripts are stored source code, not request data: their braces are not variables.
+    template = {key: value for key, value in dto.items() if key != 'scripts'}
+    try:
+        resolved = scope.resolve_value(template)
+    except VariableResolutionError as exc:
+        raise ValidationError({'errors': {'variables': [f'{exc}{LITERAL_HINT}']}})
+    if 'scripts' in dto:
+        resolved['scripts'] = dto['scripts']
+    # A whole-value placeholder keeps its JSON type, but credentials are always text.
+    if isinstance(resolved.get('auth'), dict):
+        resolved['auth'] = {key: value if isinstance(value, str) else _as_text(value)
+                            for key, value in resolved['auth'].items()}
+    return resolved
+
+
+def _resolved(value, resolver):
+    """Evaluate ``${...}`` dynamic functions; ``{{...}}`` is resolved beforehand."""
     if isinstance(value, str):
-        for key, item in (variables or {}).items():
-            if isinstance(item, dict):
-                replacement = str(item.get('currentValue', '') or item.get('initialValue', ''))
-            else:
-                replacement = '' if item is None else str(item)
-            # Both the legacy {{name}} form and the namespaced {{env.name}} form
-            # resolve against the same environment snapshot.
-            value = value.replace('{{' + str(key) + '}}', replacement)
-            value = value.replace('{{env.' + str(key) + '}}', replacement)
-            value = value.replace('{{vars.' + str(key) + '}}', replacement)
         return resolver.resolve(value)
     if isinstance(value, list):
-        return [_resolved(item, variables, resolver) for item in value]
+        return [_resolved(item, resolver) for item in value]
     if isinstance(value, dict):
-        return {key: _resolved(item, variables, resolver) for key, item in value.items()}
+        return {key: _resolved(item, resolver) for key, item in value.items()}
     return value
 
 
@@ -50,12 +68,12 @@ def _decode_file(value):
         raise ValidationError({'errors': {'body.data': ['文件内容不是有效的Base64']}})
 
 
-def _entry_value(entry, variables, resolver):
+def _entry_value(entry, resolver):
     value = entry.get('value')
     kind = entry.get('type', 'string')
     if kind == 'file':
         return _decode_file(value)
-    value = _resolved(value, variables, resolver)
+    value = _resolved(value, resolver)
     if kind == 'json' and isinstance(value, str):
         try:
             return json.loads(value)
@@ -76,21 +94,30 @@ def _entry_value(entry, variables, resolver):
 
 
 def build_transport(dto, *, base_url, variables=None, resolver=None):
-    """Translate a normalized DTO into requests arguments plus the final URL."""
+    """Translate a normalized DTO into requests arguments plus the final URL.
+
+    Pass ``variables`` for a request template (see ``resolve_request``). Omit it
+    for a DTO that is already resolved, whose text must be sent as it is.
+    """
     resolver = resolver or VariableResolver()
-    variables = dict(variables or {})
+    if variables is not None:
+        dto = resolve_request(dto, variables)
     request = normalize_request(dto)
+    # The address takes variables like every other part of the request.
+    path_params = [{**entry, 'value': _resolved(entry['value'], resolver)}
+                   for entry in _enabled(request['path_params'])]
     url = build_request_url(
-        base_url, request['url'], request['path_params'], request_type=request['request_type'],
+        base_url, _resolved(request['url'], resolver), path_params,
+        request_type=request['request_type'],
     )
 
     headers = {}
     for entry in _enabled(request['headers']):
-        headers[entry['key']] = str(_entry_value(entry, variables, resolver))
+        headers[entry['key']] = str(_entry_value(entry, resolver))
 
     query = []
     for entry in _enabled(request['params']):
-        value = _entry_value(entry, variables, resolver)
+        value = _entry_value(entry, resolver)
         if isinstance(value, (dict, list)):
             value = json.dumps(value, ensure_ascii=False)
         query.append((entry['key'], value))
@@ -99,13 +126,13 @@ def build_transport(dto, *, base_url, variables=None, resolver=None):
     auth_value = None
     auth_type = auth.get('type', 'none')
     if auth_type == 'basic':
-        auth_value = (_resolved(auth.get('username', ''), variables, resolver),
-                      _resolved(auth.get('password', ''), variables, resolver))
+        auth_value = (_resolved(auth.get('username', ''), resolver),
+                      _resolved(auth.get('password', ''), resolver))
     elif auth_type == 'bearer':
-        headers['Authorization'] = f"Bearer {_resolved(auth.get('token', ''), variables, resolver)}"
+        headers['Authorization'] = f"Bearer {_resolved(auth.get('token', ''), resolver)}"
     elif auth_type == 'api_key' and auth.get('key'):
-        key = _resolved(auth['key'], variables, resolver)
-        value = _resolved(auth.get('value', ''), variables, resolver)
+        key = _resolved(auth['key'], resolver)
+        value = _resolved(auth.get('value', ''), resolver)
         if auth.get('in') == 'query':
             query.append((key, value))
         else:
@@ -115,21 +142,21 @@ def build_transport(dto, *, base_url, variables=None, resolver=None):
     kwargs = {'data': None, 'json': None, 'files': None}
     kind = body.get('type', 'none')
     if kind == 'json':
-        kwargs['json'] = _resolved(body.get('data'), variables, resolver)
+        kwargs['json'] = _resolved(body.get('data'), resolver)
     elif kind == 'raw':
-        kwargs['data'] = _resolved(body.get('data', ''), variables, resolver)
+        kwargs['data'] = _resolved(body.get('data', ''), resolver)
         if not any(key.lower() == 'content-type' for key in headers):
             headers['Content-Type'] = 'text/plain; charset=utf-8'
     elif kind == 'x-www-form-urlencoded':
         kwargs['data'] = urlencode([
-            (entry['key'], _entry_value(entry, variables, resolver))
+            (entry['key'], _entry_value(entry, resolver))
             for entry in _enabled(body.get('data'))
         ])
         headers.setdefault('Content-Type', 'application/x-www-form-urlencoded')
     elif kind == 'form-data':
         data, files = {}, {}
         for entry in _enabled(body.get('data')):
-            value = _entry_value(entry, variables, resolver)
+            value = _entry_value(entry, resolver)
             if entry.get('type') == 'file':
                 files[entry['key']] = (entry['value']['filename'], value,
                                        entry['value'].get('content_type'))

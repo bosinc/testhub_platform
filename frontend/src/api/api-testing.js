@@ -76,20 +76,20 @@ export function getExecutionLogs(taskId, params = {}) {
   })
 }
 
-// 获取场景用例列表
-export function getScenarioCases(params) {
-  return request({
-    url: '/api-testing/scenario-cases/',
-    method: 'get',
-    params
-  })
-}
-
 // 获取单个接口场景用例详情。
 export function getScenarioCaseDetail(id) {
   return request({
     url: `/api-testing/scenario-cases/${id}/`,
     method: 'get'
+  })
+}
+
+// 一次获取项目下的场景树数据，避免文件夹和场景用例分别分页请求。
+export function getScenarioCaseTree(params = {}) {
+  return request({
+    url: '/api-testing/scenario-cases/tree/',
+    method: 'get',
+    params
   })
 }
 
@@ -126,16 +126,6 @@ export function deleteScenarioCase(id) {
     url: `/api-testing/scenario-cases/${id}/`,
     method: 'delete'
   })
-}
-
-// 获取项目下的全部场景用例，自动读取分页结果。
-export async function getAllScenarioCases(params = {}) {
-  return getAllPages('/api-testing/scenario-cases/', params)
-}
-
-// 获取项目下的全部场景用例文件夹，自动读取分页结果。
-export async function getScenarioCaseFolders(params = {}) {
-  return getAllPages('/api-testing/scenario-case-folders/', params)
 }
 
 // 获取项目下的全部接口集合及请求，供场景用例树使用。
@@ -207,13 +197,9 @@ async function getAllPages(url, params = {}) {
   }
 }
 
-// 获取测试套件列表。定时任务和测试套件管理使用此接口。
-export function getTestSuites(params) {
-  return request({
-    url: '/api-testing/test-suites/',
-    method: 'get',
-    params
-  })
+// 获取全部测试套件，自动读取分页结果。定时任务选择套件时使用。
+export async function getAllTestSuites(params = {}) {
+  return getAllPages('/api-testing/test-suites/', params)
 }
 
 // 获取API请求列表

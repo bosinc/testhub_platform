@@ -307,12 +307,11 @@ import {
   pauseScheduledTask,
   activateScheduledTask,
   getExecutionLogs,
-  getTestSuites,
+  getAllTestSuites,
   getAllApiCollections,
   getAllApiRequests,
   getEnvironments,
-  getScenarioCaseFolders,
-  getAllScenarioCases,
+  getScenarioCaseTree,
   getUsers
 } from '@/api/api-testing.js'
 
@@ -504,8 +503,7 @@ const loadTasks = async () => {
 // 加载测试套件
 const loadTestSuites = async () => {
   try {
-    const response = await getTestSuites()
-    testSuites.value = response.data.results || response.data
+    testSuites.value = await getAllTestSuites()
   } catch (error) {
     console.error('加载测试套件失败:', error)
   }
@@ -525,9 +523,9 @@ const loadApiRequestTree = async () => {
 // 加载场景用例，供场景用例类型的定时任务选择。
 const loadScenarioCaseTree = async () => {
   try {
-    const [folders, scenarios] = await Promise.all([getScenarioCaseFolders(), getAllScenarioCases()])
-    scenarioCaseFolders.value = folders
-    scenarioCases.value = scenarios
+    const response = await getScenarioCaseTree()
+    scenarioCaseFolders.value = response.data.folders || []
+    scenarioCases.value = response.data.scenario_cases || []
   } catch (error) {
     console.error('加载场景用例树失败:', error)
   }

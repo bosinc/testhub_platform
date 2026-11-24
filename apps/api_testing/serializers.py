@@ -290,6 +290,14 @@ class ScenarioCaseFolderSerializer(serializers.ModelSerializer):
         return name
 
 
+class ScenarioCaseFolderTreeSerializer(serializers.ModelSerializer):
+    """场景树使用的轻量文件夹字段，避免加载无关的时间字段。"""
+
+    class Meta:
+        model = ScenarioCaseFolder
+        fields = ['id', 'project', 'parent', 'name']
+
+
 class ScenarioCaseSerializer(serializers.ModelSerializer):
     created_by = UserSerializer(read_only=True)
 
@@ -311,6 +319,14 @@ class ScenarioCaseSerializer(serializers.ModelSerializer):
         if folder and folder.project_id != project.id:
             raise serializers.ValidationError({'folder': '文件夹必须属于场景用例所属项目'})
         return attrs
+
+
+class ScenarioCaseTreeSerializer(serializers.ModelSerializer):
+    """场景树使用的轻量场景字段，避免序列化创建人等详情数据。"""
+
+    class Meta:
+        model = ScenarioCase
+        fields = ['id', 'name', 'folder', 'project', 'environment']
 
 
 class TestSuiteSerializer(serializers.ModelSerializer):

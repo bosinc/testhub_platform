@@ -20,12 +20,11 @@ from django.utils import timezone
 from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError
 
 from .models import TestExecution
-from .request_executor import execute_request
+from .request_executor import execute_request, resolve_request
 from .scenario_variables import (
     MISSING,
     VariableResolutionError,
     VariableScope,
-    resolve_value,
 )
 from .utils import execute_assertions, extract_response_variables
 
@@ -501,9 +500,8 @@ def _http_step(executor, node):
     started = _monotonic()
     request_dto = node.get('config', {}).get('request') or {}
     try:
-        resolved = resolve_value(request_dto, executor.scope)
-        sent = execute_request(
-            resolved, base_url=executor.base_url, variables={}, session=executor.session)
+        resolved = resolve_request(request_dto, executor.scope)
+        sent = execute_request(resolved, base_url=executor.base_url, session=executor.session)
     except VariableResolutionError as exc:
         executor._record(node, ERROR, error=str(exc), started=started)
         return executor._fail(str(exc))

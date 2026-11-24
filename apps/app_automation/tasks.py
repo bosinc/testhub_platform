@@ -7,6 +7,7 @@ import logging
 import os
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
+from apps.core.notification_templates import render_notification, status_text
 
 logger = logging.getLogger(__name__)
 
@@ -25,35 +26,31 @@ def send_scheduled_task_notification(task_id, success):
         if not task.notification_type:
             return
 
-        status_text = '成功' if success else '失败'
         last_result = task.last_result or {}
-        result_message = last_result.get('message', '')
-        local_run_time = timezone.localtime(task.last_run_time).strftime('%Y-%m-%d %H:%M:%S') if task.last_run_time else '未知'
-        device_name = (task.device.name or task.device.device_id) if task.device else '未指定'
-
-        detail_content = (
-            f"任务名称: {task.name}\n\n"
-            f"执行状态: {status_text}\n\n"
-            f"执行时间: {local_run_time}\n\n"
-            f"任务类型: {task.get_task_type_display()}\n\n"
-            f"执行设备: {device_name}"
+        # 文案模板见 apps/core/notification_templates.py
+        notification = render_notification(
+            'app_automation.scheduled_task',
+            task_name=task.name,
+            status_text=status_text(success),
+            run_time=timezone.localtime(task.last_run_time).strftime('%Y-%m-%d %H:%M:%S') if task.last_run_time else None,
+            task_type=task.get_task_type_display(),
+            device_name=(task.device.name or task.device.device_id) if task.device else None,
+            result_message=last_result.get('message', ''),
         )
-        if result_message:
-            detail_content += f"\n\n执行结果: {result_message}"
 
         # Webhook 通知
         if task.notification_type in ['webhook', 'both']:
-            _send_app_webhook_notification(task, detail_content, status_text)
+            _send_app_webhook_notification(task, notification, success)
 
         # 邮件通知
         if task.notification_type in ['email', 'both']:
-            _send_app_email_notification(task, detail_content, status_text)
+            _send_app_email_notification(task, notification)
 
     except Exception as e:
         logger.error(f"发送APP定时任务通知失败: {e}", exc_info=True)
 
 
-def _send_app_webhook_notification(task, detail_content, status_text):
+def _send_app_webhook_notification(task, notification, success):
     """发送 Webhook 通知"""
     import requests
     import json
@@ -78,20 +75,22 @@ def _send_app_webhook_notification(task, detail_content, status_text):
     if not all_bots:
         return
 
+    title = notification.title
+    detail_content = notification.body('\n\n')
+
     for bot in all_bots:
         webhook_url = bot.get('webhook_url')
         if not webhook_url:
             continue
 
         bot_type = bot.get('type', 'unknown')
-        success = status_text == '成功'
 
         if bot_type == 'wechat':
-            message_data = {"msgtype": "markdown", "markdown": {"content": f"**APP自动化定时任务执行{status_text}**\n\n{detail_content}"}}
+            message_data = {"msgtype": "markdown", "markdown": {"content": f"**{title}**\n\n{detail_content}"}}
         elif bot_type == 'feishu':
-            message_data = {"msg_type": "interactive", "card": {"elements": [{"tag": "div", "text": {"content": f"**APP自动化定时任务执行{status_text}**\n\n{detail_content}", "tag": "lark_md"}}], "header": {"title": {"content": f"APP自动化定时任务执行{status_text}", "tag": "plain_text"}, "template": "green" if success else "red"}}}
+            message_data = {"msg_type": "interactive", "card": {"elements": [{"tag": "div", "text": {"content": f"**{title}**\n\n{detail_content}", "tag": "lark_md"}}], "header": {"title": {"content": title, "tag": "plain_text"}, "template": "green" if success else "red"}}}
         elif bot_type == 'dingtalk':
-            message_data = {"msgtype": "markdown", "markdown": {"title": f"APP自动化定时任务执行{status_text}", "text": f"**APP自动化定时任务执行{status_text}**\n\n{detail_content}"}}
+            message_data = {"msgtype": "markdown", "markdown": {"title": title, "text": f"**{title}**\n\n{detail_content}"}}
             secret = bot.get('secret')
             if secret:
                 import time as _time, hmac, hashlib, base64, urllib.parse
@@ -100,7 +99,7 @@ def _send_app_webhook_notification(task, detail_content, status_text):
                 webhook_url += f'{"&" if "?" in webhook_url else "?"}timestamp={timestamp}&sign={sign}'
         elif bot_type == 'slack':
             # Slack Incoming Webhook 接收简单的 text 载荷。
-            message_data = {"text": f"APP自动化定时任务执行{status_text}\n\n{detail_content}"}
+            message_data = {"text": f"{title}\n\n{detail_content}"}
         else:
             continue
 
@@ -132,7 +131,7 @@ def _send_app_webhook_notification(task, detail_content, status_text):
             )
 
 
-def _send_app_email_notification(task, detail_content, status_text):
+def _send_app_email_notification(task, notification):
     """发送邮件通知"""
     from .models import AppNotificationLog
 
@@ -140,11 +139,14 @@ def _send_app_email_notification(task, detail_content, status_text):
     if not recipients:
         return
 
+    # 邮件正文与 Webhook 正文相同
+    detail_content = notification.body('\n\n')
+
     try:
         from django.core.mail import send_mail
         from django.conf import settings
 
-        subject = f"APP自动化定时任务执行{status_text}: {task.name}"
+        subject = notification.email_subject
         from_email = settings.DEFAULT_FROM_EMAIL
 
         send_mail(subject=subject, message=detail_content, from_email=from_email, recipient_list=recipients, fail_silently=False)

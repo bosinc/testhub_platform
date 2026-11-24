@@ -51,6 +51,7 @@ from .serializers import (
 )
 from .operation_logger import log_operation
 from apps.projects.services import ensure_workspace_project_for_module, soft_delete_module_project, sync_project_members_from_module, sync_workspace_project_from_module
+from apps.core.notification_templates import render_notification, render_text, status_text
 from .script_security import MAX_SCRIPT_BYTES, ScriptSecurityError, analyze_script
 from .recording_import import import_recorded_script
 from .recording_sync import UnsupportedRecordingCode, generate_code, parse_recording
@@ -2786,6 +2787,37 @@ class UiScheduledTaskViewSet(viewsets.ModelViewSet):
         except Exception as e:
             logger.error(f"发送通知失败: {str(e)}", exc_info=True)
 
+    def _render_task_notification(self, task, success):
+        """渲染定时任务通知文案，模板见 apps/core/notification_templates.py"""
+        # 获取最后执行结果的详细信息
+        last_result = task.last_result or {}
+        success_count = last_result.get('success_count', 0)
+        failed_count = last_result.get('failed_count', 0)
+        # 成功、失败数都为 0 时不展示这一行
+        has_counts = success_count > 0 or failed_count > 0
+        # 机器人消息有长度上限，Webhook 正文里的错误信息只取前 200 个字符，邮件仍用全文
+        error_message = task.error_message or ''
+        error_summary = error_message[:200] + '...' if len(error_message) > 200 else error_message
+
+        return render_notification(
+            'ui_automation.scheduled_task',
+            task_name=task.name,
+            status_text=status_text(success),
+            # 转换执行时间到本地时区
+            run_time=timezone.localtime(task.last_run_time).strftime(
+                '%Y-%m-%d %H:%M:%S') if task.last_run_time else None,
+            task_type=render_text(
+                'ui_automation.task_type.suite' if task.task_type == 'TEST_SUITE'
+                else 'ui_automation.task_type.case'),
+            engine=task.engine.upper(),
+            browser=task.browser.capitalize(),
+            result_message=last_result.get('message', ''),
+            success_count=success_count if has_counts else None,
+            failed_count=failed_count if has_counts else None,
+            error_message=error_message,
+            error_summary=error_summary,
+        )
+
     def _send_webhook_notification(self, task, success):
         """发送Webhook通知"""
         try:
@@ -2830,14 +2862,9 @@ class UiScheduledTaskViewSet(viewsets.ModelViewSet):
             logger.info(f"找到 {len(all_webhook_bots)} 个启用的webhook机器人配置")
 
             # 准备通知内容
-            status_text = '成功' if success else '失败'
-            task_type_text = '测试套件执行' if task.task_type == 'TEST_SUITE' else '测试用例执行'
-
-            # 获取最后执行结果的详细信息
-            last_result = task.last_result or {}
-            result_message = last_result.get('message', '')
-            success_count = last_result.get('success_count', 0)
-            failed_count = last_result.get('failed_count', 0)
+            notification = self._render_task_notification(task, success)
+            title = notification.title
+            detail_content = notification.body('\n\n')
 
             # 为不同的机器人平台准备消息格式
             for bot in all_webhook_bots:
@@ -2849,36 +2876,12 @@ class UiScheduledTaskViewSet(viewsets.ModelViewSet):
                 webhook_url = bot['webhook_url']
                 logger.info(f"发送通知到 {bot_type} 机器人: {bot.get('name', 'Unknown')}")
 
-                # 构造详细内容
-                # 转换执行时间到本地时区
-                local_run_time = timezone.localtime(task.last_run_time).strftime(
-                    '%Y-%m-%d %H:%M:%S') if task.last_run_time else '未知'
-                detail_content = f"""任务名称: {task.name}
-
-执行状态: {status_text}
-
-执行时间: {local_run_time}
-
-任务类型: {task_type_text}
-
-执行引擎: {task.engine.upper()}
-
-浏览器: {task.browser.capitalize()}"""
-
-                if result_message:
-                    detail_content += f"\n\n执行结果: {result_message}"
-
-                if success_count > 0 or failed_count > 0:
-                    detail_content += f"\n\n成功: {success_count} 个，失败: {failed_count} 个"
-
                 # 根据机器人类型构造消息格式
                 if bot_type == 'wechat':  # 企业微信
                     message_data = {
                         "msgtype": "markdown",
                         "markdown": {
-                            "content": f"""**UI自动化定时任务执行{status_text}**
-
-{detail_content}"""
+                            "content": f"**{title}**\n\n{detail_content}"
                         }
                     }
                 elif bot_type == 'feishu':  # 飞书
@@ -2888,13 +2891,13 @@ class UiScheduledTaskViewSet(viewsets.ModelViewSet):
                             "elements": [{
                                 "tag": "div",
                                 "text": {
-                                    "content": f"**UI自动化定时任务执行{status_text}**\n\n{detail_content}",
+                                    "content": f"**{title}**\n\n{detail_content}",
                                     "tag": "lark_md"
                                 }
                             }],
                             "header": {
                                 "title": {
-                                    "content": f"UI自动化定时任务执行{status_text}",
+                                    "content": title,
                                     "tag": "plain_text"
                                 },
                                 "template": "green" if success else "red"
@@ -2905,10 +2908,8 @@ class UiScheduledTaskViewSet(viewsets.ModelViewSet):
                     message_data = {
                         "msgtype": "markdown",
                         "markdown": {
-                            "title": f"UI自动化定时任务执行{status_text}",
-                            "text": f"""**UI自动化定时任务执行{status_text}**
-
-{detail_content}"""
+                            "title": title,
+                            "text": f"**{title}**\n\n{detail_content}"
                         }
                     }
 
@@ -2936,7 +2937,7 @@ class UiScheduledTaskViewSet(viewsets.ModelViewSet):
                 elif bot_type == 'slack':  # Slack Incoming Webhook
                     # Slack Incoming Webhook 接收简单的 text 载荷。
                     message_data = {
-                        "text": f"UI自动化定时任务执行{status_text}\n\n{detail_content}"
+                        "text": f"{title}\n\n{detail_content}"
                     }
                 else:
                     logger.warning(f"未知的机器人类型: {bot_type}")
@@ -3036,32 +3037,9 @@ class UiScheduledTaskViewSet(viewsets.ModelViewSet):
                 return
 
             # 准备邮件内容
-            status_text = '成功' if success else '失败'
-            task_type_text = '测试套件执行' if task.task_type == 'TEST_SUITE' else '测试用例执行'
-
-            subject = f"UI自动化定时任务执行{status_text}: {task.name}"
-
-            last_result = task.last_result or {}
-            result_message = last_result.get('message', '')
-
-            # 转换执行时间到本地时区
-            local_run_time = timezone.localtime(task.last_run_time).strftime(
-                '%Y-%m-%d %H:%M:%S') if task.last_run_time else '未知'
-
-            message = f"""
-任务名称: {task.name}
-执行状态: {status_text}
-执行时间: {local_run_time}
-任务类型: {task_type_text}
-执行引擎: {task.engine.upper()}
-浏览器: {task.browser.capitalize()}
-
-执行结果:
-{result_message if result_message else '无详细信息'}
-
-错误信息:
-{task.error_message if task.error_message else '无错误信息'}
-            """
+            notification = self._render_task_notification(task, success)
+            subject = notification.email_subject
+            message = notification.email_body()
 
             # 发送邮件
             from_email = settings.DEFAULT_FROM_EMAIL

@@ -69,8 +69,7 @@ def _path_entries(entries, warnings, blocking_errors):
             blocking_errors.append(f'路径参数 {key} 为空、重复或不是标量，需要修正后再导入。')
         seen.add(key)
         if value is None or value == '':
-            parameter['enabled'] = False
-            warnings.append(f'路径参数 {key} 未提供值，导入为禁用条目；执行前需要填写并启用。')
+            warnings.append(f'路径参数 {key} 未提供值，执行前需要填写。')
     return entries
 
 

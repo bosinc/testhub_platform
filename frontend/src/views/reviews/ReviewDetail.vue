@@ -171,7 +171,7 @@
                 <!-- 解决状态：意见作者和评审创建人可切换，评审结束后只读 -->
                 <span :title="commentStatusTip(comment)">
                   <el-switch
-                    style="--el-switch-on-color: #13ce66"
+                    style="--el-switch-on-color: #67c23a"
                     :model-value="comment.is_resolved"
                     :disabled="!canChangeCommentStatus(comment)"
                     :loading="togglingCommentId === comment.id"

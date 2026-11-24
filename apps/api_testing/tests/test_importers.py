@@ -36,7 +36,7 @@ class CollectionImportParserTests(unittest.TestCase):
         [item] = self.parse(document)
         self.assertEqual(item['url'], '/users/{userId}')
         self.assertEqual(item['params'], [entry('expand', 'profile')])
-        self.assertEqual(item['path_params'], [entry('userId', enabled=False)])
+        self.assertEqual(item['path_params'], [entry('userId')])
         self.assertEqual(item['body'], {'type': 'json', 'data': {'name': ''}})
         self.assertEqual(item['headers'], [entry('Content-Type', 'application/json')])
         self.assertEqual(item['environment_suggestions'], [{'base_url': 'https://api.example.test/v1'}])
@@ -66,7 +66,7 @@ class CollectionImportParserTests(unittest.TestCase):
                             'paths': {'/promotions/{merchantId}/{promotionId}/detail': {'get': {}}}})
         self.assertEqual(item['url'], '/promotions/{merchantId}/{promotionId}/detail')
         self.assertEqual(item['params'], [])
-        self.assertEqual(item['path_params'], [entry('merchantId', enabled=False), entry('promotionId', enabled=False)])
+        self.assertEqual(item['path_params'], [entry('merchantId'), entry('promotionId')])
 
     def test_openapi_path_and_operation_servers_override_document_servers(self):
         items = self.parse({
@@ -403,11 +403,12 @@ class CollectionImportParserTests(unittest.TestCase):
         self.assertEqual(item['path_params'], [entry('id', 'a'), entry('id', 'b', False)])
         self.assertTrue(item['blocking_errors'])
 
-    def test_raw_colon_path_parameter_is_imported_disabled_when_missing_value(self):
+    def test_raw_colon_path_parameter_without_value_stays_enabled_with_a_warning(self):
         item = self.postman({'url': 'https://api.example.test/users/:id'})
         self.assertEqual(item['url'], '/users/{id}')
-        self.assertEqual(item['path_params'], [entry('id', enabled=False)])
-        self.assertIn('填写并启用', ' '.join(item['warnings']))
+        self.assertEqual(item['path_params'], [entry('id')])
+        self.assertIn('路径参数 id 未提供值，执行前需要填写。', item['warnings'])
+        self.assertEqual(item['blocking_errors'], [])
 
     def test_unsafe_paths_and_unscoped_variables_are_preview_blockers(self):
         for url in ('/v1/../users', '/v1/%252e%252e/users', '/users/{{unknown}}'):
@@ -580,6 +581,19 @@ if os.environ.get('DJANGO_SETTINGS_MODULE'):
             child = ApiCollection.objects.get(project=self.project, name='Admin', parent=root)
             self.assertEqual(root.requests.get(name='List orders').collection_id, root.id)
             self.assertEqual(child.requests.get(name='Delete order').collection_id, child.id)
+
+        def test_import_batch_keeps_unfilled_path_parameter_as_an_enabled_draft(self):
+            response = self.import_batch({'info': {'name': 'Orders API'}, 'item': [{
+                'name': 'Delete order', 'request': {'method': 'DELETE', 'url': '{{baseUrl}}/orders/{id}'},
+            }]})
+            self.assertEqual(response.status_code, 201)
+            imported = ApiRequest.objects.get(name='Delete order')
+            self.assertEqual(imported.path_params, [entry('id')])
+            request = APIRequestFactory().get(f'/api/api-testing/requests/{imported.id}/')
+            force_authenticate(request, user=self.user)
+            response = ApiRequestViewSet.as_view({'get': 'retrieve'})(request, pk=imported.id)
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.data['path_params'], [entry('id')])
 
         def test_import_batch_rejects_file_source_before_creating_collections(self):
             response = self.import_batch({'info': {'name': 'Upload'}, 'item': [{'name': 'Unsafe upload', 'request': {

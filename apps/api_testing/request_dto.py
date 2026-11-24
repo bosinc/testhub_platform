@@ -67,7 +67,10 @@ def normalize_file(value, field):
 
 
 def normalize_entries(value, field, *, allow_files=False):
-    """Keep order, duplicates and disabled rows; path keys are always unique."""
+    """Keep order, duplicates and disabled rows; path keys are always unique.
+
+    A blank path value is a legal draft; ``build_request_url`` rejects it on send.
+    """
     if not isinstance(value, list):
         _error(field, _('必须使用有序条目列表，不接受字典'))
     result = []
@@ -98,8 +101,6 @@ def normalize_entries(value, field, *, allow_files=False):
             if not entry['key'] or entry['key'] in seen:
                 _error(location, _('路径参数key不能为空或重复，包括禁用条目'))
             seen.add(entry['key'])
-            if entry['enabled'] and ('value' not in source or data is None or data == ''):
-                _error(location, _('启用路径参数必须提供非空值'))
             if isinstance(data, (dict, list)):
                 _error(location, _('路径参数值必须是标量'))
         result.append(entry)

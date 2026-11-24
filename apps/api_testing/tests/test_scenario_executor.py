@@ -152,6 +152,57 @@ class HttpStepTests(SimpleTestCase):
         self.assertIn('vars.absent', outcome['results'][0]['error'])
         self.assertEqual(transport.calls, [])
 
+    def test_vars_placeholder_prefers_run_variables_then_falls_back_to_environment(self):
+        environment = {'base_url': 'https://api.example.com', 'variables': {'tenant': 'from-env'}}
+        for variables, expected in (({'tenant': 'from-vars'}, '/from-vars/users'), ({}, '/from-env/users')):
+            with self.subTest(variables=variables):
+                transport = fake_transport(FakeResponse({}))
+                with patch('apps.api_testing.scenario_executor.execute_request', transport):
+                    run([http_node(url='/{{ vars.tenant }}/users')],
+                        variables=variables, environment=environment)
+                self.assertEqual(transport.calls[0]['dto']['url'], expected)
+        transport = fake_transport(FakeResponse({}))
+        with patch('apps.api_testing.scenario_executor.execute_request', transport):
+            _, outcome = run([http_node(url='/{{ vars.absent }}/users')], environment=environment)
+        self.assertIn('vars.absent', outcome['results'][0]['error'])
+        self.assertEqual(transport.calls, [])
+
+    def test_scripts_and_escaped_braces_do_not_count_as_variables(self):
+        step = node('http', {'request': {
+            'method': 'POST', 'url': '/users', 'scripts': {'pre_request': 'const t = "{{ title }}"'},
+            'body': {'type': 'raw', 'data': r'\{{ name }} for {{ vars.who }}'},
+        }})
+        response = FakeResponse({})
+        response.request = None
+        with patch('requests.Session.request', return_value=response) as sender:
+            _, outcome = run([step], variables={'who': 'Ann'})
+        self.assertEqual(outcome['passed'], 1)
+        self.assertEqual(sender.call_args.kwargs['data'], '{{ name }} for Ann')
+
+    def test_blank_path_value_fails_the_step_before_anything_is_sent(self):
+        # A literal blank is an unfinished draft; a variable can also resolve to one.
+        for value, variables in (('', {}), ('{{ vars.user_id }}', {'user_id': ''})):
+            step = node('http', {'request': {
+                'method': 'DELETE', 'url': '/users/{id}', 'path_params': [{'key': 'id', 'value': value}],
+            }})
+            with self.subTest(value=value), patch('requests.Session.request') as sender:
+                _, outcome = run([step], variables=variables)
+                self.assertEqual(outcome['failed'], 1)
+                self.assertEqual(outcome['results'][0]['error'], '启用路径参数必须提供非空值: id')
+                sender.assert_not_called()
+
+    def test_resolved_data_that_looks_like_a_placeholder_is_sent_as_it_is(self):
+        step = node('http', {'request': {
+            'method': 'GET', 'url': '/users',
+            'headers': [{'key': 'X-Template', 'value': '{{ vars.template }}'}],
+        }})
+        response = FakeResponse({})
+        response.request = None
+        with patch('requests.Session.request', return_value=response) as sender:
+            _, outcome = run([step], variables={'template': 'Hello {{vars.name}}'})
+        self.assertEqual(outcome['passed'], 1)
+        self.assertEqual(sender.call_args.kwargs['headers'], {'X-Template': 'Hello {{vars.name}}'})
+
 
 class ControlFlowTests(SimpleTestCase):
     def test_group_runs_children_in_order(self):
@@ -418,10 +469,15 @@ class ScenarioTreeTests(TestCase):
 
     def test_environment_variables_reach_the_request(self):
         self._save([http_node(url='/{{ env.tenant }}/users')])
-        transport = fake_transport(FakeResponse({}))
-        with patch('apps.api_testing.scenario_executor.execute_request', transport):
-            execute_scenario_tree(self.scenario, self.environment, self.user)
-        self.assertEqual(transport.calls[0]['dto']['url'], '/acme/users')
+        # A plain value, and the initial/current pair the environment page saves.
+        for stored in ('acme', {'initialValue': 'old', 'currentValue': 'acme'}):
+            with self.subTest(stored=stored):
+                self.environment.variables = {'tenant': stored}
+                self.environment.save(update_fields=['variables'])
+                transport = fake_transport(FakeResponse({}))
+                with patch('apps.api_testing.scenario_executor.execute_request', transport):
+                    execute_scenario_tree(self.scenario, self.environment, self.user)
+                self.assertEqual(transport.calls[0]['dto']['url'], '/acme/users')
 
     def test_execution_without_environment_is_recorded_as_failed(self):
         self._save([http_node()])

@@ -16,6 +16,7 @@ from django.db import models
 from django.utils import timezone
 from datetime import timedelta
 
+from apps.core.notification_templates import render_notification, render_text
 from .utils.crypto import decrypt_secrets, encrypt_secrets
 
 
@@ -291,13 +292,12 @@ class MonitorTarget(models.Model):
             cfg.get('login_url')
             or cfg.get('url')
             or self.url
-            or '-'
         )
         now_str = timezone.localtime(timezone.now()).strftime('%Y-%m-%d %H:%M:%S')
 
         # 取最近一次探测记录的响应详情
         latest_log = self.checks.order_by('-checked_at').first()
-        resp_body = '-'
+        resp_body = ''
         if latest_log and latest_log.detail:
             raw = latest_log.detail.get('body') or latest_log.detail.get('resp') or ''
             if isinstance(raw, str) and raw.strip():
@@ -307,6 +307,7 @@ class MonitorTarget(models.Model):
                 raw_str = json.dumps(raw, ensure_ascii=False)
                 resp_body = raw_str[:200] + '...' if len(raw_str) > 200 else raw_str
 
+        # 文案模板见 apps/core/notification_templates.py
         if recovered:
             # 计算异常持续时长
             duration = ''
@@ -314,42 +315,33 @@ class MonitorTarget(models.Model):
                 delta = timezone.now() - alert.first_triggered_at
                 minutes = int(delta.total_seconds() // 60)
                 if minutes < 1:
-                    duration = '不足 1 分钟'
+                    duration = render_text('monitor.duration.under_minute')
                 elif minutes < 60:
-                    duration = f'约 {minutes} 分钟'
+                    duration = render_text('monitor.duration.minutes', minutes=minutes)
                 else:
-                    duration = f'约 {minutes // 60} 小时 {minutes % 60} 分钟'
-            title = '【监控中心】已恢复：{}'.format(self.name)
-            body = (
-                '🟢 恢复：\n'
-                '-----> 接口已恢复 <-----\n\n'
-                '【监控时间】：{}\n'
-                '【接口名称】：{}\n'
-                '【监测类型】：{}\n'
-                '【请求地址】：{}\n'
-                '【异常时长】：{}'
-            ).format(now_str, self.name, type_label, target_url, duration)
-        else:
-            title = '【监控中心】告警：{}'.format(self.name)
-            body = (
-                '🔴 告警：\n'
-                '-----> 接口监控异常 <-----\n\n'
-                '【监控时间】：{}\n'
-                '【接口名称】：{}\n'
-                '【监测类型】：{}\n'
-                '【请求地址】：{}\n'
-                '【失败次数】：第 {} 次连续失败\n'
-                '【错误信息】：{}\n'
-                '【响应内容】：{}'
-            ).format(
-                now_str,
-                self.name,
-                type_label,
-                target_url,
-                self.consecutive_failures,
-                (alert.message or '-')[:200],
-                resp_body,
+                    duration = render_text(
+                        'monitor.duration.hours', hours=minutes // 60, minutes=minutes % 60)
+            notification = render_notification(
+                'monitor.recovered',
+                check_time=now_str,
+                target_name=self.name,
+                target_type=type_label,
+                target_url=target_url,
+                duration=duration,
             )
+        else:
+            notification = render_notification(
+                'monitor.alert',
+                check_time=now_str,
+                target_name=self.name,
+                target_type=type_label,
+                target_url=target_url,
+                consecutive_failures=self.consecutive_failures,
+                error_message=(alert.message or '')[:200],
+                response_body=resp_body,
+            )
+        title = notification.email_subject
+        body = notification.body()
 
         results = []
         # 一级通道（主）优先推送

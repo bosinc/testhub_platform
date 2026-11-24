@@ -571,7 +571,17 @@ import { CodeGenerator } from '@/utils/codeGenerator'
 import { useI18n } from 'vue-i18n'
 
 const { t } = useI18n()
-const requestErrorMessage = error => error.message?.startsWith('apiTesting.requestEditor.') ? t(error.message) : error.message
+// 后端校验失败统一返回 { errors: { 字段: [原因] } }，展开后才能提示具体原因。
+const flattenErrors = value => {
+  if (Array.isArray(value)) return value.map(flattenErrors).join('；')
+  if (value && typeof value === 'object') return Object.entries(value).map(([key, item]) => `${key}: ${flattenErrors(item)}`).join('；')
+  return String(value)
+}
+const requestErrorMessage = error => {
+  const errors = error.response?.data?.errors
+  if (errors) return flattenErrors(errors)
+  return error.message?.startsWith('apiTesting.requestEditor.') ? t(error.message) : error.message
+}
 const sidebarWidth = ref(300)
 
 const treeRef = ref(null)
@@ -1594,7 +1604,7 @@ const generateCode = async (language) => {
     generatedCode.value = code
     showCodeGenerateDialog.value = true
   } catch (error) {
-  ElMessage.error(t('apiTesting.interface.codeGenerationFailed'))
+    ElMessage.error(requestErrorMessage(error) || t('apiTesting.interface.codeGenerationFailed'))
     console.error('生成代码失败:', error)
   }
 }

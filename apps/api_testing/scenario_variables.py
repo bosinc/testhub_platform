@@ -3,7 +3,7 @@
 The plan replaces the legacy flat ``{{name}}`` lookup with explicit namespaces::
 
     {{env.tenant_id}}                           environment variables
-    {{vars.token}}                              scenario run variables
+    {{vars.token}}                              scenario run variables, then environment
     {{steps.<reference_id>.response.body.data}}  a previous step output
     {{loop.item.id}}                            current ForEach element
     {{loop.index}}                              current loop index
@@ -11,7 +11,8 @@ The plan replaces the legacy flat ``{{name}}`` lookup with explicit namespaces::
 A placeholder that occupies a whole string keeps its native JSON type, so a
 ForEach expression can return a real list. Embedded placeholders are rendered as
 text. Missing values raise instead of silently resolving to an empty string: a
-typo must fail the step, not produce a request against a wrong URL.
+typo must fail the step, not produce a request against a wrong URL. Text that
+must keep its braces is written with a leading backslash: ``\\{{ name }}``.
 
 ``${...}`` dynamic functions are still handled downstream by
 ``apps.api_testing.variable_resolver``.
@@ -22,7 +23,7 @@ import re
 
 MISSING = object()
 
-PLACEHOLDER = re.compile(r'\{\{\s*([^{}]+?)\s*\}\}')
+PLACEHOLDER = re.compile(r'(\\)?\{\{\s*([^{}]+?)\s*\}\}')
 FULL_PLACEHOLDER = re.compile(r'^\s*\{\{\s*([^{}]+?)\s*\}\}\s*$')
 SEGMENT = re.compile(r'([^.\[\]]+)|\[(\d+)\]')
 
@@ -117,7 +118,12 @@ class VariableScope:
         if head == 'env':
             return navigate(self.environment, rest)
         if head == 'vars':
-            return navigate(self.variables, rest)
+            # Run variables win; a name they do not define falls back to the
+            # environment, so a request written for one works with the other.
+            value = navigate(self.variables, rest)
+            if value is MISSING:
+                value = navigate(self.environment, rest)
+            return value
         if head == 'steps':
             step_id, _, path = rest.partition('.')
             step_id = self.step_reference_map.get(step_id, step_id)
@@ -158,7 +164,10 @@ class VariableScope:
             return self.require(whole.group(1))
 
         def replace(match):
-            return _as_text(self.require(match.group(1)))
+            if match.group(1):
+                # ``\{{ name }}`` is literal text: drop the backslash, keep the braces.
+                return match.group(0)[1:]
+            return _as_text(self.require(match.group(2)))
 
         return PLACEHOLDER.sub(replace, text)
 
@@ -173,4 +182,5 @@ def resolve_text(text, scope):
 
 def expression_names(expression):
     """Return the placeholder paths inside a template, for validation helpers."""
-    return [match.group(1) for match in PLACEHOLDER.finditer(expression or '')]
+    return [match.group(2) for match in PLACEHOLDER.finditer(expression or '')
+            if not match.group(1)]

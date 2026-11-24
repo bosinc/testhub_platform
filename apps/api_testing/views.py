@@ -46,6 +46,7 @@ from .serializers import (
     NotificationLogDetailSerializer,
     TaskNotificationSettingDetailSerializer, OperationLogSerializer,
     TestSuiteSerializer, ApiSuiteExecutionSerializer, AIServiceConfigSerializer,
+    ScenarioCaseTreeSerializer, ScenarioCaseFolderTreeSerializer,
 )
 
 logger = logging.getLogger(__name__)
@@ -61,8 +62,11 @@ from apps.projects.services import ensure_workspace_project_for_module, soft_del
 from .importers import parse_collection
 from .environment_resolver import EnvironmentResolver
 from .request_dto import REQUEST_FIELDS, normalize_request, request_from_model
-from .request_executor import build_transport, execute_request, response_body_preview
+from .request_executor import (
+    build_transport, execute_request, resolve_request, response_body_preview)
+from .scenario_variables import VariableScope
 from apps.core.task_queue import enqueue_task
+from apps.core.notification_templates import render_notification, status_text
 from .scenario_service import (
     delete_scenario_with_references,
     import_api_request,
@@ -885,7 +889,7 @@ class ApiRequestViewSet(viewsets.ModelViewSet):
         api_request = self.get_object()
         snapshot = self._environment_snapshot(request, api_request)
         transport = build_transport(self._resolve_draft(request, api_request),
-                                    base_url=snapshot['base_url'])
+                                    base_url=snapshot['base_url'], variables=snapshot['variables'])
         return Response({'url': transport['url'], 'environment_id': snapshot['id']})
 
     @action(detail=True, methods=['post'])
@@ -895,7 +899,7 @@ class ApiRequestViewSet(viewsets.ModelViewSet):
         # Preflight failures (missing environment, no permission, invalid address)
         # are raised as API exceptions so nothing is sent and no history is written.
         snapshot = self._environment_snapshot(request, api_request)
-        dto = self._resolve_draft(request, api_request)
+        dto = resolve_request(self._resolve_draft(request, api_request), snapshot['variables'])
         transport = build_transport(dto, base_url=snapshot['base_url'])
         try:
             result = execute_request(dto, base_url=snapshot['base_url'])
@@ -1075,6 +1079,7 @@ class RequestHistoryViewSet(viewsets.ModelViewSet):
 class ScenarioCaseFolderViewSet(viewsets.ModelViewSet):
     serializer_class = ScenarioCaseFolderSerializer
     permission_classes = [IsAuthenticated]
+    pagination_class = StandardPagination
     http_method_names = ['get', 'post', 'put', 'patch', 'delete', 'head', 'options']
 
     def get_queryset(self):
@@ -1122,16 +1127,47 @@ class ScenarioCaseViewSet(viewsets.ModelViewSet):
     queryset = ScenarioCase.objects.all()
     serializer_class = ScenarioCaseSerializer
     permission_classes = [IsAuthenticated]
+    # 默认分页不识别 page_size，前端传 page_size 时只能按 20 条逐页翻。
+    pagination_class = StandardPagination
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ['project']
-    
+
     def get_queryset(self):
         user = self.request.user
-        return ScenarioCase.objects.filter(
+        queryset = ScenarioCase.objects.filter(
             project__in=ApiProject.objects.filter(
                 models.Q(owner=user) | models.Q(members=user)
             )
         ).distinct()
+        if self.action in ('list', 'retrieve'):
+            # 列表和详情都会序列化创建人，联表取出避免逐行查询用户。
+            queryset = queryset.select_related('created_by')
+        if self.action == 'list':
+            # 列表不返回变量和执行配置，不读取这两个 JSON 列。
+            queryset = queryset.defer('variables', 'execution_config')
+        return queryset
+
+    @action(detail=False, methods=['get'], url_path='tree')
+    def tree(self, request):
+        """一次返回场景树所需的轻量文件夹和场景数据。"""
+        scenario_queryset = self.filter_queryset(self.get_queryset())
+        # 以可访问项目为边界加载文件夹，确保没有场景用例时仍能显示空文件夹。
+        project_queryset = ApiProject.objects.filter(
+            models.Q(owner=request.user) | models.Q(members=request.user)
+        ).distinct()
+        project_id = request.query_params.get('project')
+        if project_id:
+            project_queryset = project_queryset.filter(pk=project_id)
+        folder_queryset = ScenarioCaseFolder.objects.filter(
+            project_id__in=project_queryset.values('id')
+        ).only('id', 'project', 'parent', 'name')
+        scenario_queryset = scenario_queryset.only(
+            'id', 'name', 'folder', 'project', 'environment'
+        )
+        return Response({
+            'folders': ScenarioCaseFolderTreeSerializer(folder_queryset, many=True).data,
+            'scenario_cases': ScenarioCaseTreeSerializer(scenario_queryset, many=True).data,
+        })
 
     @action(detail=True, methods=['post'])
     def execute(self, request, pk=None):
@@ -1411,13 +1447,12 @@ class ScenarioCaseViewSet(viewsets.ModelViewSet):
                 user=request.user, project_id=scenario_case.project_id)
             snapshot = EnvironmentResolver.snapshot(
                 environment, user=request.user, project_id=scenario_case.project_id)
-            dto = normalize_request(payload)
-            variables = {
-                **(snapshot.get('variables') or {}),
-                **(scenario_case.variables or {}),
-            }
-            result = execute_request(
-                dto, base_url=snapshot['base_url'], variables=variables)
+            # Same scope as a real run minus earlier step outputs, so assertions
+            # and extractors see resolved values too.
+            dto = resolve_request(normalize_request(payload), VariableScope(
+                environment=snapshot.get('variables') or {},
+                variables=scenario_case.variables or {}))
+            result = execute_request(dto, base_url=snapshot['base_url'])
             response = result['response']
             for assertion in dto['assertions']:
                 if assertion.get('type') == 'response_time':
@@ -1450,16 +1485,29 @@ class TestSuiteViewSet(viewsets.ModelViewSet):
     """测试套件：固定场景用例集合。"""
     serializer_class = TestSuiteSerializer
     permission_classes = [IsAuthenticated]
+    # 默认分页不识别 page_size，前端取全量时只能按 20 条逐页翻。
+    pagination_class = StandardPagination
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ['project']
 
     def get_queryset(self):
         user = self.request.user
-        return TestSuite.objects.filter(
+        queryset = TestSuite.objects.filter(
             project__in=ApiProject.objects.filter(
                 models.Q(owner=user) | models.Q(members=user)
             )
         ).distinct()
+        if self.action in ('list', 'retrieve'):
+            # 套件会嵌套序列化环境、创建人和全部场景用例（含各自的创建人），
+            # 这里一次取出，避免查询数随套件数和用例数增长。
+            queryset = queryset.select_related('created_by', 'environment').prefetch_related(
+                models.Prefetch(
+                    'scenario_cases',
+                    queryset=ScenarioCase.objects.select_related('created_by').defer(
+                        'variables', 'execution_config'),
+                )
+            )
+        return queryset
 
     @action(detail=True, methods=['post'])
     def execute(self, request, pk=None):
@@ -2566,6 +2614,18 @@ class ScheduledTaskViewSet(viewsets.ModelViewSet):
         except Exception as e:
             logger.error(f"发送通知失败: {str(e)}", exc_info=True)
 
+    def _render_task_notification(self, task, execution_log, success, **extra):
+        """渲染定时任务通知文案，模板见 apps/core/notification_templates.py"""
+        return render_notification(
+            'api_testing.scheduled_task',
+            task_name=task.name,
+            status_text=status_text(success),
+            # 转换执行时间到本地时区
+            run_time=timezone.localtime(execution_log.created_at).strftime('%Y-%m-%d %H:%M:%S'),
+            task_type=task.get_task_type_display(),
+            **extra,
+        )
+
     def _send_email_notification(self, task, execution_log, notification_setting, notification_config, success):
         """发送邮件通知"""
         try:
@@ -2576,11 +2636,8 @@ class ScheduledTaskViewSet(viewsets.ModelViewSet):
 
             logger.info("=== 开始发送邮件通知 ===")
 
-            # 准备邮件内容
-            subject = f"定时任务执行{'成功' if success else '失败'}: {task.name}"
-
             # 过滤掉详细的测试结果数据，只保留概要信息
-            summary_info = '无详细信息'
+            summary_info = ''
             if execution_log.result:
                 result_data = execution_log.result
                 # 只保留高级概要字段,过滤掉详细的'results'数组
@@ -2594,18 +2651,14 @@ class ScheduledTaskViewSet(viewsets.ModelViewSet):
                 # 只保留有值的字段
                 summary_info = '\n'.join([f'{k}: {v}' for k, v in summary_fields.items() if v is not None])
 
-            message = f"""
-            任务名称: {task.name}
-            执行状态: {'成功' if success else '失败'}
-            执行时间: {execution_log.created_at.strftime('%Y-%m-%d %H:%M:%S')}
-            任务类型: {task.get_task_type_display()}
-
-            执行概要:
-            {summary_info}
-
-            错误信息:
-            {execution_log.error_message if execution_log.error_message else '无错误信息'}
-            """
+            # 准备邮件内容
+            notification = self._render_task_notification(
+                task, execution_log, success,
+                summary=summary_info,
+                error_message=execution_log.error_message,
+            )
+            subject = notification.email_subject
+            message = notification.email_body()
 
             # 获取收件人列表
             recipients = []
@@ -2744,8 +2797,11 @@ class ScheduledTaskViewSet(viewsets.ModelViewSet):
             logger.info(f"总共找到 {len(all_webhook_bots)} 个待发送的webhook机器人")
 
             # 准备通知内容
-            status_text = '成功' if success else '失败'
-            status_color = 'green' if success else 'red'
+            notification = self._render_task_notification(task, execution_log, success)
+            title = notification.title
+            # 企业微信、钉钉行间空一行，其余平台单换行
+            markdown_body = notification.body('\n\n')
+            plain_body = notification.body('\n')
 
             # 为不同的机器人平台准备消息格式
             for bot in all_webhook_bots:
@@ -2762,15 +2818,7 @@ class ScheduledTaskViewSet(viewsets.ModelViewSet):
                     message_data = {
                         "msgtype": "markdown",
                         "markdown": {
-                            "content": f"""**定时任务执行{status_text}**
-
-任务名称: {task.name}
-
-执行状态: {status_text}
-
-执行时间: {execution_log.created_at.strftime('%Y-%m-%d %H:%M:%S')}
-
-任务类型: {task.get_task_type_display()}"""
+                            "content": f"**{title}**\n\n{markdown_body}"
                         }
                     }
                 elif bot_type == 'feishu':  # 飞书
@@ -2780,13 +2828,13 @@ class ScheduledTaskViewSet(viewsets.ModelViewSet):
                             "elements": [{
                                 "tag": "div",
                                 "text": {
-                                    "content": f"**定时任务执行{status_text}**\n任务名称: {task.name}\n执行状态: {status_text}\n执行时间: {execution_log.created_at.strftime('%Y-%m-%d %H:%M:%S')}\n任务类型: {task.get_task_type_display()}",
+                                    "content": f"**{title}**\n{plain_body}",
                                     "tag": "lark_md"
                                 }
                             }],
                             "header": {
                                 "title": {
-                                    "content": f"定时任务执行{status_text}",
+                                    "content": title,
                                     "tag": "plain_text"
                                 },
                                 "template": "green" if success else "red"
@@ -2797,16 +2845,8 @@ class ScheduledTaskViewSet(viewsets.ModelViewSet):
                     message_data = {
                         "msgtype": "markdown",
                         "markdown": {
-                            "title": f"定时任务执行{status_text}",
-                            "text": f"""**定时任务执行{status_text}**
-
-任务名称: {task.name}
-
-执行状态: {status_text}
-
-执行时间: {execution_log.created_at.strftime('%Y-%m-%d %H:%M:%S')}
-
-任务类型: {task.get_task_type_display()}"""
+                            "title": title,
+                            "text": f"**{title}**\n\n{markdown_body}"
                         }
                     }
 
@@ -2841,11 +2881,11 @@ class ScheduledTaskViewSet(viewsets.ModelViewSet):
                 elif bot_type == 'slack':  # Slack Incoming Webhook
                     # Slack Incoming Webhook 接收简单的 text 载荷。
                     message_data = {
-                        "text": f"定时任务执行{status_text}\n任务名称: {task.name}\n执行状态: {status_text}\n执行时间: {execution_log.created_at.strftime('%Y-%m-%d %H:%M:%S')}\n任务类型: {task.get_task_type_display()}"
+                        "text": f"{title}\n{plain_body}"
                     }
                 else:  # 通用格式
                     message_data = {
-                        "text": f"定时任务执行{status_text}\n任务名称: {task.name}\n执行状态: {status_text}\n执行时间: {execution_log.created_at.strftime('%Y-%m-%d %H:%M:%S')}\n任务类型: {task.get_task_type_display()}"
+                        "text": f"{title}\n{plain_body}"
                     }
 
                 # 发送webhook请求

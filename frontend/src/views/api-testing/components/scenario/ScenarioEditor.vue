@@ -314,7 +314,7 @@ import {
 } from '@/utils/scenarioDefinition'
 import {
   cancelExecution, deleteScenarioExecution, executeScenarioCase, getAllApiCollections, getAllApiRequests, getApiRequest,
-  getEnvironments, getExecutionSteps, getScenarioCaseExecutions, getScenarioCases,
+  getEnvironments, getExecutionSteps, getScenarioCaseExecutions,
   getScenarioDefinition, patchScenarioCase, saveScenarioDefinition, saveScenarioStep
 } from '@/api/api-testing'
 import AddStepMenu from './AddStepMenu.vue'
@@ -325,6 +325,8 @@ import StepResultPanel from './StepResultPanel.vue'
 
 const props = defineProps({
   scenarioCase: { type: Object, required: true },
+  // 当前项目的场景列表（场景树的轻量数据），由页面传入，编辑器不再重复请求
+  projectScenarios: { type: Array, default: () => [] },
   // 环境由页面顶部统一选择，编辑器不再单独维护
   environmentId: { type: [Number, String], default: null }
 })
@@ -362,7 +364,9 @@ const secondPaneMinWidth = computed(() => (editorMainWidth.value
   : 420))
 let editorResizeObserver = null
 const environments = ref([])
-const scenarios = ref([])
+// 可引用/导入的其他场景：排除当前场景自身。
+const scenarios = computed(() => props.projectScenarios.filter(
+  item => String(item.id) !== String(props.scenarioCase?.id)))
 const draggingId = ref(null)
 const dropTargetId = ref(null)
 const addStepVisible = ref(false)
@@ -506,17 +510,12 @@ async function reload() {
 async function loadSupport() {
   const projectId = props.scenarioCase?.project
   try {
-    const [envResponse, scenarioResponse] = await Promise.all([
-      // 不能按项目过滤：后端的 project 过滤会把 project 为空的全局环境也过滤掉，
-      // 导致已选环境匹配不到选项、下拉框只显示 ID。这里取全量后在前端筛选。
-      getEnvironments({}),
-      getScenarioCases({ project: projectId, page: 1, page_size: 1000 })
-    ])
+    // 不能按项目过滤：后端的 project 过滤会把 project 为空的全局环境也过滤掉，
+    // 导致已选环境匹配不到选项、下拉框只显示 ID。这里取全量后在前端筛选。
+    const envResponse = await getEnvironments({})
     const allEnvironments = envResponse.data?.results || envResponse.data || []
     environments.value = allEnvironments.filter(env =>
       env.scope === 'GLOBAL' || String(env.project) === String(projectId))
-    const list = scenarioResponse.data?.results || scenarioResponse.data || []
-    scenarios.value = list.filter(item => String(item.id) !== String(props.scenarioCase.id))
   } catch {
     // Support data is optional; the editor still works without it.
   }

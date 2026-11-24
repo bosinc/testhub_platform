@@ -18,6 +18,7 @@ from django.conf import settings
 from django.core import signing
 from django.utils import timezone
 
+from apps.core.notification_templates import render_notification
 from .actions import ACTION_REGISTRY, McpActionError, build_preview
 from .models import CONFIRM_TOKEN_TTL_SECONDS, McpPendingConfirm
 
@@ -61,16 +62,17 @@ def notify_pending_approval(pending: McpPendingConfirm):
         if not channels.exists():
             logger.debug('MCP 审批通知跳过：未配置启用的通知渠道')
             return
-        message = (
-            f'【TestHub MCP 危险操作待审批】\n'
-            f'发起人：{pending.user.username}\n'
-            f'操作：{pending.tool_name}\n'
-            f'影响：{pending.preview}\n'
-            f'过期时间：{timezone.localtime(pending.expires_at):%Y-%m-%d %H:%M:%S}\n'
-            f'请到「MCP 控制台 → 待确认」批准或拒绝。'
+        # 文案模板见 apps/core/notification_templates.py
+        notification = render_notification(
+            'mcp.pending_approval',
+            username=pending.user.username,
+            tool_name=pending.tool_name,
+            preview=pending.preview,
+            expires_at=f'{timezone.localtime(pending.expires_at):%Y-%m-%d %H:%M:%S}',
         )
+        message = notification.body()
         for channel in channels:
-            ok, detail = send_via_channel(channel, message, subject='MCP 危险操作待审批')
+            ok, detail = send_via_channel(channel, message, subject=notification.email_subject)
             if not ok:
                 logger.warning('MCP 审批通知发送失败 channel=%s: %s', channel.name, detail)
     except Exception as exc:  # noqa: BLE001 - 通知失败不阻断审批流程

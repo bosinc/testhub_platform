@@ -78,19 +78,23 @@
             ref="scenarioCaseTreeRef"
             :data="scenarioCaseTree"
             :props="{ label: 'name', children: 'children' }"
-            :default-expanded-keys="treeDefaultExpandedKeys"
+            :default-expanded-keys="expandedFolderKeys"
+            :default-checked-keys="selectedScenarioCaseIds"
+            :auto-expand-parent="false"
             node-key="id"
             show-checkbox
             :check-on-click-node="false"
             :check-on-click-leaf="false"
             :filter-node-method="filterScenarioNode"
             @node-contextmenu="onFolderNodeContextMenu"
+            @node-expand="onTreeNodeExpand"
+            @node-collapse="onTreeNodeCollapse"
             @check="onScenarioCaseCheck"
           >
             <template #default="{ data }">
               <div
                 class="scenario-case-tree-node"
-                :class="{ active: data.type === 'scenarioCase' && selectedScenarioCase?.id === data.id }"
+                :class="{ active: data.type === 'scenarioCase' && (loadingScenarioCaseId ?? selectedScenarioCase?.id) === data.id }"
                 @click="data.type === 'scenarioCase' && selectScenarioCase(data)"
               >
                 <el-icon class="node-icon">
@@ -145,6 +149,7 @@
           <!-- 场景编排编辑器：步骤树 + 按类型切换的编辑器 + 执行结果 -->
           <ScenarioEditor
             :scenario-case="selectedScenarioCase"
+            :project-scenarios="scenarioCases"
             :environment-id="pageEnvironment"
             @updated="onScenarioEdited"
           />
@@ -301,12 +306,10 @@ import {
   duplicateScenarioCase as duplicateScenarioCaseApi,
   executeScenarioCase,
   getExecutionSteps,
-  getAllScenarioCases,
   getApiProjects,
   getEnvironments,
-  getScenarioCaseExecutions,
   getScenarioCaseDetail,
-  getScenarioCaseFolders,
+  getScenarioCaseTree,
   patchScenarioCase,
   updateScenarioCase,
   updateScenarioCaseFolder
@@ -333,8 +336,10 @@ const contextTreeNode = ref(null)
 const showMoveScenarioCaseDialog = ref(false)
 const movingScenarioCase = ref(false)
 const moveTargetFolder = ref(null)
+// 场景树只保存轻量字段；这里是点击用例后单独加载的详情。
 const selectedScenarioCase = ref(null)
-const executions = ref([])
+const loadingScenarioCaseId = ref(null)
+let scenarioCaseDetailRequestToken = 0
 const environments = ref([])
 const pageEnvironment = ref(null)
 const running = ref(false)
@@ -350,7 +355,6 @@ const filterScenarioNode = (value, data) => {
 const filterScenarioTree = () => {
   scenarioCaseTreeRef.value?.filter(scenarioKeyword.value)
 }
-const executionsLoading = ref(false)
 const showCreateScenarioCaseDialog = ref(false)
 const showExecutionDialog = ref(false)
 const editingScenarioCase = ref(null)
@@ -474,7 +478,7 @@ const loadProjects = async () => {
       selectedProject.value = linkedProject.id
       await onProjectChange()
       const listedCase = scenarioCases.value.find(item => String(item.id) === String(linkedCaseId))
-      if (listedCase) selectScenarioCase(listedCase)
+      if (listedCase) selectScenarioCase(listedCase, linkedCase)
       else ElMessage.warning(t('apiTesting.automation.linkedScenarioUnavailable'))
       return
     }
@@ -491,35 +495,63 @@ const loadProjects = async () => {
   }
 }
 
-// 编辑器保存/执行后刷新左侧场景列表（名称、环境等可能变化）。
+// 编辑器保存/执行后只刷新当前用例，并同步树节点上的名称等字段，不重拉整棵树。
 const onScenarioEdited = () => {
-  loadScenarioCases()
+  reloadCurrentScenarioCase()
+}
+
+// 用详情或写接口返回的数据就地更新/追加树节点，只保留场景树需要的轻量字段。
+const upsertScenarioCaseRow = (data) => {
+  const row = {
+    id: data.id,
+    name: data.name,
+    folder: data.folder,
+    project: data.project,
+    environment: data.environment
+  }
+  const index = scenarioCases.value.findIndex(item => item.id === row.id)
+  if (index === -1) {
+    scenarioCases.value = [...scenarioCases.value, row]
+    return
+  }
+  // 字段没变时不写回，避免每次点击用例都触发整棵树重建（会丢失展开/勾选状态）。
+  const current = scenarioCases.value[index]
+  if (Object.keys(row).some(key => current[key] !== row[key])) scenarioCases.value[index] = row
+}
+
+const resetScenarioCaseSelection = () => {
+  // 作废仍在途中的详情请求，避免旧请求返回后重新选中用例。
+  scenarioCaseDetailRequestToken += 1
+  loadingScenarioCaseId.value = null
+  selectedScenarioCase.value = null
 }
 
 const loadScenarioCases = async () => {
-  if (!selectedProject.value) return
+  const projectId = selectedProject.value
+  if (!projectId) {
+    scenarioCases.value = []
+    scenarioCaseFolders.value = []
+    return
+  }
 
   try {
-    scenarioCases.value = await getAllScenarioCases({ project: selectedProject.value })
+    const response = await getScenarioCaseTree({ project: projectId })
+    // 快速切换项目时先发出的请求可能后返回，不能用它覆盖当前项目的场景树。
+    if (projectId !== selectedProject.value) return
+    scenarioCases.value = response.data.scenario_cases || []
+    scenarioCaseFolders.value = response.data.folders || []
+    // 进入项目时默认展开根文件夹，之后的展开/折叠以用户操作为准。
+    expandedFolderKeys.value = scenarioCaseFolders.value
+      .filter(folder => !folder.parent && !folder.name.startsWith('22'))
+      .map(folder => 'f-' + folder.id)
   } catch (error) {
+    if (projectId !== selectedProject.value) return
     ElMessage.error(t('apiTesting.messages.error.loadScenarioCases'))
   }
 }
 
-const loadScenarioCaseFolders = async () => {
-  if (!selectedProject.value) {
-    scenarioCaseFolders.value = []
-    return
-  }
-  try {
-    scenarioCaseFolders.value = await getScenarioCaseFolders({ project: selectedProject.value })
-  } catch (error) {
-    ElMessage.error(t('apiTesting.automation.folder.loadFailed'))
-  }
-}
-
 const refreshScenarioCaseTree = async () => {
-  await Promise.all([loadScenarioCases(), loadScenarioCaseFolders()])
+  await loadScenarioCases()
 }
 
 const onFolderNodeContextMenu = async (event, data) => {
@@ -559,7 +591,7 @@ const moveScenarioCaseToFolder = async () => {
     ElMessage.success(t('apiTesting.automation.folder.scenarioCaseMoved'))
     showMoveScenarioCaseDialog.value = false
     if (selectedScenarioCase.value?.id === scenarioCase.id) {
-      selectedScenarioCase.value = scenarioCases.value.find(item => item.id === scenarioCase.id) || null
+      selectedScenarioCase.value = { ...selectedScenarioCase.value, folder: updatedScenarioCase.folder }
     }
   } catch (error) {
     ElMessage.error(error.response?.data?.folder?.[0] || t('apiTesting.automation.folder.moveFailed'))
@@ -607,6 +639,8 @@ const createFolder = async (parentId = null) => {
       name: name.trim()
     })
     if (response.data) scenarioCaseFolders.value = [...scenarioCaseFolders.value, response.data]
+    // 展开父文件夹，新建的子文件夹才看得到。
+    if (parentId) onTreeNodeExpand({ id: 'f-' + parentId })
     ElMessage.success(t('apiTesting.automation.folder.created'))
   } catch (error) {
     if (error !== 'cancel') ElMessage.error(error.response?.data?.name?.[0] || t('apiTesting.automation.folder.createFailed'))
@@ -665,8 +699,8 @@ const deleteFolder = async (folder) => {
       folderIds.has(item.folder) ? { ...item, folder: null } : item
     )
     ElMessage.success(t('apiTesting.automation.folder.deleted'))
-    if (selectedScenarioCase.value) {
-      selectedScenarioCase.value = scenarioCases.value.find(scenarioCase => scenarioCase.id === selectedScenarioCase.value.id) || null
+    if (selectedScenarioCase.value && folderIds.has(selectedScenarioCase.value.folder)) {
+      selectedScenarioCase.value = { ...selectedScenarioCase.value, folder: null }
     }
   } catch (error) {
     if (error !== 'cancel') ElMessage.error(t('apiTesting.automation.folder.deleteFailed'))
@@ -699,11 +733,17 @@ const scenarioCaseTree = computed(() => {
   sortTree(root)
   return root
 })
-const treeDefaultExpandedKeys = computed(() =>
-  scenarioCaseTree.value
-    .filter(g => g.type === 'folder' && !g.name.startsWith('22'))
-    .map(g => g.id)
-)
+// 树数据每次变化 el-tree 都会重建全部节点，不保留用户的展开/折叠，
+// 所以由页面记录已展开的文件夹，重建时通过 default-expanded-keys 还原。
+const expandedFolderKeys = ref([])
+const onTreeNodeExpand = (data) => {
+  if (!expandedFolderKeys.value.includes(data.id)) {
+    expandedFolderKeys.value = [...expandedFolderKeys.value, data.id]
+  }
+}
+const onTreeNodeCollapse = (data) => {
+  expandedFolderKeys.value = expandedFolderKeys.value.filter(key => key !== data.id)
+}
 
 const loadEnvironments = async () => {
   try {
@@ -729,20 +769,6 @@ const loadEnvironments = async () => {
   }
 }
 
-const loadExecutions = async () => {
-  if (!selectedScenarioCase.value) return
-
-  executionsLoading.value = true
-  try {
-    const response = await getScenarioCaseExecutions({ scenario_case: selectedScenarioCase.value.id })
-    executions.value = response.data.results || response.data
-  } catch (error) {
-    ElMessage.error(t('apiTesting.messages.error.loadExecutionHistory'))
-  } finally {
-    executionsLoading.value = false
-  }
-}
-
 const onProjectChange = async () => {
   // 检查选中的项目是否为HTTP项目
   const selectedProjectData = projects.value.find(p => p.id === selectedProject.value)
@@ -758,17 +784,31 @@ const onProjectChange = async () => {
     return
   }
 
-  selectedScenarioCase.value = null
+  resetScenarioCaseSelection()
   await Promise.all([
     refreshScenarioCaseTree(),
     loadEnvironments()
   ])
 }
 
-const selectScenarioCase = (scenarioCase) => {
-  selectedScenarioCase.value = scenarioCase
-  pageEnvironment.value = scenarioCase.environment ?? null
-  loadExecutions()
+// 点击树节点后才加载该用例详情（描述、创建人、时间等）；已有详情时直接复用。
+const selectScenarioCase = async (scenarioCase, loadedDetail = null) => {
+  const token = ++scenarioCaseDetailRequestToken
+  loadingScenarioCaseId.value = scenarioCase.id
+  try {
+    const detail = loadedDetail || (await getScenarioCaseDetail(scenarioCase.id)).data
+    // 连续点击多个用例时，只采用最后一次点击的结果。
+    if (token !== scenarioCaseDetailRequestToken) return
+    selectedScenarioCase.value = detail
+    upsertScenarioCaseRow(detail)
+    pageEnvironment.value = detail.environment ?? null
+  } catch (error) {
+    if (token === scenarioCaseDetailRequestToken) {
+      ElMessage.error(t('apiTesting.messages.error.loadScenarioCases'))
+    }
+  } finally {
+    if (token === scenarioCaseDetailRequestToken) loadingScenarioCaseId.value = null
+  }
 }
 
 // 顶部环境选择器统一控制当前场景的执行环境
@@ -811,7 +851,6 @@ const runScenarioCase = async (scenarioCase) => {
     currentExecutionSteps.value = []
     showExecutionDialog.value = true
     await loadExecutionSteps(response.data)
-    await loadExecutions()
     if (response.data.status === 'FAILED') {
       ElMessage.error(t('apiTesting.messages.error.scenarioCaseExecutionFailed'))
     } else {
@@ -830,6 +869,13 @@ const onScenarioCaseCheck = () => {
   const nodes = scenarioCaseTreeRef.value?.getCheckedNodes() || []
   selectedScenarioCaseIds.value = nodes.filter(n => n.type === 'scenarioCase').map(n => n.id)
 }
+// 树数据变化后节点已重建：勾选由 default-checked-keys 还原，这里再同步一次勾选结果
+// （去掉已删除或不属于当前项目的用例），并重新应用搜索关键字。
+watch(scenarioCaseTree, async () => {
+  await nextTick()
+  onScenarioCaseCheck()
+  if (scenarioKeyword.value) filterScenarioTree()
+})
 const runSelectedScenarioCases = async () => {
   running.value = true
   try {
@@ -837,7 +883,6 @@ const runSelectedScenarioCases = async () => {
       await executeScenarioCase(id)
     }
     ElMessage.success(t('apiTesting.automation.batchRunSuccess', { count: selectedScenarioCaseIds.value.length }))
-    await loadExecutions()
   } catch (e) {
     ElMessage.error(t('apiTesting.automation.batchRunFailed'))
   } finally {
@@ -870,11 +915,11 @@ const editScenarioCase = (scenarioCase) => {
 
 const duplicateScenarioCase = async (scenarioCase) => {
   try {
-    await duplicateScenarioCaseApi(scenarioCase.id, {
+    const response = await duplicateScenarioCaseApi(scenarioCase.id, {
       name: `${scenarioCase.name} - ${t('apiTesting.common.copyText')}`
     })
     ElMessage.success(t('apiTesting.messages.success.copy'))
-    await loadScenarioCases()
+    upsertScenarioCaseRow(response.data)
   } catch (error) {
     ElMessage.error(t('apiTesting.messages.error.copyFailed'))
   }
@@ -895,10 +940,10 @@ const deleteScenarioCase = async (scenarioCase) => {
     await deleteScenarioCaseApi(scenarioCase.id)
     ElMessage.success(t('apiTesting.messages.success.delete'))
 
-    if (selectedScenarioCase.value?.id === scenarioCase.id) {
-      selectedScenarioCase.value = null
+    if (selectedScenarioCase.value?.id === scenarioCase.id || loadingScenarioCaseId.value === scenarioCase.id) {
+      resetScenarioCaseSelection()
     }
-    await loadScenarioCases()
+    scenarioCases.value = scenarioCases.value.filter(item => item.id !== scenarioCase.id)
   } catch (error) {
     if (error !== 'cancel') {
       ElMessage.error(t('apiTesting.messages.error.deleteFailed'))
@@ -920,11 +965,13 @@ const submitScenarioCaseForm = async () => {
     }
     let savedScenarioCaseId = editingScenarioCase.value?.id
     if (editingScenarioCase.value) {
-      await updateScenarioCase(editingScenarioCase.value.id, formData)
+      const response = await updateScenarioCase(editingScenarioCase.value.id, formData)
+      upsertScenarioCaseRow(response.data)
       ElMessage.success(t('apiTesting.messages.success.scenarioCaseUpdated'))
     } else {
       const response = await createScenarioCase(formData)
       savedScenarioCaseId = response.data.id
+      upsertScenarioCaseRow(response.data)
       ElMessage.success(t('apiTesting.messages.success.scenarioCaseCreated'))
     }
 
@@ -943,12 +990,10 @@ const submitScenarioCaseForm = async () => {
 
       ElMessage.success(t('testcase.automationLinked'))
       showCreateScenarioCaseDialog.value = false
-      await loadScenarioCases()
       return
     }
 
     showCreateScenarioCaseDialog.value = false
-    await loadScenarioCases()
   } catch (error) {
     ElMessage.error(editingScenarioCase.value ? t('apiTesting.messages.error.updateFailed') : t('apiTesting.messages.error.createFailed'))
   } finally {
@@ -969,23 +1014,28 @@ const resetScenarioCaseForm = () => {
 }
 
 const reloadCurrentScenarioCase = async () => {
-  if (!selectedScenarioCase.value) return
+  const scenarioCaseId = selectedScenarioCase.value?.id
+  if (!scenarioCaseId) return
 
   try {
     // 重新加载当前场景用例的详细信息
-    const response = await getScenarioCaseDetail(selectedScenarioCase.value.id)
+    const response = await getScenarioCaseDetail(scenarioCaseId)
     const updatedScenarioCase = response.data
 
-    // 强制重新设置响应式数据
-    selectedScenarioCase.value = { ...updatedScenarioCase }
+    // 等待期间该用例可能已被删除或已切换项目，不能把它重新加回当前场景树。
+    if (!scenarioCases.value.some(item => item.id === scenarioCaseId)) return
 
-    // 同时更新场景用例列表中对应的场景用例
-    const index = scenarioCases.value.findIndex(scenarioCase => scenarioCase.id === updatedScenarioCase.id)
-    if (index !== -1) {
-      scenarioCases.value[index] = { ...updatedScenarioCase }
+    // 同时更新场景树中对应的节点
+    upsertScenarioCaseRow(updatedScenarioCase)
+    // 等待期间可能已切换到其他用例，此时不能覆盖当前选中的详情。
+    if (selectedScenarioCase.value?.id === scenarioCaseId) {
+      selectedScenarioCase.value = { ...updatedScenarioCase }
     }
   } catch (error) {
-    ElMessage.error(t('apiTesting.messages.error.loadScenarioCases'))
+    // 用例已被删除或已切走时，这次刷新失败与当前界面无关，不提示。
+    if (selectedScenarioCase.value?.id === scenarioCaseId) {
+      ElMessage.error(t('apiTesting.messages.error.loadScenarioCases'))
+    }
   }
 }
 

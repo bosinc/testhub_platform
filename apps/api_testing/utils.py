@@ -2,14 +2,12 @@ import json
 import logging
 import subprocess
 import sys
-import time
-import requests
-from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from django.utils import timezone
+from rest_framework.exceptions import APIException
 from .models import RequestHistory
-from .variable_resolver import VariableResolver
-from .environment_resolver import build_request_url
+from .environment_resolver import EnvironmentResolver
+from .request_dto import request_from_model
 
 logger = logging.getLogger(__name__)
 
@@ -27,45 +25,6 @@ def _api_request_retry(method):
         allowed_methods=retry_methods,
         raise_on_status=False,
     )
-
-
-def send_api_request(*, method, url, headers=None, params=None, body_type='none', body=None,
-                     timeout=(5, 30)):
-    """统一发送 API 请求，连接阶段短暂失败时仅对幂等方法有限重试。
-
-    场景用例执行与单接口执行使用同一套 HTTP 策略；写请求不自动重试，避免重复提交。
-    """
-    request_kwargs = {
-        'method': method,
-        'url': url,
-        'headers': headers or {},
-        'params': params or {},
-        'timeout': timeout,
-    }
-    if body_type == 'raw':
-        request_kwargs['data'] = body
-    elif body_type in {'json', 'form-data', 'x-www-form-urlencoded'}:
-        request_kwargs['json'] = body
-    with requests.Session() as session:
-        adapter = HTTPAdapter(max_retries=_api_request_retry(method))
-        session.mount('http://', adapter)
-        session.mount('https://', adapter)
-        return session.request(**request_kwargs)
-
-
-def prepare_request_body(request_body, method, variables, resolver):
-    """按接口配置解析请求体，并返回发送类型与内容。"""
-    if not request_body or method.upper() not in {'POST', 'PUT', 'PATCH'}:
-        return 'none', None
-    body_type = request_body.get('type', 'none')
-    body_content = request_body.get('data')
-    if body_type == 'json' and isinstance(body_content, dict):
-        body_content = _resolve_variables_in_dict(_replace_variables_in_dict(body_content, variables), resolver)
-    elif body_type == 'raw' and isinstance(body_content, str):
-        body_content = resolver.resolve(_replace_variables(body_content, variables))
-    elif body_type in {'form-data', 'x-www-form-urlencoded'} and isinstance(body_content, list):
-        body_content = _resolve_variables_in_dict(_replace_variables_in_dict(body_content, variables), resolver)
-    return body_type, body_content
 
 
 def normalize_scenario_case_assertions(assertions, response_time=None):
@@ -511,81 +470,37 @@ def execute_test_suite(test_suite, environment, executed_by, suite_execution=Non
 
 
 def execute_api_request(api_request, environment, executed_by, scheduled_task=None):
-    """执行单个API请求并返回结果"""
-    
+    """执行单个API请求并返回结果。
+
+    与单接口页的「发送」共用环境校验、变量解析和发送逻辑，不再自带一套替换规则。
+    """
+    from .request_executor import execute_request, resolve_request
+    from .scenario_executor import _validation_message
+
     try:
-        # 创建变量解析器
-        resolver = VariableResolver()
-        
-        # 解析环境变量
-        variables = {}
-        if environment:
-            variables.update(environment.variables)
-        
-        # 替换URL中的变量（先解析动态函数，再替换环境变量）
-        path_params = _resolve_variables_in_dict(
-            _replace_variables_in_dict(api_request.path_params or [], variables), resolver)
-        url = build_request_url(
-            environment.base_url if environment else '',
-            api_request.url,
-            path_params,
-            request_type=api_request.request_type,
-        )
-        
-        # 准备请求头
-        headers = {}
-        for header_item in api_request.headers or []:
-            if header_item.get('enabled', True) and header_item.get('key'):
-                key = header_item['key']
-                value = _replace_variables(str(header_item.get('value', '')), variables)
-                value = resolver.resolve(value)
-                headers[key] = value
-        
-        # 准备请求参数
-        params = []
-        for param_item in api_request.params or []:
-            if param_item.get('enabled', True) and param_item.get('key'):
-                value = _replace_variables(str(param_item.get('value', '')), variables)
-                params.append((param_item['key'], resolver.resolve(value)))
-        # 准备请求体
-        body_type, body_data = prepare_request_body(
-            api_request.body, api_request.method, variables, resolver
-        )
-        
-        # 执行请求
-        start_time = time.time()
-        response = send_api_request(
-            method=api_request.method,
-            url=url,
-            headers=headers,
-            params=params,
-            body_type=body_type,
-            body=body_data,
-        )
-        end_time = time.time()
-        response_time = (end_time - start_time) * 1000
-        
+        project_id = api_request.collection.project_id if api_request.collection_id else None
+        snapshot = EnvironmentResolver.snapshot(
+            environment, user=executed_by, project_id=project_id)
+        dto = resolve_request(request_from_model(api_request), snapshot['variables'])
+        sent = execute_request(dto, base_url=snapshot['base_url'])
+        response = sent['response']
+        response_time = sent['response_time']
+
         # 执行断言验证
-        assertions = api_request.assertions or []
+        assertions = dto['assertions']
         for assertion in assertions:
             if assertion.get('type') == 'response_time':
                 assertion['actual_time'] = response_time
-        
+
         assertions_results = execute_assertions(response, assertions)
         # 单接口提取结果只随本次执行返回，不写回环境变量。
-        extraction_results, extracted_variables = extract_response_variables(response, api_request.extractors)
-        
+        extraction_results, extracted_variables = extract_response_variables(response, dto['extractors'])
+
         # 保存请求历史
         history = RequestHistory.objects.create(
             request=api_request,
             environment=environment,
-            request_data={
-                'url': url,
-                'method': api_request.method,
-                'headers': headers,
-                'params': params,
-                'body': body_data
-            },
+            request_data=sent['request'],
             response_data={
                 'headers': dict(response.headers),
                 'body': response.text,
@@ -597,9 +512,12 @@ def execute_api_request(api_request, environment, executed_by, scheduled_task=No
             executed_by=executed_by,
             scheduled_task=scheduled_task,
         )
-        
-        return {
-            'success': True,
+
+        # 请求发出去不等于通过：断言未通过时这次执行算失败，响应和历史照常保留。
+        failed_assertions = [
+            str(item['name'] or '未命名断言') for item in assertions_results if not item['passed']]
+        result = {
+            'success': not failed_assertions,
             'history_id': history.id,
             'status_code': response.status_code,
             'response_time': response_time,
@@ -612,46 +530,18 @@ def execute_api_request(api_request, environment, executed_by, scheduled_task=No
                 'json': response.json() if response.headers.get('content-type', '').startswith('application/json') else None
             }
         }
-        
+        if failed_assertions:
+            result['error'] = '断言未通过：' + '、'.join(failed_assertions)
+        return result
+
+    except APIException as e:
+        # 环境、变量或请求配置不合法时返回可读原因，而不是异常对象的文本。
+        return {
+            'success': False,
+            'error': _validation_message(e)
+        }
     except Exception as e:
         return {
             'success': False,
             'error': str(e)
         }
-
-
-def _replace_variables(text, variables):
-    """替换文本中的变量"""
-    if not isinstance(text, str):
-        return text
-    
-    result = text
-    for key, value in (variables or {}).items():
-        if isinstance(value, dict):
-            replacement = str(value.get('currentValue', '') or value.get('initialValue', ''))
-        else:
-            replacement = str(value) if value is not None else ''
-        result = result.replace(f'{{{{{key}}}}}', replacement)
-    return result
-
-def _replace_variables_in_dict(data, variables):
-    """递归替换字典中的变量"""
-    if isinstance(data, dict):
-        return {k: _replace_variables_in_dict(v, variables) for k, v in data.items()}
-    elif isinstance(data, list):
-        return [_replace_variables_in_dict(item, variables) for item in data]
-    elif isinstance(data, str):
-        return _replace_variables(data, variables)
-    else:
-        return data
-
-def _resolve_variables_in_dict(data, resolver):
-    """递归解析字典中的动态函数占位符"""
-    if isinstance(data, dict):
-        return {k: _resolve_variables_in_dict(v, resolver) for k, v in data.items()}
-    elif isinstance(data, list):
-        return [_resolve_variables_in_dict(item, resolver) for item in data]
-    elif isinstance(data, str):
-        return resolver.resolve(data)
-    else:
-        return data
