@@ -508,19 +508,27 @@ class TestExecutor:
 
                 step_result = self.execute_step_playwright(step_data)
 
-                # Debug: Log which page we're using
-                print(f"📄 步骤 {step_data['step_number']} 执行完成")
-                print(f"   使用的page URL: {self.current_page.url}")
-                print(f"   使用的page 标题: {self.current_page.title()}")
+                # Debug: Log which page we're using.
+                # 调试输出不能影响用例结果：导航/关闭瞬间读取 title() 会抛
+                # "Execution context was destroyed"，之前会让整条用例被判失败。
+                try:
+                    print(f"📄 步骤 {step_data['step_number']} 执行完成")
+                    print(f"   使用的page URL: {self.current_page.url}")
+                    print(f"   使用的page 标题: {self.current_page.title()}")
+                except Exception as debug_error:
+                    print(f"   （调试信息读取失败，已忽略：{debug_error}）")
 
                 result['steps'].append(step_result)
 
                 # 显式更新self.current_page，确保引用正确
                 if step_result.get('switched_page'):
                     self.current_page = step_result['switched_page']
-                    print(f"🔄 页面切换确认: {self.current_page.title()}")
-                    print(f"   当前页面URL: {self.current_page.url}")
-                    print(f"   Page ID: {id(self.current_page)}")
+                    try:
+                        print(f"🔄 页面切换确认: {self.current_page.title()}")
+                        print(f"   当前页面URL: {self.current_page.url}")
+                        print(f"   Page ID: {id(self.current_page)}")
+                    except Exception as debug_error:
+                        print(f"   （调试信息读取失败，已忽略：{debug_error}）")
                     del step_result['switched_page']
                     just_switched_tab = True
 
@@ -1553,7 +1561,9 @@ class TestExecutor:
             self.current_page = self.context.new_page()
             # clear 后由后续 navigate 步骤进入公开页面，避免回访受保护 URL 触发重定向循环。
             if url and url != 'about:blank' and params.get('navigate_current', True):
-                self.current_page.goto(url, wait_until='domcontentloaded', timeout=30000)
+                # 切换登录态后要等页面加载稳定，否则下一步骤的导航会取消这次未完成的加载，
+                # 导致 "Execution context was destroyed"。
+                self._goto_with_load_fallback(self.current_page, url, timeout=30000)
             return
         raise ValueError('未知的登录态操作')
 
