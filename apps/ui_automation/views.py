@@ -2871,6 +2871,13 @@ class UiScheduledTaskViewSet(viewsets.ModelViewSet):
             error_summary=error_summary,
         )
 
+    @staticmethod
+    def _email_html_body(text):
+        """把通知正文中的 **加粗** 转成 HTML 邮件正文，纯文本邮件仍保留原标记"""
+        from django.utils.html import escape
+        html = re.sub(r'\*\*(.+?)\*\*', lambda m: f'<strong>{m.group(1)}</strong>', escape(text))
+        return html.replace('\n', '<br>')
+
     def _send_webhook_notification(self, task, success):
         """发送Webhook通知"""
         try:
@@ -2916,7 +2923,8 @@ class UiScheduledTaskViewSet(viewsets.ModelViewSet):
 
             # 准备通知内容
             notification = self._render_task_notification(task, success)
-            title = notification.title
+            title = notification.plain_title
+            markdown_title = notification.bold_title()
             # markdown 需要空行才换行，失败用例这类多行变量内部也要补上空行
             detail_content = notification.body().replace('\n', '\n\n')
 
@@ -2935,7 +2943,7 @@ class UiScheduledTaskViewSet(viewsets.ModelViewSet):
                     message_data = {
                         "msgtype": "markdown",
                         "markdown": {
-                            "content": f"**{title}**\n\n{detail_content}"
+                            "content": f"{markdown_title}\n\n{detail_content}"
                         }
                     }
                 elif bot_type == 'feishu':  # 飞书
@@ -2945,7 +2953,7 @@ class UiScheduledTaskViewSet(viewsets.ModelViewSet):
                             "elements": [{
                                 "tag": "div",
                                 "text": {
-                                    "content": f"**{title}**\n\n{detail_content}",
+                                    "content": f"{markdown_title}\n\n{detail_content}",
                                     "tag": "lark_md"
                                 }
                             }],
@@ -2963,7 +2971,7 @@ class UiScheduledTaskViewSet(viewsets.ModelViewSet):
                         "msgtype": "markdown",
                         "markdown": {
                             "title": title,
-                            "text": f"**{title}**\n\n{detail_content}"
+                            "text": f"{markdown_title}\n\n{detail_content}"
                         }
                     }
 
@@ -2989,9 +2997,10 @@ class UiScheduledTaskViewSet(viewsets.ModelViewSet):
                         else:
                             webhook_url += f'?timestamp={timestamp}&sign={sign}'
                 elif bot_type == 'slack':  # Slack Incoming Webhook
-                    # Slack Incoming Webhook 接收简单的 text 载荷，单个换行即可换行，不需要空行。
+                    # Slack Incoming Webhook 接收简单的 text 载荷，单个换行即可换行，不需要空行；
+                    # Slack 加粗用单星号，模板里的 ** 需要转换。
                     message_data = {
-                        "text": f"{title}\n{notification.body()}"
+                        "text": f"{notification.bold_title('*')}\n{notification.body().replace('**', '*')}"
                     }
                 else:
                     logger.warning(f"未知的机器人类型: {bot_type}")
@@ -3105,6 +3114,7 @@ class UiScheduledTaskViewSet(viewsets.ModelViewSet):
                 from_email=from_email,
                 recipient_list=recipients,
                 fail_silently=False,
+                html_message=self._email_html_body(message),
             )
             logger.info("邮件发送成功")
 

@@ -1,6 +1,6 @@
 """定时任务通知文案渲染测试。
 
-覆盖：通过率与失败用例列表、运行详情链接（套件任务指向本次报告，用例任务指向执行记录列表）、
+覆盖：通过率与失败用例列表、运行报告链接（套件任务指向本次报告，用例任务指向执行记录列表）、
 任务本身出错时的错误信息（Webhook 摘要截断，邮件保留全文）。
 """
 from django.contrib.auth import get_user_model
@@ -81,17 +81,30 @@ class TaskNotificationRenderTests(TestCase):
 
     def test_title_and_subject(self):
         _, notification = self.render_case_task(['passed'])
-        self.assertEqual(notification.title, '【Testhub-UI Automation 每日报告】')
+        self.assertEqual(notification.title, '**【Testhub-UI Automation 每日报告】**')
+        self.assertEqual(notification.plain_title, '【Testhub-UI Automation 每日报告】')
+        self.assertEqual(notification.bold_title('*'), '*【Testhub-UI Automation 每日报告】*')
         self.assertEqual(notification.email_subject, '【Testhub-UI Automation 每日报告】Daily UI automation')
+
+    def test_status_is_bold(self):
+        _, notification = self.render_case_task(['passed'])
+        self.assertIn('执行状态: **已完成**', notification.lines)
+        self.assertIn('执行状态: **已完成**', notification.email_lines)
+
+    def test_email_html_converts_bold_markers(self):
+        _, notification = self.render_case_task(['passed'])
+        html = UiScheduledTaskViewSet._email_html_body(notification.email_body())
+        self.assertIn('<strong>已完成</strong>', html)
+        self.assertNotIn('**', html)
 
     def test_case_task_lists_failed_cases_and_links_to_execution_list(self):
         task, notification = self.render_case_task(['passed', 'failed', 'error'])
         self.assertEqual(notification.lines, (
             '任务名称: Daily UI automation',
-            '执行状态: 已完成',
+            '执行状态: **已完成**',
             '通过率: 33.3%（1/3）· 失败 2 条',
             '失败用例:\n• Case 1\n• Case 2',
-            f'运行详情: {BASE_URL}/ui-automation/executions'
+            f'运行报告: {BASE_URL}/ui-automation/executions'
             f'?project={self.project.id}&scheduled_task={task.id}&task_name=Daily+UI+automation',
         ))
         # 邮件正文与 Webhook 正文一致
@@ -101,10 +114,10 @@ class TaskNotificationRenderTests(TestCase):
         task, execution, notification = self.render_suite_task(['passed', 'failed'])
         self.assertEqual(notification.lines, (
             '任务名称: Daily UI automation',
-            '执行状态: 已完成',
+            '执行状态: **已完成**',
             '通过率: 50.0%（1/2）· 失败 1 条',
             '失败用例:\n• Case 1',
-            f'运行详情: {BASE_URL}/ui-automation/reports/{execution.id}'
+            f'运行报告: {BASE_URL}/ui-automation/reports/{execution.id}'
             f'?project={self.project.id}&scheduled_task={task.id}&task_name=Daily+UI+automation',
         ))
 
@@ -139,7 +152,7 @@ class TaskNotificationRenderTests(TestCase):
     def test_broken_task_shows_error_instead_of_pass_rate(self):
         notification = self.render_broken_task('登录态不存在')
         self.assertEqual(notification.lines[:3], (
-            '任务名称: Daily UI automation', '执行状态: 执行异常', '错误信息: 登录态不存在'))
+            '任务名称: Daily UI automation', '执行状态: **执行异常**', '错误信息: 登录态不存在'))
         self.assertNotIn('通过率', notification.body())
 
     def test_long_error_is_truncated_in_webhook_only(self):
@@ -157,11 +170,11 @@ class TaskNotificationRenderTests(TestCase):
         notification = UiScheduledTaskViewSet()._render_task_notification(task, False)
         self.assertEqual(
             notification.lines[-1],
-            f'运行详情: {BASE_URL}/ui-automation/reports'
+            f'运行报告: {BASE_URL}/ui-automation/reports'
             f'?project={self.project.id}&scheduled_task={task.id}&task_name=Daily+UI+automation')
 
     @override_settings(TESTHUB_BASE_URL='')
     def test_no_detail_line_without_base_url(self):
         _, notification = self.render_case_task(['passed'])
-        self.assertNotIn('运行详情', notification.body())
-        self.assertNotIn('运行详情', notification.email_body())
+        self.assertNotIn('运行报告', notification.body())
+        self.assertNotIn('运行报告', notification.email_body())

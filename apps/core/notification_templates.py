@@ -53,26 +53,27 @@ TEMPLATES = {
     # UI 自动化 - 定时任务执行结果
     # 可用变量：task_name、status_text 已完成/执行异常、pass_rate 通过率（如 89.7%）、
     #          success_count / total_count / failed_count 通过、总、失败用例数、
-    #          failed_cases 失败用例（标题行加逐条用例名）、detail_url 运行详情链接、
+    #          failed_cases 失败用例（标题行加逐条用例名）、detail_url 运行报告链接、
     #          error_message 错误信息全文、error_summary 错误信息摘要（过长时截断，用于 Webhook）
+    # 标题和执行状态用 ** 标记加粗，各发送渠道负责转成对应平台的加粗语法
     'ui_automation.scheduled_task': NotificationTemplate(
-        title='【Testhub-UI Automation 每日报告】',
+        title='**【Testhub-UI Automation 每日报告】**',
         body='''\
 任务名称: {task_name}
-执行状态: {status_text}
+执行状态: **{status_text}**
 通过率: {pass_rate}（{success_count}/{total_count}）· 失败 {failed_count} 条
 {failed_cases}
 错误信息: {error_summary}
-运行详情: {detail_url}
+运行报告: {detail_url}
 ''',
         email_subject='【Testhub-UI Automation 每日报告】{task_name}',
         email_body='''\
 任务名称: {task_name}
-执行状态: {status_text}
+执行状态: **{status_text}**
 通过率: {pass_rate}（{success_count}/{total_count}）· 失败 {failed_count} 条
 {failed_cases}
 错误信息: {error_message}
-运行详情: {detail_url}
+运行报告: {detail_url}
 ''',
     ),
 
@@ -214,6 +215,15 @@ class RenderedNotification:
 
     def email_body(self, sep='\n'):
         return sep.join(self.email_lines)
+
+    @property
+    def plain_title(self):
+        """不带加粗标记的标题，用于邮件主题、卡片标题等纯文本位置"""
+        return self.title[2:-2] if self.title.startswith('**') and self.title.endswith('**') else self.title
+
+    def bold_title(self, marker='**'):
+        """返回加粗标题；模板已写 ** 时先去掉，避免重复包裹。Slack 用单星号"""
+        return f'{marker}{self.plain_title}{marker}'
 
 
 _PLACEHOLDER = re.compile(r'\{(\w+)(?:\|([^{}]*))?\}')
