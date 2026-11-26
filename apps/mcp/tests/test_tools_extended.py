@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
+from django.db import transaction
 from django.test import TestCase
 from django.utils import timezone
 
@@ -17,6 +18,7 @@ from apps.api_testing.models import (
 )
 from apps.mcp import actions as mcp_actions
 from apps.mcp import tools as mcp_tools
+from apps.mcp.models import McpPendingConfirm
 from apps.projects.models import Project
 from apps.testcases.models import TestCase as FunctionalTestCase, TestCaseAutomationLink
 from apps.ui_automation.models import (
@@ -703,6 +705,73 @@ class RunToolWiringTest(BaseFixture):
             self.ctx, scenario_case_id=empty_scenario.id)
         with self.assertRaises(ToolError):
             mcp_tools.confirm_run_api_scenario(self.ctx, preview['confirm_token'])
+
+    def _dispatch_tools(self):
+        """构造四种真实线程执行入口，线程本身在测试中替换。"""
+        TestSuiteItem.objects.create(test_suite=self.api_suite, scenario_case=self.scenario)
+        case = UiCase.objects.create(name='登录', project=self.ui_project, created_by=self.user)
+        TestCaseStep.objects.create(
+            test_case=case, step_number=1, action_type='navigate', action_params={'url': '/'})
+        TestSuiteTestCase.objects.create(test_suite=self.ui_suite, test_case=case)
+        return (
+            (mcp_tools.preview_run_api_scenario, mcp_tools.confirm_run_api_scenario,
+             {'scenario_case_id': self.scenario.id}, 'apps.api_testing.mcp_runner.threading.Thread'),
+            (mcp_tools.preview_run_api_suite, mcp_tools.confirm_run_api_suite,
+             {'suite_id': self.api_suite.id}, 'apps.api_testing.mcp_runner.threading.Thread'),
+            (mcp_tools.preview_run_ui_case, mcp_tools.confirm_run_ui_case,
+             {'case_id': case.id}, 'apps.ui_automation.mcp_runner.threading.Thread'),
+            (mcp_tools.preview_run_ui_suite, mcp_tools.confirm_run_ui_suite,
+             {'suite_id': self.ui_suite.id}, 'apps.ui_automation.mcp_runner.threading.Thread'),
+        )
+
+    def test_execution_threads_start_after_confirm_commit(self):
+        with patch('apps.ui_automation.test_executor.check_engine_environment', return_value=(True, '')):
+            for preview_tool, confirm_tool, arguments, thread_path in self._dispatch_tools():
+                with self.subTest(tool=confirm_tool.__name__), patch(thread_path) as thread:
+                    preview = preview_tool(self.ctx, **arguments)
+                    with self.captureOnCommitCallbacks(execute=True) as callbacks:
+                        result = confirm_tool(self.ctx, preview['confirm_token'])
+                        thread.return_value.start.assert_not_called()
+                    self.assertEqual(len(callbacks), 1)
+                    thread.return_value.start.assert_called_once()
+                    execution = thread.call_args.kwargs['args'][0]
+                    execution.refresh_from_db()
+                    self.assertEqual(execution.pk, result['execution_id'])
+                    self.assertEqual(McpPendingConfirm.objects.latest('pk').status, 'consumed')
+
+    def test_failed_confirmation_discards_execution_and_thread_callback(self):
+        with patch('apps.ui_automation.test_executor.check_engine_environment', return_value=(True, '')):
+            for preview_tool, confirm_tool, arguments, thread_path in self._dispatch_tools():
+                with self.subTest(tool=confirm_tool.__name__), patch(thread_path) as thread:
+                    preview = preview_tool(self.ctx, **arguments)
+                    with self.captureOnCommitCallbacks(execute=True) as callbacks:
+                        with patch.object(McpPendingConfirm, 'save', side_effect=RuntimeError('写入失败')):
+                            with self.assertRaises(ToolError):
+                                confirm_tool(self.ctx, preview['confirm_token'])
+                    self.assertEqual(callbacks, [])
+                    thread.return_value.start.assert_not_called()
+                    execution = thread.call_args.kwargs['args'][0]
+                    self.assertFalse(type(execution).objects.filter(pk=execution.pk).exists())
+                    self.assertEqual(McpPendingConfirm.objects.latest('pk').status, 'pending')
+
+    def test_perf_process_waits_for_commit_and_is_discarded_on_rollback(self):
+        from apps.perf_testing.services import executor
+
+        with patch.object(executor, 'preflight', return_value={'passed': True}), \
+                patch.object(executor, 'create_execution') as create, \
+                patch.object(executor, 'spawn_execution') as spawn:
+            with self.captureOnCommitCallbacks(execute=True):
+                executor.start_execution(object(), user=self.user)
+                spawn.assert_not_called()
+            spawn.assert_called_once_with(create.return_value)
+            spawn.reset_mock()
+            with self.captureOnCommitCallbacks(execute=True) as callbacks:
+                with self.assertRaises(RuntimeError):
+                    with transaction.atomic():
+                        executor.start_execution(object(), user=self.user)
+                        raise RuntimeError('确认失败回滚')
+            self.assertEqual(callbacks, [])
+            spawn.assert_not_called()
 
     def test_run_api_scenario_returns_execution_id(self):
         preview = mcp_tools.preview_run_api_scenario(

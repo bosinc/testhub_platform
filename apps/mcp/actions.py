@@ -1857,17 +1857,54 @@ def _flatten_errors(errors) -> str:
     return str(errors)
 
 
-_REVIEW_UPDATE_FIELDS = {'title', 'description', 'priority', 'deadline',
-                         'projects', 'testcases', 'reviewers', 'template'}
+_REVIEW_FIELDS = {'title', 'description', 'priority', 'deadline',
+                  'projects', 'testcases', 'reviewers', 'template'}
 _COMMENT_UPDATE_FIELDS = {'content', 'comment_type', 'testcase', 'step_number', 'is_resolved'}
 _COMMENT_TYPE_LABELS = {'general': '整体意见', 'testcase': '用例意见', 'step': '步骤意见'}
+
+
+def _review_serializer(payload, user, review=None):
+    """复用页面序列化器，统一校验字段、模板启用状态和项目归属。"""
+    from apps.reviews.serializers import TestCaseReviewCreateSerializer
+
+    serializer = TestCaseReviewCreateSerializer(
+        review, data=payload, partial=review is not None, context={'user': user})
+    if not serializer.is_valid():
+        raise McpActionError(f'data 校验失败：{_flatten_errors(serializer.errors)}')
+    return serializer
+
+
+def _resolve_review_create(arguments: dict, user):
+    payload = dict(_data_dict(arguments, _REVIEW_FIELDS))
+    for field in ('projects', 'testcases', 'reviewers'):
+        payload[field] = _id_list(payload.get(field), f'data.{field}', allow_empty=False)
+
+    # 先确认项目可访问，再限制用例只能来自本次评审选中的项目。
+    _check_project_changes(user, [], payload['projects'])
+    selected_projects = set(payload['projects'])
+    case_projects = _case_project_map(payload['testcases'])
+    invalid = [pk for pk in payload['testcases'] if case_projects.get(pk) not in selected_projects]
+    if invalid:
+        raise McpActionError(f'data.testcases 包含不存在或不属于所选项目的用例: {_fmt_ids(invalid)}')
+    _require_active_users(payload['reviewers'], 'data.reviewers')
+    return _review_serializer(payload, user)
+
+
+def create_review_action(arguments: dict, user) -> dict:
+    serializer = _resolve_review_create(arguments, user)
+    review = serializer.save(creator=user)
+    data = serializer.validated_data
+    return {
+        'review_id': review.id, 'title': review.title, 'status': review.status,
+        'project_ids': data['projects'], 'testcase_count': len(data['testcases']),
+        'reviewer_ids': data['reviewers'],
+    }
 
 
 def _resolve_review_update(arguments: dict, user):
     """返回 (review, 已通过校验的序列化器, 影响面)；落库由序列化器转给 reviews.services。"""
     from apps.reviews import services
-    from apps.reviews.models import ReviewAssignment, ReviewTemplate
-    from apps.reviews.serializers import TestCaseReviewCreateSerializer
+    from apps.reviews.models import ReviewAssignment
     from apps.testcases.models import TestCase
 
     review = _accessible_review(arguments.get('review_id'), user)
@@ -1876,7 +1913,7 @@ def _resolve_review_update(arguments: dict, user):
     if review.status not in services.OPEN_STATUSES:
         raise McpActionError(f'评审已结束（{review.get_status_display()}），不能再修改')
 
-    data = _data_dict(arguments, _REVIEW_UPDATE_FIELDS)
+    data = _data_dict(arguments, _REVIEW_FIELDS)
     payload = dict(data)
     impact = {}
 
@@ -1916,15 +1953,7 @@ def _resolve_review_update(arguments: dict, user):
         impact['verdicts_removed'] = sum(
             1 for user_id in removed if assignments[user_id] != 'pending')
 
-    serializer = TestCaseReviewCreateSerializer(review, data=payload, partial=True)
-    if not serializer.is_valid():
-        raise McpActionError(f'data 校验失败：{_flatten_errors(serializer.errors)}')
-
-    template_id = serializer.validated_data.get('template')
-    if (template_id and template_id != review.template_id
-            and not ReviewTemplate.objects.filter(pk=template_id, is_active=True).exists()):
-        raise McpActionError(f'评审模板 {template_id} 不存在或已停用')
-    return review, serializer, impact
+    return review, _review_serializer(payload, user, review), impact
 
 
 def update_review_action(arguments: dict, user) -> dict:
@@ -2040,6 +2069,7 @@ def update_review_comment_action(arguments: dict, user) -> dict:
 PREVIEW_VALIDATORS = {
     'confirm_create_test_plan': _resolve_test_plan_create,
     'confirm_update_test_plan': _resolve_test_plan_update,
+    'confirm_create_review': _resolve_review_create,
     'confirm_update_review': _resolve_review_update,
     'confirm_add_review_comment': _resolve_review_comment_create,
     'confirm_update_review_comment': _resolve_review_comment_update,
@@ -2081,6 +2111,12 @@ def _preview_update_test_plan(arguments, user) -> str:
     return (f'将更新测试计划「{plan.name}」（ID {plan.id}）：'
             f'字段 {", ".join(sorted(arguments.get("data") or {}))}'
             + ''.join(f'；{note}' for note in notes))
+
+
+def _preview_create_review(arguments, user) -> str:
+    data = _resolve_review_create(arguments, user).validated_data
+    return (f'将创建评审「{data["title"]}」，关联项目 {_project_names(data["projects"])}，'
+            f'{len(data["testcases"])} 条用例，指派 {len(data["reviewers"])} 位评审人')
 
 
 def _preview_update_review(arguments, user) -> str:
@@ -2275,6 +2311,8 @@ def build_preview(tool_name: str, arguments: dict, user) -> str:
             return _preview_create_test_plan(arguments, user)
         if tool_name == 'confirm_update_test_plan':
             return _preview_update_test_plan(arguments, user)
+        if tool_name == 'confirm_create_review':
+            return _preview_create_review(arguments, user)
         if tool_name == 'confirm_update_review':
             return _preview_update_review(arguments, user)
         if tool_name == 'confirm_add_review_comment':
@@ -2304,6 +2342,7 @@ ACTION_REGISTRY = {
     'confirm_import_recorded_script': import_recorded_script_action,
     'confirm_create_test_plan': create_test_plan_action,
     'confirm_update_test_plan': update_test_plan_action,
+    'confirm_create_review': create_review_action,
     'confirm_update_review': update_review_action,
     'confirm_add_review_comment': add_review_comment_action,
     'confirm_update_review_comment': update_review_comment_action,

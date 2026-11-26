@@ -115,7 +115,7 @@ def get_mcp():
                 '只增删个别用例时传 data.add_testcases / remove_testcases，'
                 'data.testcases 是整体替换，不在数组里的执行用例及其结果会被删除。'
                 '用例评审用 list_reviews / get_review / get_review_comments 查看，'
-                'preview_update_review 修改评审，'
+                'preview_create_review / preview_update_review 创建与修改评审，'
                 'preview_add_review_comment / preview_update_review_comment 添加、修改评审意见。'
                 '写与执行工具需先调用 preview_* 获取 confirm_token，再调用对应 confirm_* 确认执行。'
                 '若平台开启了人工审批模式，confirm_* 会返回 awaiting_approval，'

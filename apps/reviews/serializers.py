@@ -1,3 +1,4 @@
+from django.db.models import Q
 from rest_framework import serializers
 from . import services
 from .models import TestCaseReview, ReviewAssignment, TestCaseReviewComment, ReviewTemplate
@@ -139,6 +140,38 @@ class TestCaseReviewCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = TestCaseReview
         fields = ['title', 'description', 'projects', 'priority', 'deadline', 'testcases', 'reviewers', 'template']
+
+    def validate(self, attrs):
+        # 模板或项目发生变化时复查关联；修改普通字段时兼容历史评审。
+        if self.instance is not None and not {'template', 'projects'}.intersection(attrs):
+            return attrs
+        current_template_id = self.instance.template_id if self.instance else None
+        template_id = attrs.get('template', current_template_id)
+        if not template_id:
+            return attrs
+        project_ids = attrs.get('projects')
+        if self.instance is not None:
+            current_project_ids = list(self.instance.projects.values_list('pk', flat=True))
+            if project_ids is None:
+                project_ids = current_project_ids
+            # 页面提交完整表单时，重复携带原有关联也属于普通字段修改。
+            if template_id == current_template_id and set(project_ids) == set(current_project_ids):
+                return attrs
+        template = ReviewTemplate.objects.filter(pk=template_id).first()
+        if template is None or (template_id != current_template_id and not template.is_active):
+            raise serializers.ValidationError({'template': '评审模板不存在或已停用'})
+
+        projects = template.project.filter(pk__in=project_ids)
+        request = self.context.get('request')
+        user = request.user if request is not None else self.context.get('user')
+        if user is not None:
+            # REST 与 MCP 共用项目归属和访问权限校验，防止借模板泄露其他项目内容。
+            projects = projects.filter(Q(owner=user) | Q(members=user))
+        if not projects.exists():
+            raise serializers.ValidationError({
+                'template': '评审模板须关联至少一个所选且你有权限访问的项目',
+            })
+        return attrs
 
     # 落库统一走 services（与 MCP 工具共用）：关系字段是 write_only 的 ID 列表，
     # 不能交给默认的 create / update 当普通属性处理

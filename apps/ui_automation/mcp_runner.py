@@ -15,7 +15,7 @@ apps.mcp.actions 依赖本模块的 ``start_case_execution`` 与
 import logging
 import threading
 
-from django.db import connection
+from django.db import connection, transaction
 from django.utils import timezone
 
 from .models import TestCaseExecution
@@ -89,7 +89,8 @@ def start_case_execution(case, user, engine='playwright', browser='chrome',
         name=f'mcp-ui-case-{execution.id}',
         daemon=False,
     )
-    thread.start()
+    # 确认流程提交后再启动线程，保证后台连接能读取执行记录。
+    transaction.on_commit(thread.start)
     logger.info('[McpRunner] 用例 %s (id=%s) 已异步启动, engine=%s, execution_id=%s',
                 case.name, case.id, engine, execution.id)
     return execution
@@ -172,7 +173,8 @@ def start_suite_execution(suite, user, engine='playwright', browser='chrome',
         name=f'mcp-ui-suite-{execution.id}',
         daemon=False,
     )
-    thread.start()
+    # 确认流程回滚时丢弃启动回调，避免后台执行未提交的记录。
+    transaction.on_commit(thread.start)
     logger.info('[McpRunner] 套件 %s (id=%s) 已异步启动, engine=%s, execution_id=%s',
                 suite.name, suite.id, engine, execution.id)
     return execution

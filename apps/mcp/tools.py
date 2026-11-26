@@ -1958,6 +1958,28 @@ def confirm_update_test_plan(ctx: Context, confirm_token: str) -> dict:
                      lambda user: consume_pending(verify_pending(confirm_token, user), user))
 
 
+def preview_create_review(ctx: Context, data: dict) -> dict:
+    """预览创建用例评审，返回项目、用例数、评审人数和 5 分钟有效的 confirm_token。
+
+    data 必填 title、projects（可访问的项目 ID 数组）、testcases（所选项目的功能用例 ID 数组）、
+    reviewers（启用的用户 ID 数组），每个数组至少一项。可选 description、priority
+    （low/medium/high/urgent）、deadline（ISO 8601 时间）、template（启用的模板 ID）。
+    确认创建请调用 confirm_create_review。
+    """
+    arguments = {'data': data}
+    return _run_tool(ctx, 'preview_create_review', arguments,
+                     lambda user: _checked_preview('confirm_create_review', arguments, user))
+
+
+def confirm_create_review(ctx: Context, confirm_token: str) -> dict:
+    """确认创建用例评审，返回 review_id、标题、状态、关联项目 ID、用例数和评审人 ID。
+
+    人工审批模式下返回 awaiting_approval，可用 get_approval_status 查询结果。
+    """
+    return _run_tool(ctx, 'confirm_create_review', {'confirm_token': '<token>'},
+                     lambda user: consume_pending(verify_pending(confirm_token, user), user))
+
+
 def preview_update_review(ctx: Context, review_id: int, data: dict) -> dict:
     """预览修改用例评审（危险操作第一步）。
 
@@ -2146,6 +2168,7 @@ ALL_TOOLS = [
     preview_import_recorded_script, confirm_import_recorded_script,
     preview_create_test_plan, confirm_create_test_plan,
     preview_update_test_plan, confirm_update_test_plan,
+    preview_create_review, confirm_create_review,
     preview_update_review, confirm_update_review,
     preview_add_review_comment, confirm_add_review_comment,
     preview_update_review_comment, confirm_update_review_comment,

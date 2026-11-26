@@ -18,10 +18,11 @@ import subprocess
 import sys
 import threading
 import time
+from functools import partial
 from urllib.parse import urlparse
 
 from django.conf import settings
-from django.db import close_old_connections, connection
+from django.db import close_old_connections, connection, transaction
 from django.utils import timezone
 
 logger = logging.getLogger(__name__)
@@ -515,7 +516,8 @@ def start_execution(scenario, user=None, trigger_type='MANUAL', skip_preflight=F
         return None, check
     execution = create_execution(scenario, user=user, trigger_type=trigger_type,
                                  scheduled_task=scheduled_task, script_ref=script_ref)
-    spawn_execution(execution)
+    # MCP 确认会包裹事务，子进程须在执行记录及令牌状态提交后启动。
+    transaction.on_commit(partial(spawn_execution, execution))
     return execution, check
 
 

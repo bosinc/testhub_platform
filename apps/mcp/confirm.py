@@ -16,6 +16,7 @@ import time
 
 from django.conf import settings
 from django.core import signing
+from django.db import transaction
 from django.utils import timezone
 
 from apps.core.notification_templates import render_notification
@@ -102,6 +103,28 @@ def create_preview(tool_name: str, arguments: dict, user) -> dict:
     }
 
 
+def _check_confirmable(pending: McpPendingConfirm, user):
+    """执行前复查最新记录，避免使用 preview / verify 阶段的旧状态。"""
+    if pending.user_id != user.id:
+        raise ConfirmError('无权确认其他用户发起的操作')
+    if pending.status == 'rejected':
+        raise ConfirmError('该操作已被管理员拒绝')
+    if pending.status == 'consumed':
+        raise ConfirmError('该操作已被执行，不可重复确认')
+    if pending.status == 'approved':
+        raise ConfirmError('该操作已由管理员批准执行，无需重复确认')
+    if pending.status == 'expired' or pending.is_expired:
+        raise ConfirmError('该操作已过期，请重新调用 preview')
+
+
+def _lock_pending(pending: McpPendingConfirm) -> McpPendingConfirm:
+    """在调用方事务内加行锁并重读，串行化确认、批准和拒绝。"""
+    current = McpPendingConfirm.objects.select_for_update().filter(pk=pending.pk).first()
+    if current is None:
+        raise ConfirmError('confirm_token 对应的操作不存在')
+    return current
+
+
 def verify_pending(confirm_token: str, user) -> McpPendingConfirm:
     """校验 confirm 令牌并返回待确认记录；任何异常抛 ConfirmError。"""
     if not confirm_token:
@@ -123,25 +146,26 @@ def verify_pending(confirm_token: str, user) -> McpPendingConfirm:
         raise ConfirmError('confirm_token 对应的操作不存在')
     if pending.user_id != user.id:
         raise ConfirmError('无权确认其他用户发起的操作')
-    if pending.status == 'rejected':
-        raise ConfirmError('该操作已被管理员拒绝')
-    if pending.status == 'consumed':
-        raise ConfirmError('该操作已被执行，不可重复确认')
-    if pending.status == 'approved':
-        raise ConfirmError('该操作已由管理员批准执行，无需重复确认')
-    if pending.is_expired:
-        pending.status = 'expired'
-        pending.save(update_fields=['status', 'updated_at'])
-        raise ConfirmError('该操作已过期，请重新调用 preview')
+    if pending.status == 'pending' and pending.is_expired:
+        # 条件更新避免覆盖并发确认 / 批准产生的终态，刷新后按实际状态报错。
+        McpPendingConfirm.objects.filter(
+            pk=pending.pk, status='pending', expires_at__lte=timezone.now(),
+        ).update(status='expired', updated_at=timezone.now())
+        pending.refresh_from_db()
+    _check_confirmable(pending, user)
     return pending
 
 
+@transaction.atomic
 def consume_pending(pending: McpPendingConfirm, user) -> dict:
     """执行待确认动作（confirm_* 工具入口），单次消费。
 
     人工审批模式（MCP_HUMAN_APPROVAL=True）下不直接执行，标记
     awaiting_human 后返回等待指示，由控制台批准后经 approve_pending 执行。
     """
+    # 动作写入与令牌消费同事务提交；落库失败时一起回滚，重试不会重复创建。
+    pending = _lock_pending(pending)
+    _check_confirmable(pending, user)
     if _human_approval_enabled():
         if not pending.awaiting_human:
             pending.awaiting_human = True
@@ -165,8 +189,10 @@ def consume_pending(pending: McpPendingConfirm, user) -> dict:
     return result
 
 
+@transaction.atomic
 def approve_pending(pending: McpPendingConfirm, operator) -> dict:
     """监控页手动批准：服务端触发动作执行。"""
+    pending = _lock_pending(pending)
     # 先判过期：此时 status 仍是 pending，若合并成一条会报出
     # 「当前状态(pending)不可批准」，看起来像状态异常，实际是已超时
     if pending.is_expired:
@@ -188,14 +214,16 @@ def approve_pending(pending: McpPendingConfirm, operator) -> dict:
     # 控制台批准走的是本函数（不经 tools._run_tool），同样要让该用户的 list 缓存失效
     try:
         from .tools import _bump_list_epoch
-        _bump_list_epoch(pending.user_id)
+        transaction.on_commit(lambda: _bump_list_epoch(pending.user_id), robust=True)
     except Exception:  # noqa: BLE001 - 缓存失效失败不影响审批结果
         pass
     return result
 
 
+@transaction.atomic
 def reject_pending(pending: McpPendingConfirm, operator):
     """监控页拒绝：令牌作废。"""
+    pending = _lock_pending(pending)
     if pending.status != 'pending':
         raise ConfirmError(f'当前状态({pending.status})不可拒绝')
     pending.status = 'rejected'
@@ -219,6 +247,7 @@ def _unsign_token(confirm_token: str):
     return signed_value
 
 
+@transaction.atomic
 def query_approval_status(confirm_token: str, user) -> dict:
     """轮询人工审批状态（get_approval_status 工具入口）。
 
@@ -229,7 +258,8 @@ def query_approval_status(confirm_token: str, user) -> dict:
     if signed_value is None:
         return {'status': 'expired', 'hint': '令牌已过期（5 分钟有效），请重新调用 preview'}
 
-    pending = McpPendingConfirm.objects.filter(id=int(signed_value)).first()
+    # 与确认 / 审批共用行锁，过期轮询不能把已执行状态改回 expired。
+    pending = McpPendingConfirm.objects.select_for_update().filter(id=int(signed_value)).first()
     if pending is None:
         raise ConfirmError('confirm_token 对应的操作不存在')
     if pending.user_id != user.id:

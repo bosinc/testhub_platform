@@ -802,6 +802,25 @@ _TOOLS = [
 
     # ------------------------- 用例评审（preview → confirm） ------------------------- #
     ToolMeta(
+        name='preview_create_review', title='预览创建评审', category=CATEGORY_PREVIEW,
+        domain='reviews', summary='预览创建用例评审',
+        description='data 必填 title、projects（可访问的项目 ID 数组）、testcases（所选项目的功能用例 ID 数组）、'
+                    'reviewers（启用的用户 ID 数组），每个数组至少一项。可选 description、priority'
+                    '（low/medium/high/urgent）、deadline（ISO 8601 时间）和 template（启用的模板 ID）。'
+                    '返回影响预览与 5 分钟有效的 confirm_token。',
+        read_only=False, idempotent=False, paired_with='confirm_create_review',
+        examples=({'data': {'title': '登录用例评审', 'projects': [1],
+                            'testcases': [101, 102], 'reviewers': [2]}},),
+    ),
+    ToolMeta(
+        name='confirm_create_review', title='确认创建评审', category=CATEGORY_CONFIRM,
+        domain='reviews', summary='确认创建用例评审',
+        description='凭预览令牌创建待评审记录并分配评审人，返回 review_id、标题、状态、项目 ID、'
+                    '用例数和评审人 ID。人工审批模式下可用 get_approval_status 查询结果。',
+        read_only=False, idempotent=False, paired_with='preview_create_review',
+        examples=({'confirm_token': 'cf_xxxxxxxx'},),
+    ),
+    ToolMeta(
         name='preview_update_review', title='预览修改评审', category=CATEGORY_PREVIEW,
         domain='reviews',
         summary='预览修改用例评审（危险操作第一步）',

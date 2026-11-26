@@ -14,7 +14,7 @@ apps.mcp.actions 依赖本模块的 ``start_scenario_execution`` 与
 import logging
 import threading
 
-from django.db import connection
+from django.db import connection, transaction
 from django.utils import timezone
 
 from .models import ApiSuiteExecution, TestExecution
@@ -85,7 +85,8 @@ def start_scenario_execution(scenario_case, user, environment=None):
         name=f'mcp-api-scenario-{execution.id}',
         daemon=False,
     )
-    thread.start()
+    # 确认流程提交后再启动线程，保证后台连接能读取执行记录。
+    transaction.on_commit(thread.start)
     logger.info('[ApiSuiteRunner] 场景用例 %s (id=%s) 已异步启动, execution_id=%s',
                 scenario_case.name, scenario_case.id, execution.id)
     return execution
@@ -135,7 +136,8 @@ def start_suite_execution(test_suite, user, environment=None):
         name=f'mcp-api-suite-{suite_execution.id}',
         daemon=False,
     )
-    thread.start()
+    # 确认流程回滚时丢弃启动回调，避免后台执行未提交的记录。
+    transaction.on_commit(thread.start)
     logger.info('[ApiSuiteRunner] 套件 %s (id=%s) 已异步启动, execution_id=%s',
                 test_suite.name, test_suite.id, suite_execution.id)
     return suite_execution

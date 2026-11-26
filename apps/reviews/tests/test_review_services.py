@@ -133,6 +133,97 @@ class ReviewApiTests(ReviewTestBase):
         self.assertEqual(list(review.testcases.all()), [self.case])
         self.assertEqual(ReviewAssignment.objects.filter(review=review).count(), 2)
 
+    def test_template_must_match_an_accessible_selected_project(self):
+        foreign = Project.objects.create(name='外部项目', owner=self.reviewer_b)
+        template = ReviewTemplate.objects.create(name='外部模板', creator=self.reviewer_b)
+        template.project.add(foreign)
+        # 即使伪造所选项目包含模板项目，也必须具备相应项目访问权限。
+        for projects in ([self.project.id], [self.project.id, foreign.id]):
+            with self.subTest(projects=projects):
+                response = self.client.post(REVIEW_URL, self.form_payload(
+                    title='越权评审', projects=projects, template=template.id), format='json')
+                self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+                self.assertIn('template', response.data)
+        self.assertFalse(TestCaseReview.objects.filter(title='越权评审').exists())
+
+    def test_template_accepts_intersection_with_multiple_selected_projects(self):
+        extra_project = Project.objects.create(name='我的另一项目', owner=self.creator)
+        template = ReviewTemplate.objects.create(name='项目模板', creator=self.creator)
+        template.project.add(self.project)
+        response = self.client.post(REVIEW_URL, self.form_payload(
+            title='多项目评审', projects=[self.project.id, extra_project.id], template=template.id),
+            format='json')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(TestCaseReview.objects.get(title='多项目评审').template, template)
+
+    def test_project_member_can_use_template(self):
+        template = ReviewTemplate.objects.create(name='项目模板', creator=self.creator)
+        template.project.add(self.project)
+        self.project.members.add(self.reviewer_a)
+        self.client.force_authenticate(self.reviewer_a)
+        response = self.client.post(REVIEW_URL, self.form_payload(
+            title='成员评审', template=template.id), format='json')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+    def test_missing_inactive_and_unscoped_templates_are_rejected(self):
+        inactive = ReviewTemplate.objects.create(name='停用模板', creator=self.creator, is_active=False)
+        inactive.project.add(self.project)
+        unscoped = ReviewTemplate.objects.create(name='无项目模板', creator=self.creator)
+        for template_id in (987654, inactive.id, unscoped.id):
+            with self.subTest(template_id=template_id):
+                response = self.client.post(REVIEW_URL, self.form_payload(
+                    title='无效模板评审', template=template_id), format='json')
+                self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+                self.assertIn('template', response.data)
+        self.assertFalse(TestCaseReview.objects.filter(title='无效模板评审').exists())
+
+    def test_changing_template_rechecks_project(self):
+        foreign = Project.objects.create(name='外部项目', owner=self.reviewer_b)
+        template = ReviewTemplate.objects.create(name='外部模板', creator=self.reviewer_b)
+        template.project.add(foreign)
+        response = self.client.patch(self.detail_url(), {'template': template.id}, format='json')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.review.refresh_from_db()
+        self.assertIsNone(self.review.template)
+
+    def test_changing_projects_rechecks_existing_template(self):
+        template = ReviewTemplate.objects.create(name='原项目模板', creator=self.creator)
+        template.project.add(self.project)
+        self.review.template = template
+        self.review.save(update_fields=['template'])
+        extra_project = Project.objects.create(name='新项目', owner=self.creator)
+        response = self.client.patch(
+            self.detail_url(), {'projects': [extra_project.id]}, format='json')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(list(self.review.projects.all()), [self.project])
+        response = self.client.patch(self.detail_url(), {
+            'projects': [extra_project.id], 'template': None,
+        }, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.review.refresh_from_db()
+        self.assertIsNone(self.review.template)
+        self.assertEqual(list(self.review.projects.all()), [extra_project])
+
+    def test_legacy_template_allows_unrelated_partial_update(self):
+        # 历史无项目模板和后续停用模板仍支持只修改标题，以及显式清空模板。
+        template = ReviewTemplate.objects.create(name='历史模板', creator=self.creator, is_active=False)
+        self.review.template = template
+        self.review.save(update_fields=['template'])
+        response = self.client.patch(self.detail_url(), {'title': '改名'}, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.review.refresh_from_db()
+        self.assertEqual(self.review.template, template)
+        response = self.client.put(self.detail_url(), self.form_payload(
+            title='完整表单改名', template=template.id), format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.review.refresh_from_db()
+        self.assertEqual(self.review.template, template)
+        for empty in (0, None):
+            response = self.client.patch(self.detail_url(), {'template': empty}, format='json')
+            self.assertEqual(response.status_code, status.HTTP_200_OK)
+            self.review.refresh_from_db()
+            self.assertIsNone(self.review.template)
+
     def test_full_form_update_keeps_submitted_verdict(self):
         self.approve(self.reviewer_a)
 

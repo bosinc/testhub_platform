@@ -4,11 +4,15 @@
 运行: python manage.py test apps.mcp.tests.test_confirm
 """
 from datetime import timedelta
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 import time
+from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.core import signing
-from django.test import TestCase, override_settings
+from django.db import connections
+from django.test import TestCase, TransactionTestCase, override_settings, skipUnlessDBFeature
 from django.utils import timezone
 
 from apps.mcp.confirm import (
@@ -205,6 +209,149 @@ class ConfirmActionErrorTest(ConfirmFlowBase):
         with self.assertRaises(ConfirmError) as cm:
             consume_pending(pending, self.user)
         self.assertIn('无权限', str(cm.exception))
+
+
+class ConfirmConsistencyTest(ConfirmFlowBase):
+    """确认和审批使用最新状态，动作写入与状态写入共同提交或回滚。"""
+
+    def test_two_verified_instances_execute_once(self):
+        token = self._create_pending()['confirm_token']
+        first = verify_pending(token, self.user)
+        second = verify_pending(token, self.user)
+
+        consume_pending(first, self.user)
+        with self.assertRaises(ConfirmError):
+            consume_pending(second, self.user)
+        self.assertEqual(FunctionalTestCase.objects.filter(project=self.project).count(), 1)
+
+    def test_stale_instance_cannot_approve_or_reject_consumed_action(self):
+        token = self._create_pending()['confirm_token']
+        stale = verify_pending(token, self.user)
+        consume_pending(verify_pending(token, self.user), self.user)
+
+        for operation in (approve_pending, reject_pending):
+            with self.subTest(operation=operation.__name__), self.assertRaises(ConfirmError):
+                operation(stale, self.other)
+        stale.refresh_from_db()
+        self.assertEqual(stale.status, 'consumed')
+        self.assertEqual(FunctionalTestCase.objects.filter(project=self.project).count(), 1)
+
+    def test_approval_invalidates_previously_verified_instance(self):
+        token = self._create_pending()['confirm_token']
+        stale = verify_pending(token, self.user)
+        approve_pending(McpPendingConfirm.objects.get(pk=stale.pk), self.other)
+        with self.assertRaises(ConfirmError):
+            consume_pending(stale, self.user)
+        with self.assertRaises(ConfirmError):
+            approve_pending(stale, self.other)
+        self.assertEqual(FunctionalTestCase.objects.filter(project=self.project).count(), 1)
+
+    def test_rejection_invalidates_previously_verified_instance(self):
+        token = self._create_pending()['confirm_token']
+        stale = verify_pending(token, self.user)
+        reject_pending(McpPendingConfirm.objects.get(pk=stale.pk), self.other)
+        with self.assertRaises(ConfirmError):
+            consume_pending(stale, self.user)
+        with self.assertRaises(ConfirmError):
+            approve_pending(stale, self.other)
+        self.assertFalse(FunctionalTestCase.objects.filter(project=self.project).exists())
+
+    def test_consume_rechecks_user_and_expiration(self):
+        pending = verify_pending(self._create_pending()['confirm_token'], self.user)
+        with self.assertRaises(ConfirmError):
+            consume_pending(pending, self.other)
+        McpPendingConfirm.objects.filter(pk=pending.pk).update(
+            expires_at=timezone.now() - timedelta(seconds=1))
+        with self.assertRaises(ConfirmError):
+            consume_pending(pending, self.user)
+        self.assertFalse(FunctionalTestCase.objects.filter(project=self.project).exists())
+
+    def test_status_save_failure_rolls_back_action_and_allows_retry(self):
+        for operation in (consume_pending, approve_pending):
+            with self.subTest(operation=operation.__name__):
+                token = self._create_pending()['confirm_token']
+                pending = verify_pending(token, self.user)
+                before = FunctionalTestCase.objects.filter(project=self.project).count()
+                with patch.object(McpPendingConfirm, 'save', side_effect=RuntimeError('状态写入失败')):
+                    with self.assertRaises(RuntimeError):
+                        operation(pending, self.user)
+                pending.refresh_from_db()
+                self.assertEqual(pending.status, 'pending')
+                self.assertEqual(pending.result, {})
+                self.assertEqual(FunctionalTestCase.objects.filter(project=self.project).count(), before)
+                operation(pending, self.user)
+                self.assertEqual(FunctionalTestCase.objects.filter(project=self.project).count(), before + 1)
+
+    @override_settings(MCP_HUMAN_APPROVAL=True)
+    def test_human_mode_rechecks_status_before_marking_waiting(self):
+        pending = verify_pending(self._create_pending()['confirm_token'], self.user)
+        reject_pending(McpPendingConfirm.objects.get(pk=pending.pk), self.other)
+        with self.assertRaises(ConfirmError):
+            consume_pending(pending, self.user)
+
+    def test_expiration_refresh_preserves_concurrent_completion(self):
+        token = self._create_pending()['confirm_token']
+        pending = McpPendingConfirm.objects.get()
+        McpPendingConfirm.objects.filter(pk=pending.pk).update(
+            expires_at=timezone.now() - timedelta(seconds=1))
+        queryset_class = type(McpPendingConfirm.objects.all())
+        original_first = queryset_class.first
+
+        def complete_after_read(queryset):
+            current = original_first(queryset)
+            # 模拟校验读到过期记录后，另一个事务先提交了执行结果。
+            McpPendingConfirm.objects.filter(pk=current.pk).update(
+                status='consumed', result={'testcase_id': 123})
+            return current
+
+        with patch.object(queryset_class, 'first', complete_after_read):
+            with self.assertRaisesMessage(ConfirmError, '已被执行'):
+                verify_pending(token, self.user)
+        pending.refresh_from_db()
+        self.assertEqual(pending.status, 'consumed')
+        self.assertEqual(pending.result, {'testcase_id': 123})
+
+
+@skipUnlessDBFeature('has_select_for_update')
+class ConfirmConcurrencyTest(TransactionTestCase):
+    """在支持行锁的数据库上用独立连接覆盖真实并发，SQLite 自动跳过。"""
+
+    setUp = ConfirmFlowBase.setUp
+    _create_pending = ConfirmFlowBase._create_pending
+
+    def _race(self, operations):
+        token = self._create_pending()['confirm_token']
+        barrier = Barrier(2)
+
+        def run(operation):
+            try:
+                user = User.objects.get(pk=self.user.pk)
+                pending = verify_pending(token, user)
+                barrier.wait(timeout=10)
+                operation(pending, user)
+                return 'success'
+            except ConfirmError:
+                return 'rejected'
+            finally:
+                connections.close_all()
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futures = [pool.submit(run, operation) for operation in operations]
+            return [future.result(timeout=20) for future in futures]
+
+    def test_concurrent_confirms_execute_once(self):
+        self.assertCountEqual(self._race((consume_pending, consume_pending)), ['success', 'rejected'])
+        self.assertEqual(FunctionalTestCase.objects.filter(project=self.project).count(), 1)
+
+    def test_concurrent_confirm_and_approval_execute_once(self):
+        self.assertCountEqual(self._race((consume_pending, approve_pending)), ['success', 'rejected'])
+        self.assertEqual(FunctionalTestCase.objects.filter(project=self.project).count(), 1)
+
+    def test_concurrent_confirm_and_rejection_have_one_winner(self):
+        self.assertCountEqual(self._race((consume_pending, reject_pending)), ['success', 'rejected'])
+        pending = McpPendingConfirm.objects.get()
+        self.assertEqual(FunctionalTestCase.objects.filter(project=self.project).count(),
+                         1 if pending.status == 'consumed' else 0)
 
 
 @override_settings(MCP_HUMAN_APPROVAL=True)

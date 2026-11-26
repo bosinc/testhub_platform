@@ -3,6 +3,8 @@
 
 运行: python manage.py test apps.mcp.tests.test_tools_reviews
 """
+from unittest.mock import patch
+
 from django.contrib.auth import get_user_model
 from django.db import connection
 from django.test import override_settings
@@ -17,7 +19,7 @@ from apps.mcp.tests.test_tools import ToolBase
 from apps.mcp.tests.utils import ctx_with_jwt
 from apps.projects.models import Project
 from apps.reviews import services as review_services
-from apps.reviews.models import ReviewAssignment, TestCaseReview, TestCaseReviewComment
+from apps.reviews.models import ReviewAssignment, ReviewTemplate, TestCaseReview, TestCaseReviewComment
 from apps.testcases.models import TestCase as FunctionalTestCase
 
 User = get_user_model()
@@ -147,7 +149,111 @@ class ReadReviewToolTest(ReviewToolBase):
             mcp_tools.get_review_comments(self.other_ctx, review_id=self.review.id)
 
 
+class CreateReviewToolTest(ReviewToolBase):
+    def setUp(self):
+        super().setUp()
+        self.data = {'title': '注册流程评审', 'projects': [self.project.id],
+                     'testcases': [self.case.id], 'reviewers': [self.reviewer_b.id]}
+
+    def test_preview_then_confirm_creates_review_and_assignments(self):
+        template = ReviewTemplate.objects.create(name='回归评审', creator=self.user)
+        template.project.add(self.project)
+        preview = mcp_tools.preview_create_review(self.ctx, data={
+            **self.data, 'template': template.id, 'priority': 'high',
+            'reviewers': [self.reviewer_b.id, self.reviewer_b.id],
+        })
+        self.assertEqual(preview['confirm_tool'], 'confirm_create_review')
+        self.assertIn('1 条用例，指派 1 位评审人', preview['preview'])
+        self.assertFalse(TestCaseReview.objects.filter(title=self.data['title']).exists())
+
+        result = mcp_tools.confirm_create_review(self.ctx, preview['confirm_token'])
+        review = TestCaseReview.objects.get(pk=result['review_id'])
+        self.assertEqual((review.creator, review.title, review.status, review.priority, review.template),
+                         (self.user, self.data['title'], 'pending', 'high', template))
+        self.assertEqual(list(review.projects.all()), [self.project])
+        self.assertEqual(list(review.testcases.all()), [self.case])
+        assignment = ReviewAssignment.objects.get(review=review)
+        self.assertEqual((assignment.reviewer, assignment.status), (self.reviewer_b, 'pending'))
+        with self.assertRaises(ToolError):
+            mcp_tools.confirm_create_review(self.ctx, preview['confirm_token'])
+        self.assertEqual(TestCaseReview.objects.filter(title=self.data['title']).count(), 1)
+
+    def test_invalid_preview_leaves_no_pending_record(self):
+        foreign = Project.objects.create(name='无权访问', owner=self.other)
+        foreign_case = FunctionalTestCase.objects.create(project=foreign, title='外部用例', author=self.other)
+        inactive = ReviewTemplate.objects.create(name='已停用', is_active=False, creator=self.user)
+        for change in ({'projects': [foreign.id]}, {'testcases': [foreign_case.id]},
+                       {'reviewers': []}, {'template': inactive.id}, {'title': ''}, {'status': 'approved'}):
+            with self.subTest(change=change), self.assertRaises(ToolError):
+                mcp_tools.preview_create_review(self.ctx, data={**self.data, **change})
+        self.assertFalse(McpPendingConfirm.objects.exists())
+
+    def test_confirm_rechecks_project_access(self):
+        preview = mcp_tools.preview_create_review(self.ctx, data=self.data)
+        self.project.members.remove(self.user)
+        self.project.owner = self.other
+        self.project.save(update_fields=['owner'])
+        with self.assertRaises(ToolError):
+            mcp_tools.confirm_create_review(self.ctx, preview['confirm_token'])
+        self.assertFalse(TestCaseReview.objects.filter(title=self.data['title']).exists())
+
+    def test_foreign_or_unscoped_template_rejected_in_preview(self):
+        foreign = Project.objects.create(name='外部项目', owner=self.other)
+        template = ReviewTemplate.objects.create(name='外部模板', creator=self.other)
+        template.project.add(foreign)
+        unscoped = ReviewTemplate.objects.create(name='未关联项目', creator=self.user)
+        for template_id in (template.id, unscoped.id):
+            with self.subTest(template_id=template_id), self.assertRaises(ToolError):
+                mcp_tools.preview_create_review(self.ctx, data={**self.data, 'template': template_id})
+        self.assertFalse(McpPendingConfirm.objects.exists())
+
+    def test_confirm_rechecks_template_scope_and_active_status(self):
+        template = ReviewTemplate.objects.create(name='回归模板', creator=self.user)
+        for change in ('projects', 'active'):
+            with self.subTest(change=change):
+                template.project.set([self.project])
+                template.is_active = True
+                template.save(update_fields=['is_active'])
+                preview = mcp_tools.preview_create_review(
+                    self.ctx, data={**self.data, 'template': template.id})
+                if change == 'projects':
+                    template.project.clear()
+                else:
+                    template.is_active = False
+                    template.save(update_fields=['is_active'])
+                with self.assertRaises(ToolError):
+                    mcp_tools.confirm_create_review(self.ctx, preview['confirm_token'])
+                self.assertEqual(McpPendingConfirm.objects.latest('pk').status, 'pending')
+        self.assertFalse(TestCaseReview.objects.filter(title=self.data['title']).exists())
+
+    def test_failed_consumption_rolls_back_review_and_assignments(self):
+        preview = mcp_tools.preview_create_review(self.ctx, data=self.data)
+        with patch.object(McpPendingConfirm, 'save', side_effect=RuntimeError('状态写入失败')):
+            with self.assertRaises(ToolError):
+                mcp_tools.confirm_create_review(self.ctx, preview['confirm_token'])
+        self.assertFalse(TestCaseReview.objects.filter(title=self.data['title']).exists())
+        self.assertEqual(ReviewAssignment.objects.count(), 1)
+        self.assertEqual(McpPendingConfirm.objects.get().status, 'pending')
+        result = mcp_tools.confirm_create_review(self.ctx, preview['confirm_token'])
+        self.assertEqual(TestCaseReview.objects.filter(title=self.data['title']).count(), 1)
+        self.assertEqual(ReviewAssignment.objects.filter(review_id=result['review_id']).count(), 1)
+
+
 class UpdateReviewToolTest(ReviewToolBase):
+    def test_update_rechecks_template_when_changing_projects(self):
+        template = ReviewTemplate.objects.create(name='原项目模板', creator=self.user)
+        template.project.add(self.project)
+        self.review.template = template
+        self.review.save(update_fields=['template'])
+        other_project = Project.objects.create(name='我的新项目', owner=self.user)
+        with self.assertRaises(ToolError):
+            mcp_tools.preview_update_review(
+                self.ctx, review_id=self.review.id, data={'projects': [other_project.id]})
+        _, result = self.update_review({'projects': [other_project.id], 'template': None})
+        self.review.refresh_from_db()
+        self.assertIsNone(self.review.template)
+        self.assertEqual(result['review_id'], self.review.id)
+
     def test_adding_reviewer_keeps_submitted_verdict(self):
         self.approve(self.reviewer_a)
 
